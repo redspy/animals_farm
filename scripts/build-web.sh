@@ -47,10 +47,18 @@ esac
 # (2026-09-03 Codex 감사 지적).
 rm -rf build/web
 mkdir -p build/web
+# Godot은 스크립트 오류가 있어도 exit 0으로 끝나므로 출력을 직접 검사한다
+# (2026-09-04 실측 — verify 게이트가 컴파일 에러를 통과시켰다).
+ERROR_PATTERN='SCRIPT ERROR|Parse Error|Compile Error|Failed to load script|Invalid call'
+
 echo "[build-web] 리소스 임포트..."
-"$GODOT_BIN" --headless --path . --import
+IMPORT_OUT="$("$GODOT_BIN" --headless --path . --import 2>&1)"; echo "$IMPORT_OUT"
 echo "[build-web] Web export..."
-"$GODOT_BIN" --headless --path . --export-release "Web" build/web/index.html
+EXPORT_OUT="$("$GODOT_BIN" --headless --path . --export-release "Web" build/web/index.html 2>&1)"; echo "$EXPORT_OUT"
+if printf '%s\n%s' "$IMPORT_OUT" "$EXPORT_OUT" | grep -qE "$ERROR_PATTERN"; then
+  echo "ERROR: 빌드 중 GDScript 오류가 검출됨 — 산출물을 신뢰할 수 없습니다."
+  exit 1
+fi
 
 if [ ! -f build/web/index.html ] || ! ls build/web/*.wasm > /dev/null 2>&1; then
   echo "ERROR: export 산출물이 불완전합니다(build/web/index.html 또는 .wasm 없음)"

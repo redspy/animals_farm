@@ -50,20 +50,39 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
 
 ## 4. 로컬에서 같은 빌드 재현
 
+이 개발 머신에는 표준 4.7.1 빌드가 `~/tools/godot/4.7.1/`에 있다(시스템 `godot`은 4.6.3 **mono**여서 웹 export가 불가하므로 건드리지 않고 따로 뒀다).
+
 ```bash
-GODOT_BIN=/path/to/Godot_v4.7.1-stable_macos.universal ./scripts/build-web.sh
+export GODOT_BIN="$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot"
+./scripts/verify-project.sh     # 임포트 + 세이브 마이그레이션 테스트 + 기동
+./scripts/build-web.sh          # → build/web/ (index.html, index.wasm, index.pck ...)
 node server/index.js            # http://localhost:3001
 curl -s localhost:3001/healthz  # {"ok":true,...}
 ```
 
-`scripts/build-web.sh`는 mono 빌드를 감지하면 즉시 실패하며 이유를 알려준다.
+두 스크립트는 (a) mono 빌드, (b) `.godot-version`과 다른 버전, (c) 출력에 섞인 GDScript 오류를 각각 감지해 실패한다. (c)가 필요한 이유: **Godot은 GDScript 컴파일/런타임 오류가 있어도 종료 코드 0으로 끝난다** — 실제로 `game_clock.gd`의 컴파일 에러를 초기 게이트가 "통과"로 보고했다(2026-09-04 실측).
 
-## 5. 리뷰 게이트와의 관계
+### 실측으로 확인된 export 함정
+
+`export_presets.cfg`의 `vram_texture_compression/for_desktop|for_mobile`을 켜두면 export가 **상세 사유 없이** `Cannot export project with preset "Web" due to configuration errors`로 실패한다(모바일 VRAM 압축은 프로젝트 설정 `rendering/textures/vram_compression/import_etc2_astc`를 요구). 이 게임은 2D + GL Compatibility라 VRAM 압축이 필요 없어 둘 다 끈 상태다. 텍스처 에셋을 도입할 때 이 옵션을 다시 켜려면 프로젝트 설정도 함께 켜야 한다.
+
+## 5. 검증 상태 (2026-09-04)
+
+| 항목 | 상태 |
+|---|---|
+| 리소스 임포트 / 메인 씬 헤드리스 기동 | ✅ 로컬 실측 통과(Godot 4.7.1 표준) |
+| 세이브 마이그레이션 회귀 테스트 | ✅ 로컬 실측 통과 |
+| 웹 export 산출물(index.html/.wasm/.pck) | ✅ 로컬 실측 생성 |
+| 정적 서버 MIME·COOP/COEP·`/healthz` | ✅ 로컬 실측 통과 |
+| **배포 서버 파이프라인(deploy.bat 전체)** | ⚠️ **미검증** — Windows 서버에서 첫 배포를 돌려봐야 한다. 서버에 Godot 4.7.1 표준 + export 템플릿 설치가 선행 조건(§2) |
+| 브라우저 실제 플레이(입력·렌더) | ⚠️ 미검증 — 로컬 서버로 열어 확인 필요 |
+
+## 6. 리뷰 게이트와의 관계
 
 배포 워크플로(`deploy.yml`)와 감사 워크플로(`review-ci.yml`)는 **분리되어 있고, 감사가 배포를 막지 않는다**. 이유는 AGENTS.md §4의 fail-open 정책과 같다 — CLI 인증/쿼터/일시 장애로 배포 자체가 멈추는 것이 더 큰 손실이다. 대신 두 워크플로 모두 main push에서 함께 돌아 감사 결과는 항상 남는다.
 
 되돌릴 수 없는 변경(세이브 스키마)은 이 게이트에 의존하지 말고 `docs/agents/roles.md` §4의 3단계 확인을 거칠 것.
 
-## 6. 롤백
+## 7. 롤백
 
 배포는 항상 `origin/main`의 상태를 그대로 반영하므로, 롤백은 **되돌리는 커밋을 push하는 것**이다(`git revert <sha> && git push`). 서버에서 수동으로 파일을 고치면 다음 배포의 `reset --hard`에 덮여 사라진다.

@@ -6,8 +6,10 @@
 
 - **무엇**: 『동물의 숲』 모티브 브라우저 게임. **Godot 4.7.1 표준(non-mono) + GDScript + 웹 export**. mono 빌드는 웹 export 불가.
 - **현재 상태**: 코어 루프 최소 1사이클 프로토타입(채집→가방→판매→자동저장, 그레이박스). 이웃 동물/꾸미기/도감은 미구현.
-- **빌드/실행**:
-  - `GODOT_BIN=<표준빌드> ./scripts/build-web.sh` → `build/web/`
+- **빌드/실행** (표준 빌드 경로: `~/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot`, 시스템 `godot`은 mono라 웹 export 불가):
+  - `export GODOT_BIN="$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot"`
+  - `./scripts/verify-project.sh` → 임포트 + 세이브 마이그레이션 테스트 + 기동
+  - `./scripts/build-web.sh` → `build/web/`
   - `node server/index.js` → http://localhost:3001 (COOP/COEP + wasm MIME + `/healthz`)
 - **배포**: main push → self-hosted 러너 → `deploy.bat`(export → schtasks 기동 → `/healthz` 검증). connect_dise와 동일 방식.
 - **텔레그램 알림**: `scripts/telegram-ask.js` (Stop/Notification 훅 연결, 접두어 `[animals_farm]`)

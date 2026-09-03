@@ -34,15 +34,32 @@ case "$VERSION_LINE" in
     ;;
 esac
 
+# Godot은 GDScript 컴파일/런타임 오류가 있어도 종료 코드 0으로 끝난다 —
+# 실제로 game_clock.gd의 컴파일 에러를 이 스크립트가 "통과"로 보고했다
+# (2026-09-04 실측). 출력에서 오류 패턴을 직접 걸러야 게이트가 의미를 가진다.
+ERROR_PATTERN='SCRIPT ERROR|Parse Error|Compile Error|Failed to load script|Invalid call'
+
+run_godot() {
+  local label="$1"; shift
+  local out
+  out="$("$GODOT_BIN" "$@" 2>&1)"
+  echo "$out"
+  if echo "$out" | grep -qE "$ERROR_PATTERN"; then
+    echo "ERROR: $label 단계에서 GDScript 오류가 검출됨(위 로그 참조)."
+    return 1
+  fi
+  return 0
+}
+
 echo "[verify] 리소스 임포트..."
-"$GODOT_BIN" --headless --path . --import
+run_godot "리소스 임포트" --headless --path . --import
 
 echo "[verify] 세이브 마이그레이션 회귀 테스트..."
 # docs/design.md §4가 요구하는 구버전 세이브 로드 테스트 — 세이브 스키마를
 # 건드리는 커밋은 반드시 이걸 통과해야 한다.
-"$GODOT_BIN" --headless --path . --script tests/test_save_migration.gd
+run_godot "세이브 마이그레이션 테스트" --headless --path . --script tests/test_save_migration.gd
 
 echo "[verify] 메인 씬 헤드리스 실행(180프레임)..."
-"$GODOT_BIN" --headless --path . --quit-after 180
+run_godot "메인 씬 기동" --headless --path . --quit-after 180
 
 echo "[verify] 통과 — 임포트/파싱/기동 정상"

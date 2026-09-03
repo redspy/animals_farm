@@ -10,10 +10,15 @@ const SEASONS := ["봄", "여름", "가을", "겨울"]
 static func now() -> Dictionary:
 	return Time.get_datetime_dict_from_system()
 
+## 3~5 봄, 6~8 여름, 9~11 가을, 12~2 겨울 (북반구 기준).
+## 예전 구현은 (a) float에 `%`를 써서 컴파일 자체가 실패했고(GDScript의 `%`는
+## 정수 전용 — fmod()가 필요), (b) 나머지를 3으로 나눠 3월을 "여름"으로
+## 반환했다. 3월이 인덱스 0(봄)이 되도록 -3 시프트한 뒤 계산한다.
+## (2026-09-04 표준 Godot 4.7.1로 실제 기동해서 발견 — mono 빌드로는 헤드리스
+## 실행이 막혀 있어 그때까지 드러나지 않았다.)
 static func season_of(month: int) -> String:
-	# 3~5 봄, 6~8 여름, 9~11 가을, 12~2 겨울 (북반구 기준)
-	var idx := int(floor((float(month) % 12.0) / 3.0))
-	return SEASONS[clampi(idx, 0, 3)]
+	var shifted := ((month - 3) % 12 + 12) % 12
+	return SEASONS[shifted / 3]
 
 static func label() -> String:
 	var t := now()
