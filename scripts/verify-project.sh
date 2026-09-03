@@ -11,7 +11,8 @@ set -e
 cd "$(dirname "$0")/.."
 
 GODOT_BIN="${GODOT_BIN:-godot}"
-EXPECTED_VERSION="${EXPECTED_GODOT_VERSION:-4.7.1}"
+# 고정 버전의 단일 출처는 저장소 루트 .godot-version (deploy.bat도 같은 파일을 읽는다)
+EXPECTED_VERSION="${EXPECTED_GODOT_VERSION:-$(cat .godot-version 2>/dev/null || echo 4.7.1)}"
 
 VERSION_LINE="$("$GODOT_BIN" --version 2>&1 | head -1)"
 echo "[verify] Godot: $VERSION_LINE"

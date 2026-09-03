@@ -102,11 +102,20 @@ func _sell_all() -> void:
 		_show_toast("팔 물건이 없습니다")
 		return
 	var total := 0
+	var unsold := {}
 	for item_id: String in inv.keys():
-		total += int(inv[item_id]) * _price_of(item_id)
+		var price := _price_of(item_id)
+		if price < 0:
+			# 가격을 모르는 아이템은 팔지 않고 가방에 남긴다(손실 방지).
+			unsold[item_id] = inv[item_id]
+			continue
+		total += int(inv[item_id]) * price
 	_save["bells"] = int(_save.get("bells", 0)) + total
-	_save["inventory"] = {}
-	_show_toast("%d벨에 판매했습니다" % total)
+	_save["inventory"] = unsold
+	if unsold.is_empty():
+		_show_toast("%d벨에 판매했습니다" % total)
+	else:
+		_show_toast("%d벨에 판매했습니다 (가격 미상 %d종은 남겨둠)" % [total, unsold.size()])
 	_refresh_hud()
 	SaveManager.save(_save)
 
@@ -115,19 +124,22 @@ func _label_of(item_id: String) -> String:
 	return String(meta.get("label", item_id))
 
 ## 가격은 data/items.json이 유일한 출처이며, 유효범위(price_range)를 벗어난
-## 값은 데이터 오타로 보고 클램프한다 — 밸런스 데이터가 코드 동작을 조용히
-## 망가뜨리지 않게 하기 위함(AGENTS.md 밸런스 규칙).
+## 값은 데이터 오타로 보고 클램프한다. 클램프/경고 규칙은 Balance가 소유해
+## 채집물 쪽과 동일하게 동작한다(2026-09-03 Codex 감사 지적 — 두 곳의 규칙이
+## 서로 달랐다).
 func _price_of(item_id: String) -> int:
-	var meta: Dictionary = _items.get(item_id, {})
-	var price := int(meta.get("sell_price", 0))
-	var range_raw: Variant = meta.get("price_range", null)
-	if typeof(range_raw) == TYPE_ARRAY and (range_raw as Array).size() == 2:
-		var lo := int((range_raw as Array)[0])
-		var hi := int((range_raw as Array)[1])
-		if price < lo or price > hi:
-			push_warning("%s 가격 %d이 유효범위 [%d, %d] 밖 — 클램프" % [item_id, price, lo, hi])
-		price = clampi(price, lo, hi)
-	return price
+	if not _items.has(item_id):
+		# 알 수 없는 아이템을 0벨로 조용히 처리하면 판매 시 가방에서 사라져
+		# 플레이어 손실이 된다 — 판매 대상에서 제외하고 경고를 남긴다.
+		push_warning("data/items.json에 없는 아이템: %s — 판매 제외" % item_id)
+		return -1
+	var meta: Dictionary = _items[item_id]
+	return int(Balance.clamp_value(
+		float(meta.get("sell_price", 0)),
+		meta.get("price_range", null),
+		"%s.sell_price" % item_id,
+		"price"
+	))
 
 func _refresh_hud() -> void:
 	var inv: Dictionary = _save.get("inventory", {})

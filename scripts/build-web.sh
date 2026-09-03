@@ -17,7 +17,8 @@ fi
 
 # 배포 서버가 쓰는 버전(deploy.bat의 GODOT_VERSION)과 다르면 export 결과가
 # 갈릴 수 있으므로 확인한다 — 로컬 검증이 통과했는데 서버에서 깨지는 상황을 막는다.
-EXPECTED_VERSION="${EXPECTED_GODOT_VERSION:-4.7.1}"
+# 고정 버전의 단일 출처는 저장소 루트 .godot-version (deploy.bat도 같은 파일을 읽는다)
+EXPECTED_VERSION="${EXPECTED_GODOT_VERSION:-$(cat .godot-version 2>/dev/null || echo 4.7.1)}"
 
 VERSION_LINE="$("$GODOT_BIN" --version 2>&1 | head -1)"
 echo "[build-web] Godot: $VERSION_LINE (고정 버전: $EXPECTED_VERSION)"

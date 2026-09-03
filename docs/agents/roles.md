@@ -86,9 +86,9 @@ git diff | claude -p "게임 로직 정확성, 상태 동기화/세이브 데이
 `npm run review:code`로 등록됨. 대사/내러티브 톤 검증은 `--model claude-fable-5`로 별도 세션 교차검증.
 
 ### 📖 Codex CLI — Specification Sync Reviewer
-- `AGENTS.md`, `docs/design.md`의 기획·밸런스 규칙과 실제 코드 대조.
+- `AGENTS.md`, `docs/design.md`, `docs/deploy.md`의 기획·밸런스·배포 규칙과 실제 코드 대조(프롬프트의 단일 출처는 `scripts/review.js`의 `DOC_SYNC_PROMPT`).
 ```bash
-codex exec "설계 문서(AGENTS.md, docs/design.md)와 소스 코드 간 정합성 감사" < /dev/null
+npm run review:docs   # scripts/review.js가 프롬프트/타임아웃/fail-open을 소유
 ```
 `npm run review:docs` / `npm run review:write`로 등록됨.
 

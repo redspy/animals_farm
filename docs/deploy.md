@@ -22,9 +22,9 @@ git push origin main  ──────▶  push 이벤트  ──────�
 connect_dise와 **의도적으로 동일한** 선택들:
 
 - **클라우드 빌더를 쓰지 않는다.** 배포 서버 자체가 빌드 머신이다(`runs-on: self-hosted`). 아티팩트 전송·시크릿 배포 경로가 없어 구조가 단순하고, 서버가 곧 최신 소스 트리라 문제 재현이 쉽다.
-- **`git reset --hard origin/main`**: 서버의 로컬 변경을 신뢰하지 않고 항상 원격 상태로 강제 동기화한다(배포 결과가 push된 커밋과 1:1로 대응).
+- **`git reset --hard origin/main`**: 서버의 로컬 변경을 신뢰하지 않고 항상 원격 상태로 강제 동기화한다. 단 `reset --hard`는 추적되지 않는 `build/`를 지우지 않으므로, 배포 결과가 push된 커밋과 1:1로 대응하려면 **export 직전에 `build/web`을 삭제**해야 한다(`deploy.bat` Step 4가 그 일을 한다 — 없으면 export 실패 시 구버전 산출물이 남아 검사를 통과한다).
 - **`schtasks`로 서버 기동**: `start`/`Start-Process`로 띄운 프로세스는 GitHub Actions 러너의 Job Object에 묶여 **job이 끝나는 순간 함께 죽는다**(connect_dise에서 실측, 헬스체크는 job 진행 중이라 통과하는데 직후에 포트가 죽어 있었다). 작업 스케줄러가 관리하는 태스크는 러너와 무관한 독립 프로세스다.
-- **배포 성공 판정 = 실제 HTTP 200**: 프로세스 기동 명령이 성공했다는 것은 서버가 살아 있다는 뜻이 아니다. `/healthz`를 최대 20초 재시도로 확인하고, 실패하면 `server_error.log`를 출력하고 exit 1로 배포를 실패시킨다.
+- **배포 성공 판정 = 실제 HTTP 200**: 프로세스 기동 명령이 성공했다는 것은 서버가 살아 있다는 뜻이 아니다. `/healthz`를 **10회 재시도**(각 요청 타임아웃 3초 + 간격 2초 → 즉시 거절되면 약 20초, 요청이 매번 타임아웃되면 최대 약 50초)로 확인하고, 실패하면 `server_error.log`를 출력하고 exit 1로 배포를 실패시킨다.
 
 animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install && npm run build`(Vite) 대신 **Godot 헤드리스 웹 export**를 돌린다. 서버는 npm 의존성이 0개인 정적 서버(`server/index.js`)라 배포 중 `npm install` 실패 지점이 아예 없다.
 
@@ -39,7 +39,7 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
 4. Node.js 20+ 설치(정적 서버 실행용).
 5. 포트: **3001** (connect_dise가 3000을 쓰므로 충돌을 피한다). 바꾸려면 `GAME_PORT` 환경변수 또는 `deploy.bat` 기본값을 수정.
 
-버전 고정은 `deploy.bat`의 `GODOT_VERSION`이 단일 출처다. 엔진 버전을 올릴 때는 (a) `GODOT_VERSION`, (b) 서버의 실제 바이너리·템플릿, (c) `project.godot`의 `config/features`를 함께 올린다.
+버전 고정의 단일 출처는 저장소 루트의 **`.godot-version`** 파일이다(`deploy.bat`, `scripts/build-web.sh`, `scripts/verify-project.sh`가 모두 이 파일을 읽는다). 엔진 버전을 올릴 때는 (a) `.godot-version`, (b) 서버의 실제 바이너리·템플릿, (c) `project.godot`의 `config/features`를 함께 올린다.
 
 ## 3. 웹 export와 브라우저 헤더
 

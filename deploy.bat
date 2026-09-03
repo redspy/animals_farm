@@ -9,7 +9,10 @@ cd /d %~dp0
 
 REM 배포 서버에서 쓸 Godot 버전을 여기서 고정한다. mono(.NET) 빌드는 웹
 REM export 템플릿이 없으므로 반드시 표준 빌드를 쓴다(docs/deploy.md §2).
-if "%GODOT_VERSION%"=="" set GODOT_VERSION=4.7.1
+REM Godot 버전의 단일 출처는 저장소 루트의 .godot-version 파일이다 —
+REM 예전엔 이 값이 deploy.bat / build-web.sh / verify-project.sh에 각각
+REM 하드코딩돼 독립적으로 드리프트할 수 있었다(2026-09-03 Codex 감사 지적).
+if "%GODOT_VERSION%"=="" set /p GODOT_VERSION=<.godot-version
 if "%GODOT_HOME%"=="" set GODOT_HOME=D:\tools\godot\%GODOT_VERSION%
 if "%GAME_PORT%"=="" set GAME_PORT=3001
 set GODOT_EXE=%GODOT_HOME%\Godot_v%GODOT_VERSION%-stable_win64.exe
@@ -39,7 +42,11 @@ if %ERRORLEVEL% neq 0 (
 )
 
 echo [Step 4] Exporting Web build...
-if not exist build\web mkdir build\web
+REM 이전 빌드를 먼저 지운다 — git reset --hard는 추적되지 않는 build/를
+REM 지우지 않아서, export가 실패해도 구버전 index.html/.wasm이 남아 Step 5의
+REM 산출물 검사를 통과해버릴 수 있었다(2026-09-03 Codex 감사 지적).
+if exist build\web rmdir /s /q build\web
+mkdir build\web
 "%GODOT_EXE%" --headless --path . --export-release "Web" build\web\index.html
 if %ERRORLEVEL% neq 0 (
     echo ERROR: web export failed

@@ -13,10 +13,11 @@
 ## 디렉터리 구조
 
 ```
+.godot-version       Godot 고정 버전의 단일 출처 (deploy.bat/build-web.sh/verify-project.sh가 읽음)
 project.godot        Godot 프로젝트 (GL Compatibility 고정)
 export_presets.cfg   Web export 프리셋 (nothreads)
 scenes/main.tscn     진입 씬 — 나머지 노드는 scripts/main.gd가 코드로 조립
-scripts/*.gd         게임 코드 (main / player / gatherable / save_manager / game_clock)
+scripts/*.gd         게임 코드 (main / player / gatherable / save_manager / game_clock / balance)
 data/*.json          밸런스·배치 데이터 (유효범위 포함, 코드가 클램프)
 server/index.js      웹 빌드 정적 서버 (의존성 0개, COOP/COEP + wasm MIME + /healthz)
 scripts/*.js         개발 프로세스 툴링 (텔레그램, CLI 러너, 리뷰 게이트)
