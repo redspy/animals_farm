@@ -1,6 +1,9 @@
 {
-  "_comment": "채집물 배치와 재생 시간. respawn_sec 유효범위 [10, 86400] — 하루=현실 하루 원칙(docs/design.md §1)에 맞춰 조정.",
-  "schema_version": 1,
+  "_comment": "채집물 배치와 재생 시간. 유효범위는 주석이 아니라 아래 limits 필드가 단일 출처이며, 코드는 이 값으로 클램프하고 경고를 남긴다(docs/design.md §3).",
+  "schema_version": 2,
+  "limits": {
+    "respawn_sec": [10, 86400]
+  },
   "spawns": [
     { "kind": "tree",  "item": "wood",  "x": 220, "y": 180, "respawn_sec": 30 },
     { "kind": "tree",  "item": "fruit", "x": 340, "y": 300, "respawn_sec": 45 },

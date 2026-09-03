@@ -54,11 +54,13 @@ func _build_world() -> void:
 	sea.z_index = -9
 	add_child(sea)
 
-	for spawn: Variant in _load_json("res://data/gatherables.json").get("spawns", []):
+	var spawn_data := _load_json("res://data/gatherables.json")
+	var limits: Dictionary = spawn_data.get("limits", {})
+	for spawn: Variant in spawn_data.get("spawns", []):
 		if typeof(spawn) != TYPE_DICTIONARY:
 			continue
 		var g := Gatherable.new()
-		g.setup(spawn as Dictionary)
+		g.setup(spawn as Dictionary, limits)
 		g.gathered.connect(_on_gathered)
 		add_child(g)
 		_gatherables.append(g)

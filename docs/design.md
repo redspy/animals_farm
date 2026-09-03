@@ -36,7 +36,7 @@
 
 ## 3. 밸런스·경제 데이터 규칙
 
-- 수치는 코드에 흩뿌리지 않고 `data/*.json`에만 둔다. 각 항목은 유효범위를 함께 명시한다(`price_range`, `respawn_sec` 등).
+- 수치는 코드에 흩뿌리지 않고 `data/*.json`에만 둔다. 유효범위도 **주석이 아니라 구조화된 필드**로 데이터에 둔다 — `items.json`은 항목별 `price_range`, `gatherables.json`은 최상위 `limits`(예: `respawn_sec: [10, 86400]`)가 단일 출처다. 코드에 범위를 하드코딩하면 이 규칙이 깨진다(2026-09-03 Codex 감사 지적으로 `gatherable.gd`의 하드코딩 범위를 제거).
 - 코드는 데이터를 읽을 때 유효범위로 **클램프하고 경고를 남긴다**(`main.gd::_price_of`, `gatherable.gd::setup`). 데이터 오타가 조용히 게임 동작을 바꾸지 않게 하기 위함이다.
 - 밸런스 변경은 `data/` 파일만 바뀌어 코드 확장자가 없는 커밋이 되기 쉬운데, pre-commit 게이트는 `.json`도 리뷰 대상에 포함한다(`scripts/review.js`의 diff 필터).
 
@@ -50,7 +50,8 @@
 - `version` 필드는 필수. 마이그레이션은 `SaveManager.migrate()` 한 곳에서만 하고, **각 단계마다 손실 여부를 주석으로 명시**한다.
 - 미래 버전 세이브(다운그레이드)는 마이그레이션하지 않고 `_read_only`로 잠근다 — 신버전에서 만든 데이터를 구버전이 덮어써 잃는 사고를 막는다.
 - 손상된 세이브는 조용히 덮어쓰지 않고 `save.json.corrupt`로 백업한 뒤 새로 시작한다.
-- **스키마 변경 절차**(AGENTS.md §4): TechAnalyst+QAEngineer 페르소나 검토 → 3종 CLI 교차검증 → 구버전 세이브 로드 회귀 테스트. 진행도 손실은 되돌릴 수 없다.
+- v0(버전 필드 없는 세이브) → v1 마이그레이션은 누락 필드를 전부 채운다. `first_played_unix`는 복구 불가능한 정보라 현재 시각으로 채우고 그 사실을 경고로 남긴다.
+- **스키마 변경 절차**(`docs/agents/roles.md` §4): TechAnalyst+QAEngineer 페르소나 검토 → 3종 CLI 교차검증(`npm run panel`) → 구버전 세이브 로드 회귀 테스트. 진행도 손실은 되돌릴 수 없다.
 
 ## 5. 비주얼 가이드라인
 

@@ -15,12 +15,23 @@ if ! command -v "$GODOT_BIN" > /dev/null 2>&1 && [ ! -x "$GODOT_BIN" ]; then
   exit 1
 fi
 
+# 배포 서버가 쓰는 버전(deploy.bat의 GODOT_VERSION)과 다르면 export 결과가
+# 갈릴 수 있으므로 확인한다 — 로컬 검증이 통과했는데 서버에서 깨지는 상황을 막는다.
+EXPECTED_VERSION="${EXPECTED_GODOT_VERSION:-4.7.1}"
+
 VERSION_LINE="$("$GODOT_BIN" --version 2>&1 | head -1)"
-echo "[build-web] Godot: $VERSION_LINE"
+echo "[build-web] Godot: $VERSION_LINE (고정 버전: $EXPECTED_VERSION)"
 case "$VERSION_LINE" in
   *mono*)
     echo "ERROR: mono(.NET) 빌드는 웹 export를 지원하지 않습니다. 표준 빌드를 사용하세요."
     exit 1
+    ;;
+esac
+case "$VERSION_LINE" in
+  ${EXPECTED_VERSION}*) ;;
+  *)
+    echo "WARN: 배포 서버 고정 버전($EXPECTED_VERSION)과 다른 빌드입니다 — 서버 결과와 갈릴 수 있습니다."
+    echo "      의도한 것이면 EXPECTED_GODOT_VERSION 환경변수로 기대 버전을 바꿔 주세요."
     ;;
 esac
 

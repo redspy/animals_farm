@@ -73,7 +73,21 @@ npm run review:docs
 ### 3. Gemini(`agy`) CLI — 비주얼 패리티 리뷰
 - 게임 화면 스크린샷을 `docs/design.md` §5 비주얼 가이드라인과 대조. 가이드라인이 채워진 시점부터 필수 게이트로 승격(`docs/agents/roles.md` §3).
 
-### 4. 개발 프로세스 라이프사이클
+### 4. 어느 단계에 CLI 몇 종을 쓰는가 (원칙과 실제의 대응)
+
+`docs/agents/roles.md` §0은 "정답이 있는 검증은 3종 CLI 교차검증"을 요구하지만, **자동 게이트(pre-commit/CI)는 2종(Claude 코드 리뷰 + Codex 문서 정합성)만 돌린다.** 이 차이는 의도된 것이며, 어긋난 상태로 두지 않기 위해 여기 명시한다(2026-09-03 Codex 감사 지적).
+
+| 단계 | 실행되는 CLI | 기동 방식 |
+|---|---|---|
+| 커밋 게이트(pre-commit) | Claude + Codex (2종) | 자동 — 매 커밋마다 돌아야 하므로 3종은 비용/시간이 과하다 |
+| 원격 CI(review-ci.yml) | Claude + Codex (2종) | 자동 |
+| 버그 원인분석 | **3종 전체** | 수동 `npm run panel "..."` — 원인 판정은 정답이 있는 작업이라 3종 필수 |
+| 세이브 스키마 변경 | **3종 전체** | 수동 `npm run panel "..."` — 되돌릴 수 없는 변경 |
+| 화면 비주얼 검증 | Gemini(`agy`) | 수동 — `docs/design.md` §5가 채워지면 필수 게이트로 승격 |
+
+즉 **3종 교차검증은 자동 게이트가 대신해 주지 않는다.** 위 표의 "3종 전체" 행에 해당하는 작업을 할 때는 반드시 직접 `npm run panel`을 기동할 것.
+
+### 5. 개발 프로세스 라이프사이클
 
 1. **로컬 커밋 예방 단계**: `.git/hooks/pre-commit`이 자동 트리거되어 헤드리스 진단(원본은 `scripts/git-hooks/pre-commit`, `npm install`/`npm run hooks:install`이 복사).
 2. **릴리즈 문서 동기화**: `npm run review:write`로 변경 사안을 문서에 반영.
@@ -83,7 +97,7 @@ npm run review:docs
 
 **의도적인 fail-open 정책**: CLI가 미인증이거나 쿼터를 초과하거나 프로바이더 일시 장애(`API Error: 5xx`, `Overloaded`)로 죽으면 해당 리뷰를 건너뛰고 커밋을 허용한다(5xx 패턴은 2026-09-03 첫 커밋이 실제로 500에 막혀서 추가함). CLI 인증 문제 하나로 개발 전체가 멈추는 것을 피하기 위함이다. **리스크**: 미검증 코드가 커밋될 수 있다 — 세이브 데이터 스키마 변경처럼 되돌릴 수 없는 변경은 이 게이트 하나에 의존하지 말고 `docs/agents/roles.md` §4의 3단계 확인을 반드시 함께 거칠 것.
 
-### 5. 원격 푸쉬 규칙
+### 6. 원격 푸쉬 규칙
 - 모든 구현·검증이 끝나면 `git add` → `git commit` → `git push`로 `origin`(redspy/animals_farm)에 동기화한다.
 - 로컬 셸 프로필 환경변수가 필요하면 `zsh -l -c "명령"`으로 랩핑한다.
 

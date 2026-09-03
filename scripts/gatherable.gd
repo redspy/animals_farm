@@ -17,11 +17,17 @@ var _radius := 18.0
 
 const INTERACT_RADIUS := 44.0
 
-func setup(spawn: Dictionary) -> void:
+## limits는 data/gatherables.json의 "limits"를 그대로 받는다 — 유효범위를
+## 코드에 하드코딩하면 데이터 파일이 단일 출처라는 규칙이 깨진다(2026-09-03
+## pre-commit Codex 감사 지적).
+func setup(spawn: Dictionary, limits: Dictionary = {}) -> void:
 	kind = String(spawn.get("kind", "tree"))
 	item_id = String(spawn.get("item", "wood"))
-	# 유효범위 밖 값은 데이터 오타로 보고 클램프한다(밸런스 데이터 유효범위 규칙).
-	respawn_sec = clampf(float(spawn.get("respawn_sec", 30.0)), 10.0, 86400.0)
+	respawn_sec = _clamp_with_warning(
+		float(spawn.get("respawn_sec", 30.0)),
+		limits.get("respawn_sec", null),
+		"%s.respawn_sec" % item_id
+	)
 	position = Vector2(float(spawn.get("x", 0.0)), float(spawn.get("y", 0.0)))
 	match kind:
 		"tree":
@@ -33,6 +39,18 @@ func setup(spawn: Dictionary) -> void:
 		_:
 			_color = Color(0.45, 0.70, 0.35)
 			_radius = 10.0
+
+## 유효범위 밖 값은 데이터 오타로 보고 클램프하되, 조용히 넘기지 않고 경고를
+## 남긴다 — 밸런스 데이터가 게임 동작을 말없이 바꾸지 않게 하기 위함.
+func _clamp_with_warning(value: float, range_raw: Variant, what: String) -> float:
+	if typeof(range_raw) != TYPE_ARRAY or (range_raw as Array).size() != 2:
+		push_warning("%s: 유효범위가 데이터에 없어 클램프 없이 사용 (%f)" % [what, value])
+		return value
+	var lo := float((range_raw as Array)[0])
+	var hi := float((range_raw as Array)[1])
+	if value < lo or value > hi:
+		push_warning("%s 값 %f이 유효범위 [%f, %f] 밖 — 클램프" % [what, value, lo, hi])
+	return clampf(value, lo, hi)
 
 func is_available() -> bool:
 	return _available

@@ -44,12 +44,22 @@ static func migrate(data: Dictionary) -> Dictionary:
 		push_warning("세이브 버전 %d은 이 빌드(%d)보다 최신 — 읽기만 하고 저장은 막는다" % [version, CURRENT_VERSION])
 		data["_read_only"] = true
 		return data
-	# v0(버전 필드 없음) → v1: 필드 기본값만 채움, 손실 없음.
+	# v0(버전 필드 없음) → v1: 누락 필드를 기본값으로 채움, 기존 값 손실 없음.
+	# first_played_unix가 없는 구세이브는 "언제 시작했는지" 정보를 복구할 수
+	# 없으므로 현재 시각으로 채운다(그 사실을 경고로 남긴다) — 예전에는 이
+	# 필드를 아예 채우지 않아 저장 후에도 계속 누락된 채 남았다(2026-09-03
+	# pre-commit Codex 감사 지적).
 	if version < 1:
 		data["version"] = 1
 		data["bells"] = int(data.get("bells", 0))
 		if typeof(data.get("inventory")) != TYPE_DICTIONARY:
 			data["inventory"] = {}
+		var now := int(Time.get_unix_time_from_system())
+		if int(data.get("last_played_unix", 0)) <= 0:
+			data["last_played_unix"] = now
+		if int(data.get("first_played_unix", 0)) <= 0:
+			push_warning("구세이브에 first_played_unix가 없어 현재 시각으로 채움(원래 시작 시각은 복구 불가)")
+			data["first_played_unix"] = now
 	return data
 
 static func save(data: Dictionary) -> bool:

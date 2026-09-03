@@ -10,7 +10,7 @@ config_version=5
 config/name="Animals Farm"
 config/description="동물의 숲 모티브 웹 게임"
 run/main_scene="res://scenes/main.tscn"
-config/features=PackedStringArray("4.6", "GL Compatibility")
+config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]
 
