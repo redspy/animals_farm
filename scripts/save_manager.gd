@@ -31,9 +31,16 @@ static func load_save() -> Dictionary:
 	var parsed: Variant = JSON.parse_string(text)
 	if typeof(parsed) != TYPE_DICTIONARY:
 		# 손상된 세이브를 조용히 덮어쓰지 않는다 — 백업을 남기고 새로 시작한다.
-		_backup_corrupt(text)
-		push_warning("세이브가 손상됨 — .corrupt 백업 후 새 세이브로 시작")
-		return default_save()
+		# 백업까지 실패하면 원본이 유일한 사본이므로 저장을 막는다(_read_only) —
+		# 안 그러면 다음 자동 저장이 복구 가능했을지 모를 데이터를 덮어쓴다
+		# (2026-09-03 Codex 감사 지적).
+		var fresh := default_save()
+		if _backup_corrupt(text):
+			push_warning("세이브가 손상됨 — .corrupt 백업 후 새 세이브로 시작")
+		else:
+			push_error("세이브가 손상됐고 백업도 실패 — 원본 보존을 위해 저장을 막는다(읽기 전용)")
+			fresh["_read_only"] = true
+		return fresh
 	return migrate(parsed as Dictionary)
 
 ## 구버전 세이브를 현재 스키마로 올린다. 각 단계는 손실 여부를 주석에 명시할 것.
@@ -76,8 +83,10 @@ static func save(data: Dictionary) -> bool:
 	f.close()
 	return true
 
-static func _backup_corrupt(text: String) -> void:
+static func _backup_corrupt(text: String) -> bool:
 	var f := FileAccess.open(SAVE_PATH + ".corrupt", FileAccess.WRITE)
-	if f != null:
-		f.store_string(text)
-		f.close()
+	if f == null:
+		return false
+	f.store_string(text)
+	f.close()
+	return FileAccess.file_exists(SAVE_PATH + ".corrupt")
