@@ -13,9 +13,13 @@
     "postinstall": "node scripts/install-git-hooks.js",
     "hooks:install": "node scripts/install-git-hooks.js",
     "panel": "node scripts/cli-runner.js",
-    "review:staged": "node scripts/review.js --staged"
+    "review:staged": "node scripts/review.js --staged",
+    "test:browser": "node tests/browser-smoke.mjs"
   },
   "keywords": [],
   "author": "",
-  "license": "UNLICENSED"
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "playwright": "^1.60.0"
+  }
 }

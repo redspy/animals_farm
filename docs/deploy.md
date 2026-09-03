@@ -60,7 +60,16 @@ node server/index.js            # http://localhost:3001
 curl -s localhost:3001/healthz  # {"ok":true,...}
 ```
 
-두 스크립트는 (a) mono 빌드, (b) `.godot-version`과 다른 버전, (c) 출력에 섞인 GDScript 오류를 각각 감지해 실패한다. (c)가 필요한 이유: **Godot은 GDScript 컴파일/런타임 오류가 있어도 종료 코드 0으로 끝난다** — 실제로 `game_clock.gd`의 컴파일 에러를 초기 게이트가 "통과"로 보고했다(2026-09-04 실측).
+```bash
+npm run test:browser            # build/web를 서버에 올려 Chromium으로 기동·입력·채집·판매 확인
+```
+
+두 Godot 스크립트는 (a) mono 빌드, (b) `.godot-version`과 다른 버전, (c) 출력에 섞인 GDScript 오류를 각각 감지해 실패한다. (c)가 필요한 이유: **Godot은 GDScript 컴파일/런타임 오류가 있어도 종료 코드 0으로 끝난다** — 실제로 `game_clock.gd`의 컴파일 에러를 초기 게이트가 "통과"로 보고했다(2026-09-04 실측).
+
+### 실측으로 확인된 웹 전용 함정
+
+- **한글이 두부(□)로 렌더링**: Godot 기본 폰트에는 한글 글리프가 없고 **웹에는 시스템 폰트 폴백이 없다**. `assets/fonts/NotoSansKR-Regular.otf`(OFL)를 임베드하고 `project.godot`의 `gui/theme/custom_font`로 지정해 해결했다. 데스크톱 헤드리스 검증에서는 드러나지 않고 브라우저에서만 보이는 문제라, `npm run test:browser`가 이 계층을 담당한다.
+  - 대가: 폰트 때문에 `index.pck`가 약 4MB로 늘었다. 첫 로딩이 문제되면 필요한 글리프만 서브셋한 폰트로 교체하는 것이 다음 단계다(현재는 전체 KR 서브셋 OTF).
 
 ### 실측으로 확인된 export 함정
 
@@ -74,8 +83,9 @@ curl -s localhost:3001/healthz  # {"ok":true,...}
 | 세이브 마이그레이션 회귀 테스트 | ✅ 로컬 실측 통과 |
 | 웹 export 산출물(index.html/.wasm/.pck) | ✅ 로컬 실측 생성 |
 | 정적 서버 MIME·COOP/COEP·`/healthz` | ✅ 로컬 실측 통과 |
+| 브라우저 기동·입력·채집·판매 1사이클 | ✅ 로컬 실측 통과(`npm run test:browser`, Chromium) |
 | **배포 서버 파이프라인(deploy.bat 전체)** | ⚠️ **미검증** — Windows 서버에서 첫 배포를 돌려봐야 한다. 서버에 Godot 4.7.1 표준 + export 템플릿 설치가 선행 조건(§2) |
-| 브라우저 실제 플레이(입력·렌더) | ⚠️ 미검증 — 로컬 서버로 열어 확인 필요 |
+| 모바일 브라우저 / 터치 조작 | ⚠️ 미검증 — 터치 조작 자체가 미구현 |
 
 ## 6. 리뷰 게이트와의 관계
 

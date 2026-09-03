@@ -17,7 +17,8 @@
 project.godot        Godot 프로젝트 (GL Compatibility 고정)
 export_presets.cfg   Web export 프리셋 (nothreads)
 scenes/main.tscn     진입 씬 — 나머지 노드는 scripts/main.gd가 코드로 조립
-tests/               헤드리스 테스트 + 픽스처 (세이브 마이그레이션 회귀)
+tests/               헤드리스 테스트 + 픽스처 (세이브 마이그레이션 회귀, 브라우저 스모크)
+assets/fonts/        임베드 한글 폰트 (Noto Sans KR, OFL — 웹은 시스템 폰트 폴백이 없음)
 scripts/*.gd         게임 코드 (main / player / gatherable / save_manager / game_clock / balance)
 data/*.json          밸런스·배치 데이터 (유효범위 포함, 코드가 클램프)
 server/index.js      웹 빌드 정적 서버 (의존성 0개, COOP/COEP + wasm MIME + /healthz)
@@ -28,7 +29,9 @@ deploy.bat           배포 서버에서 실행되는 배포 스크립트
 ## 실행/빌드
 
 ```bash
-godot --path .                       # 에디터로 열기 (표준 빌드 필요)
+export GODOT_BIN="$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot"   # 시스템 godot은 mono라 웹 export 불가
+./scripts/verify-project.sh          # 임포트 + 세이브 마이그레이션 테스트 + 기동
+npm run test:browser                 # 브라우저 스모크 (build/web 필요)
 GODOT_BIN=<표준빌드> ./scripts/build-web.sh   # 웹 export → build/web/
 node server/index.js                 # http://localhost:3001 로 웹 빌드 서빙
 ```
