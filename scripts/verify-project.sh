@@ -25,12 +25,22 @@ esac
 case "$VERSION_LINE" in
   ${EXPECTED_VERSION}*) ;;
   *)
-    echo "WARN: 고정 버전($EXPECTED_VERSION)과 다릅니다 — 배포 서버와 결과가 갈릴 수 있습니다."
+    if [ "${ALLOW_GODOT_VERSION_MISMATCH:-0}" != "1" ]; then
+      echo "ERROR: 고정 버전($EXPECTED_VERSION)이 아닌 빌드입니다."
+      echo "       의도한 것이면 ALLOW_GODOT_VERSION_MISMATCH=1 로 다시 실행하세요."
+      exit 1
+    fi
+    echo "WARN: 고정 버전과 다른 빌드로 계속합니다(ALLOW_GODOT_VERSION_MISMATCH=1)."
     ;;
 esac
 
 echo "[verify] 리소스 임포트..."
 "$GODOT_BIN" --headless --path . --import
+
+echo "[verify] 세이브 마이그레이션 회귀 테스트..."
+# docs/design.md §4가 요구하는 구버전 세이브 로드 테스트 — 세이브 스키마를
+# 건드리는 커밋은 반드시 이걸 통과해야 한다.
+"$GODOT_BIN" --headless --path . --script tests/test_save_migration.gd
 
 echo "[verify] 메인 씬 헤드리스 실행(180프레임)..."
 "$GODOT_BIN" --headless --path . --quit-after 180

@@ -52,6 +52,7 @@
 - 미래 버전 세이브(다운그레이드)는 마이그레이션하지 않고 `_read_only`로 잠근다 — 신버전에서 만든 데이터를 구버전이 덮어써 잃는 사고를 막는다.
 - 손상된 세이브는 조용히 덮어쓰지 않고 `save.json.corrupt`로 백업한 뒤 새로 시작한다.
 - v0(버전 필드 없는 세이브) → v1 마이그레이션은 누락 필드를 전부 채운다. `first_played_unix`는 복구 불가능한 정보라 현재 시각으로 채우고 그 사실을 경고로 남긴다.
+- **회귀 테스트**: `tests/test_save_migration.gd`(v0→v1 필드/값 보존, 미래 버전 읽기 전용, 손상 세이브 폴백). `./scripts/verify-project.sh`가 실행한다 — 표준 Godot 빌드가 필요하다.
 - **스키마 변경 절차**(`docs/agents/roles.md` §4): TechAnalyst+QAEngineer 페르소나 검토 → 3종 CLI 교차검증(`npm run panel`) → 구버전 세이브 로드 회귀 테스트. 진행도 손실은 되돌릴 수 없다.
 
 ## 5. 비주얼 가이드라인

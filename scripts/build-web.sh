@@ -31,11 +31,21 @@ esac
 case "$VERSION_LINE" in
   ${EXPECTED_VERSION}*) ;;
   *)
-    echo "WARN: 배포 서버 고정 버전($EXPECTED_VERSION)과 다른 빌드입니다 — 서버 결과와 갈릴 수 있습니다."
-    echo "      의도한 것이면 EXPECTED_GODOT_VERSION 환경변수로 기대 버전을 바꿔 주세요."
+    # 경고만 하고 통과시키면 4.8 등 다른 버전으로도 로컬 검증이 통과해
+    # "고정 버전"이 실질적으로 강제되지 않는다(2026-09-03 Codex 감사 지적).
+    if [ "${ALLOW_GODOT_VERSION_MISMATCH:-0}" != "1" ]; then
+      echo "ERROR: 고정 버전($EXPECTED_VERSION)이 아닌 빌드입니다 — 배포 서버와 결과가 갈릴 수 있습니다."
+      echo "       의도한 것이면 ALLOW_GODOT_VERSION_MISMATCH=1 로 다시 실행하거나 .godot-version을 갱신하세요."
+      exit 1
+    fi
+    echo "WARN: 고정 버전과 다른 빌드로 계속합니다(ALLOW_GODOT_VERSION_MISMATCH=1)."
     ;;
 esac
 
+# 배포(deploy.bat Step 4)와 동일하게 이전 산출물을 지운다 — 지우지 않으면
+# 삭제된 에셋이나 구버전 파일이 로컬 결과에 남아 "같은 빌드 재현"이 깨진다
+# (2026-09-03 Codex 감사 지적).
+rm -rf build/web
 mkdir -p build/web
 echo "[build-web] 리소스 임포트..."
 "$GODOT_BIN" --headless --path . --import

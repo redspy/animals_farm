@@ -17,6 +17,7 @@
 project.godot        Godot 프로젝트 (GL Compatibility 고정)
 export_presets.cfg   Web export 프리셋 (nothreads)
 scenes/main.tscn     진입 씬 — 나머지 노드는 scripts/main.gd가 코드로 조립
+tests/               헤드리스 테스트 + 픽스처 (세이브 마이그레이션 회귀)
 scripts/*.gd         게임 코드 (main / player / gatherable / save_manager / game_clock / balance)
 data/*.json          밸런스·배치 데이터 (유효범위 포함, 코드가 클램프)
 server/index.js      웹 빌드 정적 서버 (의존성 0개, COOP/COEP + wasm MIME + /healthz)
@@ -70,6 +71,7 @@ npm run review:staged    # 스테이징된 변경 리뷰 (pre-commit이 쓰는 �
 npm run review:docs
 ```
 - `AGENTS.md`, `docs/design.md`, `docs/deploy.md`와 실제 코드를 대조한다. 백그라운드 실행 시 stdin이 닫혀야 무한 대기하지 않는다(`cli-runner.js`가 처리).
+- ⚠️ 이 명령은 **Codex 단독**이며 그것으로 §0의 3종 교차검증이 충족되지는 않는다 — 어느 단계에 몇 종이 필요한지는 아래 §4 표가 단일 출처다. 3종이 필요한 작업은 `npm run panel`을 직접 기동해야 하고, panel은 2종 이상 성공하지 못하면 exit 1로 실패한다.
 
 ### 3. Gemini(`agy`) CLI — 비주얼 패리티 리뷰
 - 게임 화면 스크린샷을 `docs/design.md` §5 비주얼 가이드라인과 대조. 가이드라인이 채워진 시점부터 필수 게이트로 승격(`docs/agents/roles.md` §3).

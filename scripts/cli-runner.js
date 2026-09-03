@@ -110,4 +110,14 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(`\n===== ${r.cli} =====`);
     console.log(r.ok ? r.output : `⚠️ 실패: ${r.error}`);
   }
+  // 교차검증의 의미는 "서로 독립된 관점 2개 이상"에서 나온다. 전부(또는 2개
+  // 이상) 실패했는데 exit 0으로 끝나면 호출한 쪽이 "3종 교차검증을 했다"고
+  // 오인한다 — 실제로 3종 모두 권한 문제로 실패했는데 성공으로 보였다
+  // (2026-09-03 Codex 감사 지적). quorum(2종) 미달이면 실패로 종료한다.
+  const ok = results.filter((r) => r.ok).length;
+  console.log(`\n===== 요약 =====\n성공 ${ok}/3`);
+  if (ok < 2) {
+    console.error(`❌ 교차검증 quorum 미달(성공 ${ok}/3) — 최소 2종의 독립 리포트가 필요합니다.`);
+    process.exit(1);
+  }
 }

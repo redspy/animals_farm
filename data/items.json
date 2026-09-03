@@ -1,5 +1,5 @@
 {
-  "_comment": "밸런스 데이터는 코드에 흩뿌리지 않고 이 파일에서만 정의한다(AGENTS.md 밸런스 규칙). 값마다 유효범위를 주석으로 남긴다.",
+  "_comment": "밸런스 데이터는 코드에 흩뿌리지 않고 이 파일에서만 정의한다(AGENTS.md 밸런스 규칙). 유효범위는 주석이 아니라 항목별 price_range 필드가 단일 출처이며, 코드(Balance.clamp_value)가 이 값으로 클램프하고 경고를 남긴다.",
   "schema_version": 1,
   "items": {
     "wood": { "label": "나무", "sell_price": 60, "price_range": [10, 500] },
