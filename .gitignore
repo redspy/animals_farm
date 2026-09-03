@@ -18,3 +18,13 @@ __pycache__/
 
 logs/
 secrets/
+
+# Godot
+.godot/
+build/
+*.translation
+export_presets.cfg.local
+
+# 배포 서버 런타임 로그
+server.log
+server_error.log

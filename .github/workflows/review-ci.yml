@@ -1,0 +1,59 @@
+name: Headless Agent Audit CI
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  agent-audit:
+    # 포크 PR은 시크릿에 접근하지 못하게 차단 — diff 내용이 공격자 통제 하에
+    # 있는 prompt injection 벡터이므로 같은 저장소 PR/push에서만 실행한다.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run Claude Code CLI Audit
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "Skipping Claude Code: ANTHROPIC_API_KEY secret is not set."
+            exit 0
+          fi
+          # GitHub Actions의 기본 셸은 `bash -e`라 command substitution 실패가
+          # 스텝을 즉시 중단시켜 아래 fail-open 판정이 실행조차 안 된다.
+          # 이 스텝 동안만 명시적으로 끈다(trading에서 실측된 이슈).
+          # review.js는 PATH의 `claude`를 찾으므로 전역 설치한다
+          # (프롬프트/세션ID/fail-open 판정의 단일 출처를 CI도 그대로 쓴다).
+          npm i -g @anthropic-ai/claude-code > /dev/null 2>&1
+          set +e
+          OUTPUT=$(node scripts/review.js --last 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          exit $STATUS
+
+      - name: Run Codex Document Sync Audit
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "Skipping Codex: OPENAI_API_KEY secret is not set."
+            exit 0
+          fi
+          npm i -g @openai/codex > /dev/null 2>&1
+          set +e
+          OUTPUT=$(node scripts/review.js --docs 2>&1)
+          STATUS=$?
+          set -e
+          echo "$OUTPUT"
+          exit $STATUS

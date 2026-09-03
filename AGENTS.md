@@ -4,9 +4,32 @@
 
 ## 프로젝트 개요
 
-- **목표**: 게임 개발. 장르·기술스택·플랫폼은 **아직 미확정**이다(2026-09-03 기준). 이 저장소는 먼저 **개발 프로세스(모델별 페르소나 + 텔레그램 푸쉬 + 3종 CLI 교차검증)**만 이식한 상태다.
-- **확정된 것**: 원격 저장소 `https://github.com/redspy/animals_farm.git`, 에이전트 역할 정의(`docs/agents/roles.md`), 텔레그램 알림 파이프라인(`scripts/telegram-*.js`), 헤드리스 CLI 러너(`scripts/cli-runner.js`).
-- **미확정된 것**: 게임 장르/코어 루프, 엔진·언어, 디렉터리 구조, 빌드/실행 스크립트. 확정 전까지 `docs/design.md`는 "미확정" 상태를 정직하게 표시한다 — 빈 문서를 억지로 채우지 않는다.
+- **목표**: 닌텐도 스위치 『동물의 숲』을 모티브로 한 **브라우저 게임**. 원작 IP 자산(캐릭터·이름·에셋·음악)은 쓰지 않고 게임 구조만 차용한다(`docs/design.md` §0).
+- **스택**: **Godot 4.7.1 표준(non-mono) 빌드 + GDScript + 웹(HTML5) export**. mono(.NET) 빌드는 웹 export 템플릿이 없어 사용 불가(2026-09-03 실측).
+- **배포**: connect_dise와 동일한 **서버 직배포** — main push → self-hosted 러너 → `git reset --hard` → `deploy.bat`(Godot 웹 export → `schtasks` 독립 기동 → `/healthz` 검증). 상세는 `docs/deploy.md`.
+- **원격 저장소**: `https://github.com/redspy/animals_farm.git`
+- **현재 구현 상태**: 코어 루프 최소 1사이클 프로토타입(채집 → 가방 → 판매 → 자동 저장, 그레이박스). 이웃 동물/꾸미기/도감/멀티플레이·아트 톤은 미확정 — `docs/design.md`는 미확정 항목을 정직하게 "미확정"으로 남긴다(빈 문서를 억지로 채우면 Codex 문서 정합성 감사가 존재하지 않는 스펙으로 코드를 지적하게 된다).
+
+## 디렉터리 구조
+
+```
+project.godot        Godot 프로젝트 (GL Compatibility 고정)
+export_presets.cfg   Web export 프리셋 (nothreads)
+scenes/main.tscn     진입 씬 — 나머지 노드는 scripts/main.gd가 코드로 조립
+scripts/*.gd         게임 코드 (main / player / gatherable / save_manager / game_clock)
+data/*.json          밸런스·배치 데이터 (유효범위 포함, 코드가 클램프)
+server/index.js      웹 빌드 정적 서버 (의존성 0개, COOP/COEP + wasm MIME + /healthz)
+scripts/*.js         개발 프로세스 툴링 (텔레그램, CLI 러너, 리뷰 게이트)
+deploy.bat           배포 서버에서 실행되는 배포 스크립트
+```
+
+## 실행/빌드
+
+```bash
+godot --path .                       # 에디터로 열기 (표준 빌드 필요)
+GODOT_BIN=<표준빌드> ./scripts/build-web.sh   # 웹 export → build/web/
+node server/index.js                 # http://localhost:3001 로 웹 빌드 서빙
+```
 
 ## 알림 (텔레그램 푸쉬)
 
@@ -14,7 +37,7 @@
   - `--notify "메시지"`: 응답 대기 없이 단방향 전송(작업 완료 알림 등). `npm run notify "메시지"`.
   - `"질문" "옵션1" "옵션2" [--timeout=분]`: 인라인 버튼으로 질문을 보내고 사용자가 누를 때까지 대기해 선택값을 stdout(JSON)으로 반환. `npm run ask -- "질문" "A" "B"`.
   - `--get-chat-id`: 봇 최초 설정 시 CHAT_ID 확인.
-- Claude Code 훅 연결(`.claude/settings.local.json`):
+- Claude Code 훅 연결(`.claude/settings.local.json` — **이 파일은 `.gitignore` 대상이라 clone에 따라오지 않는다.** 추적되는 `.claude/settings.example.json`을 복사한 뒤 절대경로를 자기 환경에 맞게 고쳐 쓸 것. 절대경로를 쓰는 이유는 훅이 로그인 셸을 거치지 않아 PATH·cwd를 신뢰할 수 없기 때문이다):
   - **Stop 훅** → `scripts/telegram-stop-hook.js`: 응답 턴이 끝나면 transcript의 마지막 assistant 텍스트를 500자로 잘라 전송.
   - **Notification 훅** → `scripts/telegram-notification-hook.js`: 권한 승인 대기·`AskUserQuestion` 대기처럼 **턴 중간에 멈춰서 기다리는 시점**을 잡는다(Stop은 턴이 완전히 끝날 때만 발동해서 이 시점을 못 잡음 — connect_dise/trading에서 실측).
   - 두 훅 모두 실패해도 exit 0으로 종료해 Claude 진행을 막지 않는다.
@@ -33,24 +56,30 @@
 
 ### 1. Claude CLI — 게임 로직/보안 리뷰
 ```bash
-git diff | claude -p "게임 로직 정확성, 상태 동기화/세이브 데이터 정합성, 밸런스 데이터 유효범위, 성능(프레임/GC/할당), 시크릿 하드코딩 여부 리뷰" --allowedTools "Read"
+npm run review:code      # 직전 커밋 리뷰
+npm run review:staged    # 스테이징된 변경 리뷰 (pre-commit이 쓰는 것과 동일)
 ```
-- ⚠️ **게이트의 실제 동작**: pre-commit 훅은 CLI의 **종료 코드**만 보고 판단한다. 리뷰 텍스트가 "치명적"이라고 지적해도 프로세스가 정상 종료(exit 0)하면 커밋은 진행된다 — 즉 이 리뷰는 자동 차단 게이트가 아니라 **읽고 판단해야 하는 조언**이다.
+- 리뷰 프롬프트·CLI 호출·fail-open 판정은 **`scripts/review.js`가 유일한 출처**다. 예전에는 package.json / pre-commit / AGENTS.md에 프롬프트 사본이 흩어져 있었고 그 사본들에는 `--session-id`가 빠져 있어 "검증용 Claude는 별도 세션으로 기동한다"는 규칙(`docs/agents/roles.md` §0)이 실제로는 깨져 있었다(2026-09-03 pre-commit Codex 감사 지적). **어떤 스크립트에서도 `claude -p`를 직접 호출하지 말 것** — `scripts/cli-runner.js`의 `runClaude`가 매번 새 `--session-id`를 붙인다.
+- ⚠️ **게이트의 실제 동작**: 게이트는 CLI의 **종료 코드**만 본다. 리뷰 텍스트가 "치명적"이라고 지적해도 프로세스가 정상 종료하면 커밋은 진행된다 — 즉 이 리뷰는 자동 차단 게이트가 아니라 **읽고 판단해야 하는 조언**이다.
+- 리뷰 타임아웃은 10분이고, 타임아웃 시에도 커밋은 진행된다(fail-open) — 다만 "리뷰가 완료되지 않았다"를 명시해 사람이 직접 확인하게 한다. 타임아웃으로 커밋을 막으면 큰 커밋일수록 `--no-verify`로 게이트를 우회하게 되어 검증이 오히려 줄어든다.
+- diff가 180,000자를 넘으면 앞부분만 리뷰에 포함되고, **잘렸다는 사실을 출력에 명시**한다(조용한 truncation은 "전부 봤다"는 오해를 만든다).
 
 ### 2. Codex CLI — 문서 정합성 싱크 검사
 ```bash
-codex exec "설계 문서(AGENTS.md, docs/design.md)와 소스 코드 간 정합성 감사" < /dev/null
+npm run review:docs
 ```
-- 백그라운드 실행 시 stdin을 `< /dev/null`로 리다이렉트할 것(무한 대기 방지, 실측).
+- `AGENTS.md`, `docs/design.md`, `docs/deploy.md`와 실제 코드를 대조한다. 백그라운드 실행 시 stdin이 닫혀야 무한 대기하지 않는다(`cli-runner.js`가 처리).
 
 ### 3. Gemini(`agy`) CLI — 비주얼 패리티 리뷰
-- 게임 화면 스크린샷을 `docs/design.md` 비주얼 가이드라인과 대조. 가이드라인이 채워진 시점부터 필수 게이트로 승격(`docs/agents/roles.md` §3).
+- 게임 화면 스크린샷을 `docs/design.md` §5 비주얼 가이드라인과 대조. 가이드라인이 채워진 시점부터 필수 게이트로 승격(`docs/agents/roles.md` §3).
 
-### 4. 3대 개발 프로세스 라이프사이클
+### 4. 개발 프로세스 라이프사이클
 
 1. **로컬 커밋 예방 단계**: `.git/hooks/pre-commit`이 자동 트리거되어 헤드리스 진단(원본은 `scripts/git-hooks/pre-commit`, `npm install`/`npm run hooks:install`이 복사).
 2. **릴리즈 문서 동기화**: `npm run review:write`로 변경 사안을 문서에 반영.
 3. **3종 병렬 패널**: `npm run panel "프롬프트"`로 Claude/Codex/Gemini를 동시 기동해 리포트 비교.
+4. **원격 감사 CI**: `.github/workflows/review-ci.yml`이 PR/push에서 같은 `scripts/review.js`를 돌린다.
+5. **배포**: `.github/workflows/deploy.yml`(self-hosted) → `deploy.bat`. 감사 워크플로와 분리되어 있어 감사 실패가 배포를 막지 않는다(`docs/deploy.md` §5).
 
 **의도적인 fail-open 정책**: CLI가 미인증이거나 쿼터를 초과하거나 프로바이더 일시 장애(`API Error: 5xx`, `Overloaded`)로 죽으면 해당 리뷰를 건너뛰고 커밋을 허용한다(5xx 패턴은 2026-09-03 첫 커밋이 실제로 500에 막혀서 추가함). CLI 인증 문제 하나로 개발 전체가 멈추는 것을 피하기 위함이다. **리스크**: 미검증 코드가 커밋될 수 있다 — 세이브 데이터 스키마 변경처럼 되돌릴 수 없는 변경은 이 게이트 하나에 의존하지 말고 `docs/agents/roles.md` §4의 3단계 확인을 반드시 함께 거칠 것.
 

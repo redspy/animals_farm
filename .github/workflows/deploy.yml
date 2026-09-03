@@ -1,0 +1,24 @@
+name: Web Auto Deploy
+
+# connect_dise와 동일한 방식: 사용자 소유 서버에 등록된 self-hosted 러너가
+# main push를 받아 그 자리에서 최신 코드로 리셋하고 배포 스크립트를 돌린다.
+# (클라우드 빌더 → 아티팩트 → 배포 대상 전송 구조가 아니라, 서버가 곧 빌드
+# 머신이다. docs/deploy.md §1 참고)
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Run deployment script
+        shell: cmd
+        run: |
+          cd /d D:\Source\animals_farm
+          git fetch origin main
+          git reset --hard origin/main
+          call D:\Source\animals_farm\deploy.bat

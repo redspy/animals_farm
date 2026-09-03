@@ -7,12 +7,13 @@
   "scripts": {
     "notify": "node scripts/telegram-ask.js --notify",
     "ask": "node scripts/telegram-ask.js",
-    "review:code": "zsh -l -c \"git diff $(git rev-parse --verify -q HEAD~1 >/dev/null 2>&1 && echo HEAD~1 || git hash-object -t tree /dev/null) | claude -p '게임 로직 정확성, 상태 동기화/세이브 데이터 정합성, 성능(프레임/GC), 시크릿 하드코딩 여부 리뷰' --allowedTools 'Read'\"",
-    "review:docs": "zsh -l -c \"codex exec '설계 문서(AGENTS.md, docs/design.md)와 소스 코드 간 정합성 감사' < /dev/null\"",
+    "review:code": "node scripts/review.js --last",
+    "review:docs": "node scripts/review.js --docs",
     "review:write": "zsh -l -c \"codex exec --sandbox workspace-write '요구사항과 구현 코드의 불일치 분석 및 자동 문서 갱신' < /dev/null\"",
     "postinstall": "node scripts/install-git-hooks.js",
     "hooks:install": "node scripts/install-git-hooks.js",
-    "panel": "node scripts/cli-runner.js"
+    "panel": "node scripts/cli-runner.js",
+    "review:staged": "node scripts/review.js --staged"
   },
   "keywords": [],
   "author": "",

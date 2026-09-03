@@ -1,0 +1,10 @@
+{
+  "_comment": "밸런스 데이터는 코드에 흩뿌리지 않고 이 파일에서만 정의한다(AGENTS.md 밸런스 규칙). 값마다 유효범위를 주석으로 남긴다.",
+  "schema_version": 1,
+  "items": {
+    "wood": { "label": "나무", "sell_price": 60, "price_range": [10, 500] },
+    "fruit": { "label": "과일", "sell_price": 100, "price_range": [10, 500] },
+    "shell": { "label": "조개", "sell_price": 180, "price_range": [10, 500] },
+    "weed": { "label": "잡초", "sell_price": 10, "price_range": [1, 100] }
+  }
+}

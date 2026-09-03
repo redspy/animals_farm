@@ -31,10 +31,21 @@ function loadEnv() {
 }
 loadEnv();
 
+// CLI 경로 해석 순서: 환경변수 → 이 머신의 알려진 절대경로 → PATH의 bare 이름.
+// bare 이름 폴백이 필요한 이유: CI 러너(ubuntu)에는 로컬 절대경로가 존재하지
+// 않고 전역 설치된 실행 파일만 PATH에 있다. 반대로 Claude Code 훅처럼 로그인
+// 셸을 거치지 않는 환경에서는 PATH가 비어 절대경로가 필요하다.
+function resolveCli(envVar, knownPath, bareName) {
+  const fromEnv = process.env[envVar];
+  if (fromEnv) return fromEnv;
+  if (fs.existsSync(knownPath)) return knownPath;
+  return bareName;
+}
+
 export const CLI_PATHS = {
-  claude: process.env.CLAUDE_CLI_PATH || '/Users/soul/.local/bin/claude',
-  codex: process.env.CODEX_CLI_PATH || '/usr/local/bin/codex',
-  gemini: process.env.GEMINI_CLI_PATH || '/Users/soul/.local/bin/agy',
+  claude: resolveCli('CLAUDE_CLI_PATH', '/Users/soul/.local/bin/claude', 'claude'),
+  codex: resolveCli('CODEX_CLI_PATH', '/usr/local/bin/codex', 'codex'),
+  gemini: resolveCli('GEMINI_CLI_PATH', '/Users/soul/.local/bin/agy', 'agy'),
 };
 
 export class HeadlessCLIError extends Error {}

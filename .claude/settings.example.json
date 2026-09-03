@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git pull:*)",
+      "Bash(git fetch:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(npm run:*)",
+      "Bash(npm install *)",
+      "Bash(node scripts/telegram-ask.js:*)",
+      "Bash(node scripts/cli-runner.js:*)",
+      "WebSearch"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /Users/soul/Source/animals_farm/scripts/telegram-stop-hook.js",
+            "timeout": 20,
+            "statusMessage": "텔레그램 알림 전송 중..."
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node /Users/soul/Source/animals_farm/scripts/telegram-notification-hook.js",
+            "timeout": 20,
+            "statusMessage": "텔레그램 알림 전송 중..."
+          }
+        ]
+      }
+    ]
+  }
+}
