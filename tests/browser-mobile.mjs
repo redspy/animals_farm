@@ -258,6 +258,11 @@ await page.waitForTimeout(1200);
 const afterSheetTap = lastPos(token)?.x ?? 0;
 check(Math.abs(afterSheetTap - beforeSheetTap) < 0.3, '시트가 열린 동안의 탭은 이동으로 새지 않는다');
 
+// 바위 우회 검증은 데스크톱 테스트(test:multiplayer)에서 한다 — 폰 화면은
+// 아래쪽 절반이 조이스틱·버튼 영역이라, 바위 건너편 지점의 화면 좌표가 그
+// 영역에 겹치면 탭이 이동 지시로 해석되지 않는다(2026-09-04 실측).
+// 우회 로직 자체는 tests/test_path.gd가 플랫폼과 무관하게 검증한다.
+
 // --- 이모티콘 하단 시트 ---
 console.log('\n[검증] 이모티콘 하단 시트');
 // (3)에서 시트 위를 탭했으므로 시트는 닫혀 있다(시트 밖/딤 탭 = 닫기가 의도된 동작).

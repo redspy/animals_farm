@@ -2,6 +2,7 @@ import { chromium } from 'playwright';
 import { godotPoint, tapGodot } from './godot-tap.mjs';
 import WebSocket from 'ws';
 import { spawn } from 'child_process';
+import { readFileSync } from 'fs';
 import { mkdirSync, existsSync, rmSync } from 'fs';
 
 // 2탭 멀티플레이 테스트 — 컨셉의 핵심("다른 기기에서 접속한 캐릭터도 월드맵에서
@@ -71,6 +72,16 @@ obs.on('message', (raw) => {
   try { seen.push(JSON.parse(raw.toString('utf-8'))); } catch { /* 무시 */ }
 });
 obs.send(JSON.stringify({ t: 'join', token: OBS_TOKEN, name: 'Obs', preset: 'm1' }));
+
+/** 옵저버가 본 마지막 좌표 — 클라이언트 내부를 들여다보지 않고 위치를 안다. */
+const lastPos = (token) => {
+  let pos = null;
+  for (const m of seen) {
+    if (m.t !== 'move') continue;
+    for (const v of m.moves || []) if (v.token === token) pos = { x: v.x, z: v.z };
+  }
+  return pos;
+};
 
 const waitFor = async (pred, what, timeoutMs = 6000) => {
   const deadline = Date.now() + timeoutMs;
@@ -200,6 +211,68 @@ check(!!removed, 'B가 물건을 클릭해 다가가서 주웠다(서버가 소�
 check(!removed || removed.id === added?.item?.id, '주운 물건이 A가 놓은 그 물건이다');
 await b.page.screenshot({ path: `${OUT}/mp-07-B줍기.png` });
 
+console.log('\n[검증] 바위를 만나면 짧은 쪽으로 돌아서 간다');
+// 바위 정의는 클라이언트와 같은 data/world.json에서 읽는다 — 테스트가 자기
+// 사본을 갖고 있으면 데이터를 고칠 때 조용히 어긋난다.
+const rocks = JSON.parse(readFileSync('data/world.json', 'utf-8')).obstacles ?? [];
+check(rocks.length > 0, 'data/world.json에 바위가 정의돼 있다');
+
+// 바위가 화면에 함께 보이도록 먼저 오른쪽으로 이동한다(카메라가 플레이어를
+// 따라가므로 너무 멀면 목표 지점이 화면 밖으로 나가 클릭할 수 없다).
+await focusGame(a.page);
+for (let i = 0; i < 2; i++) {
+  const g = await godotPoint(a.page, 'groundRight');
+  await a.page.mouse.click(g.x, g.y);
+  await a.page.waitForTimeout(1600);
+}
+const beforeRock = lastPos(tokenA);
+console.log(`  (플레이어 x=${(beforeRock?.x ?? 0).toFixed(1)} z=${(beforeRock?.z ?? 0).toFixed(1)} / 바위 ${rocks.length}개)`);
+
+// 어느 바위를 기준으로 판정할지 테스트가 따로 추측하지 않는다 — 훅이 고른
+// 바위와 테스트가 고른 바위가 갈려서(둘 다 "가장 가까운" 바위였지만 계산
+// 시점이 달랐다) 우회는 성공했는데 실패로 보고된 적이 있다(2026-09-04 실측).
+// 여기서는 **모든 바위에 대해** 통과 여부를 보고, "짧은 쪽으로 도는지"는
+// tests/test_path.gd가 정확히 검증한다.
+const trackFrom = seen.length;
+const beyond = await godotPoint(a.page, 'beyondNearestRock');
+await a.page.mouse.click(beyond.x, beyond.y);
+// 고정 대기로는 우회 호를 도는 시간이 부족해 바위 앞에서 끝난 적이 있어
+// 멈출 때까지 폴링한다.
+let stableFor = 0;
+let prev = lastPos(tokenA) ?? { x: 0, z: 0 };
+for (let i = 0; i < 60 && stableFor < 5; i++) {
+  await a.page.waitForTimeout(250);
+  const now = lastPos(tokenA) ?? prev;
+  stableFor = Math.hypot(now.x - prev.x, now.z - prev.z) < 0.05 ? stableFor + 1 : 0;
+  prev = now;
+}
+await a.page.screenshot({ path: `${OUT}/mp-08-바위우회.png` });
+
+const AGENT_RADIUS = 0.35;
+const samples = seen.slice(trackFrom)
+  .filter((m) => m.t === 'move')
+  .flatMap((m) => m.moves || [])
+  .filter((v) => v.token === tokenA);
+let minGap = Infinity;
+let worst = null;
+for (const s of samples) {
+  for (const r of rocks) {
+    const gap = Math.hypot(s.x - r.x, s.z - r.z) - (r.radius + AGENT_RADIUS);
+    if (gap < minGap) { minGap = gap; worst = r.id; }
+  }
+}
+const afterRock = lastPos(tokenA) ?? beforeRock;
+const traveled = Math.hypot((afterRock?.x ?? 0) - (beforeRock?.x ?? 0), (afterRock?.z ?? 0) - (beforeRock?.z ?? 0));
+console.log(`  (이동 표본 ${samples.length}개, 최소 여유 ${minGap.toFixed(2)} (${worst}), 이동 거리 ${traveled.toFixed(1)})`);
+if (process.env.ROCK_DEBUG) {
+  console.log('  [debug] 궤적:', samples.map((s) => `(${s.x},${s.z})`).join(' '));
+}
+check(samples.length > 5, '바위 건너편을 클릭하면 실제로 이동한다');
+// -0.25는 10Hz 표본 사이 보간 오차 여유. 이보다 파고들면 바위를 통과한 것이다.
+check(minGap > -0.25, `이동 경로가 어떤 바위도 통과하지 않는다(최소 여유 ${minGap.toFixed(2)})`);
+// 바위 앞에서 막혀 멈췄으면 이동 거리가 거의 0이 된다.
+check(traveled > 3.0, `바위에 막히지 않고 돌아서 이동했다(거리 ${traveled.toFixed(1)})`);
+
 console.log('\n[검증] 채팅');
 await b.page.keyboard.press('KeyT');
 await b.page.waitForTimeout(400);
@@ -209,7 +282,7 @@ const chat = await waitFor((m) => m.t === 'chat' && m.text === 'hello there', '�
 check(!!chat, 'B의 채팅이 서버를 거쳐 전달됨');
 check(!chat || chat.name === 'Bora', '채팅에 보낸 사람 이름이 붙는다');
 await a.page.waitForTimeout(700);
-await a.page.screenshot({ path: `${OUT}/mp-08-A화면에B채팅.png` });
+await a.page.screenshot({ path: `${OUT}/mp-09-A화면에B채팅.png` });
 
 console.log('\n[검증] 감정 표현 이모티콘');
 await focusGame(a.page);
@@ -217,7 +290,7 @@ await a.page.keyboard.press('Digit1');
 const emote = await waitFor((m) => m.t === 'emote' && m.token === tokenA, '이모티콘이 브로드캐스트됨');
 check(!!emote, 'A의 이모티콘이 서버를 거쳐 전달됨');
 await b.page.waitForTimeout(700);
-await b.page.screenshot({ path: `${OUT}/mp-09-B화면에A이모티콘.png` });
+await b.page.screenshot({ path: `${OUT}/mp-10-B화면에A이모티콘.png` });
 
 const errors = [...a.errors, ...b.errors];
 obs.close();

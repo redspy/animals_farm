@@ -61,6 +61,10 @@ var _items: Dictionary = {}
 var _world_cfg: Dictionary = {}
 var _world_size := Vector2(50.7, 28.5)
 var _zones: Array = []
+## 통과 불가 바위(data/world.json obstacles). 탭 이동 경로 계산과 수동 이동
+## 충돌 처리에 같은 목록을 쓴다 — 두 곳이 다른 목록을 보면 "보이는 바위는
+## 막는데 우회는 안 하는" 어긋남이 생긴다.
+var _obstacles: Array = []
 var _current_zone: String = ""
 
 var _player: Player
@@ -112,6 +116,7 @@ func _ready() -> void:
 		float(_world_cfg.get("size_z", 28.5))
 	)
 	_zones = _world_cfg.get("zones", [])
+	_obstacles = _world_cfg.get("obstacles", [])
 	for p: Variant in DataFiles.load_dict("res://data/characters.json").get("presets", []):
 		if typeof(p) == TYPE_DICTIONARY:
 			_presets[String((p as Dictionary).get("id", ""))] = p
@@ -136,7 +141,7 @@ func _build_world() -> void:
 		_gatherables.append(g)
 
 	_player = Player.new()
-	_player.setup(_world_size, _preset)
+	_player.setup(_world_size, _preset, _obstacles)
 	# 슬롯이 기억하고 있던 위치에서 시작한다("이름이 지정됐던 캐릭터는 위치정보를
 	# 기억한다" — 컨셉). 서버에 붙으면 서버 값이 우선이다(docs/protocol.md §4).
 	var pos: Dictionary = _slot.get("pos", {})
@@ -187,6 +192,14 @@ func _build_environment() -> void:
 	sand.position = Vector3(0, -0.32, 0)
 	sand.material_override = _flat_material(Palette.color("world", "sand"))
 	add_child(sand)
+
+	# 바위 조형물 — 통과 불가 장애물.
+	for o: Variant in _obstacles:
+		if typeof(o) != TYPE_DICTIONARY:
+			continue
+		var rock := Rock.new()
+		rock.setup(o as Dictionary)
+		add_child(rock)
 
 	# 모임 존: 바닥에 원판을 깔아 "여기 들어가면 뭔가 있다"를 보이게 한다.
 	for z: Variant in _zones:
@@ -962,9 +975,35 @@ func _publish_test_points() -> void:
 			return Vector2(-1, -1)
 		return _camera.unproject_position(found.position + Vector3(0, 0.3, 0))
 	)
+	_hooks.track_dynamic("beyondNearestRock", func() -> Vector2:
+		var rock := _nearest_rock()
+		if rock.is_empty():
+			return Vector2(-1, -1)
+		var center := Vector3(float(rock["x"]), 0.0, float(rock["z"]))
+		var away := (center - _player.position)
+		away.y = 0.0
+		if away.length() < 0.01:
+			return Vector2(-1, -1)
+		# 바위 중심을 지나 반대편으로 (반지름 + 여유)만큼 더 간 지점.
+		var beyond := center + away.normalized() * (float(rock["radius"]) + 1.6)
+		return _camera.unproject_position(beyond)
+	)
 	_hooks.track_dynamic("groundRight", func() -> Vector2:
 		return _camera.unproject_position(_player.position + Vector3(3.0, 0, 0))
 	)
+
+func _nearest_rock() -> Dictionary:
+	var best := INF
+	var found := {}
+	for o: Variant in _obstacles:
+		if typeof(o) != TYPE_DICTIONARY:
+			continue
+		var obs := o as Dictionary
+		var d := _player.position.distance_to(Vector3(float(obs.get("x", 0.0)), 0.0, float(obs.get("z", 0.0))))
+		if d < best:
+			best = d
+			found = obs
+	return found
 
 func _nearest_available_gatherable() -> Gatherable:
 	var best := INF

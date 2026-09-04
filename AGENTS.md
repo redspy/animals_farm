@@ -25,6 +25,7 @@ scripts/*.gd         게임 코드
                      avatar_extras(이름표·말풍선) / net(WebSocket) / gatherable
                      touch_controls(폰 터치 조작) / chat_input(DOM 입력 오버레이)
                      test_hooks(E2E가 UI 위치를 읽는 seam)
+                     rock(바위 조형물) / path_planner(바위 우회 경로)
                      save_manager(슬롯 스키마) / game_clock / balance / palette / data_files
                      ※ player_sprite.gd는 Gemini CLI(agy)가 구현한 파일 — 걷기 애니메이션 담당
 data/*.json          밸런스·배치 데이터(유효범위 포함, 코드가 클램프) + palette.json(화면 색 단일 출처)

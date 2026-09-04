@@ -65,7 +65,11 @@ export class WorldState {
     this.dirty = false;
     this._saveTimer = null;
 
-    this._loadState();
+    // persist:false는 "디스크를 아예 쓰지 않는다"는 뜻이다 — 쓰기만 막고 읽기를
+    // 허용하면 유닛 테스트가 실행 중인 서버의 런타임 상태를 물려받는다.
+    // 실제로 브라우저 테스트가 남긴 월드 아이템 2개 때문에 "드랍 후 아이템 1개"
+    // 단정이 3으로 깨졌다(2026-09-04 실측).
+    if (this.persistEnabled) this._loadState();
   }
 
   // ---- 검증 유틸 ----

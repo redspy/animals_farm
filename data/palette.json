@@ -13,7 +13,10 @@
     "weed": "#5ca84d",
     "ground_shadow": "#00000047",
     "zone_floor": "#ffe9a83d",
-    "drop_item": "#f0e0a0"
+    "drop_item": "#f0e0a0",
+    "rock": "#8c8f96",
+    "rock_dark": "#6b6e75",
+    "rock_moss": "#5f8a52"
   },
   "ui": {
     "hud_text": "#ffffff",
