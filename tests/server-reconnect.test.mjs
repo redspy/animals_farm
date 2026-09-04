@@ -55,18 +55,19 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
     if (code !== null && code !== 0) console.error(`[테스트 서버 종료 ${code}]\n${srvLog}`);
   });
   t.after(() => srv.kill());
-  // 남이 쓰던 서버에 붙으면 엉뚱한 월드를 검증하게 된다 — 우리가 띄운
-  // 프로세스가 살아 있는지 함께 확인한다.
-  let up = false;
-  for (let i = 0; i < 40; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/healthz`);
-      if (r.ok) { up = true; break; }
-    } catch { /* 아직 */ }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  assert.ok(up, `테스트 서버가 ${PORT} 포트에 뜨지 않았다(포트 점유?)\n${srvLog}`);
-  assert.equal(srv.exitCode, null, `테스트 서버가 죽었다\n${srvLog}`);
+  // **우리 프로세스가 스스로 "떴다"고 말할 때까지** 기다린다.
+  // healthz 폴링만으로는 안 된다: 그 포트를 남이 이미 잡고 있으면 첫 요청이
+  // 바로 200을 받고(우리 서버는 아직 부팅 중이라 EADDRINUSE로 죽기 전이다)
+  // **엉뚱한 월드에 붙은 채로** 검증이 진행된다 — 임시 WORLD_STATE_PATH 격리도
+  // 그때는 무의미해진다.
+  await new Promise((resolve, reject) => {
+    const check = () => { if (srvLog.includes('서버 기동')) resolve(); };
+    srv.stdout.on('data', check);
+    srv.on('exit', (code, sig) => reject(new Error(
+      `테스트 서버가 뜨지 못했다(code=${code}, sig=${sig}, ${PORT} 포트 점유?)\n${srvLog}`)));
+    setTimeout(() => reject(new Error(`테스트 서버 기동 시간 초과\n${srvLog}`)), 8000).unref();
+    check();
+  });
 
   const url = `ws://127.0.0.1:${PORT}/ws`;
   // 관찰자 — 남의 화면에서 어떻게 보이는지를 이 소켓으로 판정한다.

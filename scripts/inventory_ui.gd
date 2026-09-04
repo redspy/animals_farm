@@ -128,6 +128,7 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 	# 버튼 폭은 좁은 화면에서도 키우지 않는다(글자를 줄였으므로 92로 충분하다).
 	var narrow := UiScale.is_narrow()
 	var btn_w := BTN_WIDTH
+	var row_w := UiScale.panel_width(PANEL_MIN.x)
 	var index := 0
 	for item_id: String in inventory.keys():
 		index += 1
@@ -143,8 +144,7 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 		var name_label := Label.new()
 		name_label.text = "%s x%d · %d벨" % [label_text, count, price] if narrow \
 			else "%s x%d  (개당 %d벨)" % [label_text, count, price]
-		name_label.custom_minimum_size = Vector2(
-			maxf(UiScale.panel_width(PANEL_MIN.x) - btn_w * 2 - 40, 80.0), ROW_HEIGHT)
+		name_label.custom_minimum_size = Vector2(maxf(row_w - btn_w * 2 - 40, 80.0), ROW_HEIGHT)
 		# 글자가 길면 줄을 밀어내 패널이 화면을 넘는다(하한일 뿐이므로) — 자른다.
 		name_label.clip_text = true
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
