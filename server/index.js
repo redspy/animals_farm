@@ -39,6 +39,8 @@ const HOST = process.env.HOST || '0.0.0.0';
 // 그래서 커스텀 셸(web/shell.html)에서 이 요구를 완화했다 — 사용자가 http로
 // 접속할 수 있기를 원했고, 실제로 필요한 기능(WebGL2·WebSocket)은 비보안
 // 컨텍스트에서도 동작한다. 즉 **http로도 폰에서 실행된다**.
+// 대가는 오디오다 — 비보안 컨텍스트에는 AudioWorklet이 없어 셸이 오디오 드라이버를
+// Dummy로 강제한다(web/shell.html). 소리를 붙이는 시점에는 https가 사실상 필수다.
 // 인증서가 있으면 여전히 https를 쓴다(있는 쪽이 낫다: COOP/COEP를 켤 수 있고
 // 뒤에 카메라/마이크 같은 보안 컨텍스트 전용 API가 필요해질 수 있다).
 // 개발용 인증서는 ./scripts/make-dev-cert.sh 로 만든다.
@@ -383,7 +385,7 @@ server.listen(PORT, HOST, () => {
   if (!useTls) {
     // 조용히 http로 뜨면 "폰에서 왜 안 되지"로 시간을 버린다 — 기동 시점에 알린다.
     console.log('[animals_farm] http로 기동했습니다(TLS 인증서 없음 또는 TLS=off).');
-    console.log('[animals_farm]    커스텀 셸이 Secure Context 요구를 완화해 폰에서도 http로 접속됩니다.');
+    console.log('[animals_farm]    커스텀 셸이 Secure Context 요구를 완화해 폰에서도 http로 접속됩니다(단 오디오는 꺼집니다).');
     console.log('[animals_farm]    https가 필요하면 ./scripts/make-dev-cert.sh 로 인증서를 만드세요.');
   }
 });
