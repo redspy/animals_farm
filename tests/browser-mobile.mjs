@@ -111,6 +111,29 @@ const size = page.viewportSize();
 await page.screenshot({ path: `${OUT}/1-세로-슬롯화면.png` });
 console.log(`\n뷰포트: ${size.width}x${size.height} (세로 모드)`);
 
+// --- 글자 크기: UI가 CSS 픽셀 기준으로 그려져야 한다 ---
+//
+// 폰 캔버스는 기기 픽셀(DPR 2.6)로 잡히는데 스트레치 배율은 기준 해상도
+// (960x540)에 대한 비율이라, 보정이 없으면 글자 14가 눈에는 CSS 6px로
+// 보였다(사용자 보고 "폰에서 글씨가 너무 작아", 2026-09-05).
+// scripts/ui_scale.gd가 content_scale_factor로 되돌린다 — 그 결과 UI 논리
+// 크기가 CSS 픽셀과 같아진다. 이 판정이 그 보정을 지킨다.
+console.log('\n[검증] 폰 UI 배율(1 UI 단위 = 1 CSS 픽셀)');
+const scaleInfo = await page.evaluate(() => {
+  const c = document.querySelector('canvas');
+  const r = c.getBoundingClientRect();
+  return { cssW: r.width, canvasW: c.width, vw: window.afTest.vw };
+});
+const unitPx = scaleInfo.cssW / scaleInfo.vw;
+check(
+  scaleInfo.canvasW / scaleInfo.cssW > 1.5,
+  `테스트 전제: 캔버스가 hidpi다(DPR ${(scaleInfo.canvasW / scaleInfo.cssW).toFixed(2)})`
+);
+check(
+  Math.abs(unitPx - 1) < 0.1,
+  `UI 1단위가 CSS 1픽셀이다(${unitPx.toFixed(3)}px, 보정 없으면 0.43px)`
+);
+
 // --- 슬롯 선택: 세로 화면에서도 버튼이 화면 안에 있어야 누를 수 있다 ---
 console.log('\n[검증] 세로 화면에서 캐릭터 만들기');
 await tapGodot(page, 'slot1', { touch: true });

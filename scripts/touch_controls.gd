@@ -32,7 +32,13 @@ const BTN_MED := 56.0
 const BTN_SMALL := 48.0
 const MARGIN := 26.0
 ## 버튼 글자 크기 — 기본값은 72px 버튼에 넘쳐서 잘렸다(2026-09-04 세로 실측).
+## 좁은 화면에서는 UiScale이 한 단계 키우지만, 작은 버튼은 그만큼 키우면 또
+## 잘린다(2026-09-05: 48px 버튼의 "버림"이 "버"로 잘렸다) — 버튼 폭에 맞춰
+## 깎는다. 한글 두 글자가 들어가려면 글자 크기가 폭의 약 1/2.6 이하여야 한다.
 const BTN_FONT_SIZE := 18
+const BTN_FONT_WIDTH_RATIO := 2.6
+## 조이스틱 on/off 버튼 폭. 글자를 키우면 "스틱 OFF"가 잘리므로 같이 넓힌다.
+const JOYSTICK_BTN_WIDTH := 118.0
 ## 조이스틱을 받는 영역: 화면 왼쪽 절반의 아래쪽. 이 안을 누르면 그 지점이 중심.
 const STICK_AREA_W_RATIO := 0.5
 const STICK_AREA_H_RATIO := 0.55
@@ -92,20 +98,25 @@ func _build_buttons() -> void:
 	# 조이스틱 on/off — 왼쪽 위(조이스틱 영역 밖, 엄지에서 먼 자리)에 둔다.
 	# 자주 누르는 버튼이 아니고, 조이스틱 영역에 두면 조작과 겹친다.
 	_joystick_button = Button.new()
-	_joystick_button.custom_minimum_size = Vector2(118, BTN_SMALL)
+	var toggle_w := UiScale.dim(JOYSTICK_BTN_WIDTH)
+	_joystick_button.custom_minimum_size = Vector2(toggle_w, BTN_SMALL)
 	_joystick_button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 	_joystick_button.offset_left = MARGIN
 	_joystick_button.offset_bottom = -MARGIN
 	_joystick_button.offset_top = -(MARGIN + BTN_SMALL)
-	_joystick_button.offset_right = MARGIN + 118
+	_joystick_button.offset_right = MARGIN + toggle_w
 	_joystick_button.focus_mode = Control.FOCUS_NONE
-	_joystick_button.add_theme_font_size_override("font_size", BTN_FONT_SIZE)
+	_joystick_button.add_theme_font_size_override("font_size", UiScale.font(BTN_FONT_SIZE))
 	_joystick_button.clip_text = true
 	_joystick_button.pressed.connect(_toggle_joystick)
 	add_child(_joystick_button)
 	_refresh_joystick_button()
 	if _hooks != null:
 		_hooks.track("joystickToggle", _joystick_button)
+
+## 버튼 폭 안에 두 글자가 들어가는 최대 글자 크기.
+func _btn_font_size(button_size: float) -> int:
+	return mini(UiScale.font(BTN_FONT_SIZE), int(floor(button_size / BTN_FONT_WIDTH_RATIO)))
 
 ## offset은 우하단 앵커 기준(음수가 왼쪽/위쪽). 앵커를 쓰는 이유: 절대좌표는
 ## 세로 모드나 좁은 화면에서 화면 밖으로 나간다(기존 HUD가 그랬다).
@@ -120,7 +131,7 @@ func _add_button(text: String, size: float, offset: Vector2, on_press: Callable)
 	b.offset_bottom = offset.y + size
 	b.focus_mode = Control.FOCUS_NONE   # 버튼이 포커스를 먹으면 키보드 입력이 막힌다
 	# 글자가 버튼을 넘쳐 잘리지 않게 한다.
-	b.add_theme_font_size_override("font_size", BTN_FONT_SIZE)
+	b.add_theme_font_size_override("font_size", _btn_font_size(size))
 	b.clip_text = true
 	b.add_theme_color_override("font_color", Palette.color("ui", "hud_text"))
 	b.pressed.connect(on_press)
@@ -270,7 +281,7 @@ func _build_emote_sheet() -> void:
 		var emote := e as Dictionary
 		var b := Button.new()
 		b.text = "%s\n%s" % [String(emote.get("glyph", "?")), String(emote.get("label", ""))]
-		b.custom_minimum_size = Vector2(96, 76)
+		b.custom_minimum_size = Vector2(UiScale.dim(96.0), UiScale.dim(76.0))
 		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(func() -> void:
 			emote_selected.emit(String(emote.get("id", "")))
@@ -285,7 +296,7 @@ func _build_sell_sheet() -> void:
 
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = Vector2(420, 190)
+	panel.custom_minimum_size = Vector2(UiScale.panel_width(420.0), 190)
 	_sell_sheet.add_child(panel)
 
 	var box := VBoxContainer.new()

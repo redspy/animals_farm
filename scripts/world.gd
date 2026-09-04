@@ -33,17 +33,15 @@ const ZONE_CHECK_INTERVAL := 0.25
 ## 하단 접속자 바에 표시할 인원 상한. 넘치면 "+N"으로 줄인다 — 좁은 화면에서
 ## 인원이 늘어나면 바가 화면을 넘어간다.
 const ROSTER_MAX := 8
-const ROSTER_MAX_NARROW := 4
+## 폰은 3명까지 — 초상화가 CSS 픽셀 기준으로 커진 뒤 4명이면 바가 조이스틱
+## 토글과 오른쪽 버튼 무리 사이를 넘어간다(2026-09-05 폰 실측).
+const ROSTER_MAX_NARROW := 3
 ## 접속자 바의 초상화 크기(px).
 const ROSTER_PORTRAIT := Vector2(38, 46)
 
 ## 화면에 남겨두는 채팅 줄 수. 세로 모드처럼 화면이 짧으면 줄여서 월드를 가리지 않게 한다.
 const CHAT_LOG_LINES := 6
 const CHAT_LOG_LINES_SHORT := 3
-## 화면 **폭**이 이보다 좁으면 "좁은 화면"으로 본다(px). 처음에는 높이로
-## 판단했는데 폰 세로(412×839)는 높이가 충분해서 판정에 걸리지 않았고, 정작
-## 문제는 좁은 폭에서 채팅 로그가 캐릭터를 가리는 것이었다(세로 실측).
-const NARROW_SCREEN_WIDTH := 700.0
 ## HUD 안전 마진(px). 노치·둥근 모서리를 감안해 넉넉히 잡는다.
 const HUD_MARGIN := 18.0
 ## 월드에 놓인 물건을 주울 수 있는 거리(월드 단위).
@@ -371,6 +369,11 @@ func _build_hud() -> void:
 	_bag_label.mouse_filter = Control.MOUSE_FILTER_STOP
 	_bag_label.gui_input.connect(_on_bag_clicked)
 	_hint_label = _stack_label(hud_box, text_color, outline_color)
+	# 안내문은 본문보다 한 단계 작게 — 가장 긴 줄이라 본문 크기로 키우면 폰
+	# 폭을 넘어간다. 자동 줄바꿈은 쓰지 않는다: 폭을 주려면 HUD 스택 전체를
+	# 넓혀야 하고, 그러면 입력을 받는 가방 줄이 화면 폭을 가로질러 그 위의
+	# 월드 탭을 다 먹는다(_build_hud 주석). 좁은 화면에서는 문장을 줄인다.
+	_hint_label.add_theme_font_size_override("font_size", UiScale.font(12))
 
 	_net_label = _make_label(layer, Control.PRESET_TOP_RIGHT, Palette.color("ui", "warn_text"), outline_color)
 	_net_label.offset_right = -HUD_MARGIN
@@ -403,16 +406,30 @@ func _build_hud() -> void:
 	# 먹으면 그 위를 탭했을 때 이동이 되지 않는다(조이스틱 영역과도 겹친다).
 	# 배경이 화면 가로를 다 덮으면 월드를 가린다 — 내용(초상화들) 크기만큼만
 	# 차지하도록 하단 중앙에 붙인다(사용자 요청).
+	# 폰에서는 하단 중앙이 비어 있지 않다: 오른쪽에 버튼 무리, 왼쪽 아래에
+	# 조이스틱 토글이 있어서 중앙에 두면 양쪽과 겹친다. 조이스틱 토글 **위**의
+	# 왼쪽으로 올린다 — 그 위는 채팅 로그가 시작되기 전까지 비어 있다.
 	var roster_panel := PanelContainer.new()
-	roster_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
-	roster_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	roster_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	roster_panel.offset_bottom = -2.0
+	if _is_narrow_screen():
+		roster_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+		roster_panel.grow_horizontal = Control.GROW_DIRECTION_END
+		roster_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+		roster_panel.offset_left = HUD_MARGIN
+		roster_panel.offset_bottom = -(HUD_MARGIN + TouchControls.BTN_SMALL + 8.0)
+	else:
+		roster_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+		roster_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+		roster_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+		roster_panel.offset_bottom = -2.0
 	roster_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var roster_style := StyleBoxFlat.new()
 	roster_style.bg_color = Palette.color("ui", "roster_bg")
 	roster_style.corner_radius_top_left = 8
 	roster_style.corner_radius_top_right = 8
+	if _is_narrow_screen():
+		# 화면 하단에 붙어 있지 않으므로 네 모서리를 다 둥글게 한다.
+		roster_style.corner_radius_bottom_left = 8
+		roster_style.corner_radius_bottom_right = 8
 	roster_style.content_margin_left = 8
 	roster_style.content_margin_right = 8
 	roster_style.content_margin_top = 4
@@ -449,11 +466,12 @@ func _build_hud() -> void:
 		_touch.sell_requested.connect(func() -> void: _sell(""))
 		add_child(_touch)
 
+## 좁은 화면(폰) 여부. 판정은 UiScale이 갖는다 — 뷰포트 크기로 직접 재면
+## 안 된다는 걸 실측으로 배웠다: 캔버스 스트레치가 논리 폭을 항상 기준값
+## (960) 이상으로 유지해서, **폰에서도 이 함수가 계속 false였다**(그래서
+## 채팅 위치·로스터 개수 같은 폰 보정이 죽어 있었다, 2026-09-05).
 func _is_narrow_screen() -> bool:
-	var vp := get_viewport()
-	if vp == null:
-		return false
-	return vp.get_visible_rect().size.x < NARROW_SCREEN_WIDTH
+	return UiScale.is_narrow()
 
 ## HUD 스택 안에 들어가는 한 줄.
 func _stack_label(box: VBoxContainer, color: Color, outline: Color) -> Label:
@@ -543,6 +561,13 @@ func _price_of(item_id: String) -> int:
 		"price"
 	))
 
+## 폰 안내문. 좁은 화면에서는 글자를 키우기 때문에 긴 문장이 화면 폭을
+## 넘어간다 — 꼭 필요한 것만 남긴다(나머지는 눌러 보면 알 수 있는 버튼들이다).
+func _touch_hint() -> String:
+	if _is_narrow_screen():
+		return "가고 싶은 곳을 탭 · 대상을 탭하면 자동 처리"
+	return "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 가방"
+
 func _refresh_hud() -> void:
 	var inv: Dictionary = _slot.get("inventory", {})
 	var parts: Array[String] = []
@@ -552,10 +577,16 @@ func _refresh_hud() -> void:
 	var who := String(_slot.get("name", "(이름 없음)"))
 	# 조작 안내는 실제 조작 수단에 맞춘다 — 폰에서 "[방향키] 이동"은 아무 의미가
 	# 없고, 오히려 터치 UI를 못 찾게 만든다.
-	var hint := "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 가방" \
+	var hint := _touch_hint() \
 		if _touch != null \
 		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기)  [방향키] 이동  [Space] 채집/줍기  [I] 가방  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % maxi(_emotes.size(), 1)
-	_hud.text = "%s  |  %s\n벨: %d" % [who, GameClock.label(), int(_slot.get("bells", 0))]
+	# 좁은 화면에서는 이름·시각을 한 줄에 두면 오른쪽 상단의 연결 상태와 겹친다
+	# (2026-09-05 폰 실측: "Minsu | 2026-09-05 07:37 (새벽)"이 "서버 연결됨"을
+	# 파고들었다). 이름/벨을 첫 줄에, 시각을 그 아래 줄로 내린다.
+	if _is_narrow_screen():
+		_hud.text = "%s · %d벨\n%s" % [who, int(_slot.get("bells", 0)), GameClock.short_label()]
+	else:
+		_hud.text = "%s  |  %s\n벨: %d" % [who, GameClock.label(), int(_slot.get("bells", 0))]
 	_bag_label.text = bag
 	_hint_label.text = hint
 
@@ -619,7 +650,9 @@ func _roster_entry(entry: Dictionary) -> Control:
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var portrait := TextureRect.new()
-	portrait.custom_minimum_size = ROSTER_PORTRAIT
+	# 초상화도 글자와 함께 커져야 한다 — 글자만 키우면 얼굴이 이름표보다 작아진다.
+	portrait.custom_minimum_size = Vector2(
+		UiScale.dim(ROSTER_PORTRAIT.x), UiScale.dim(ROSTER_PORTRAIT.y))
 	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	# 픽셀 스프라이트라 보간하면 뭉개진다.
 	portrait.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
@@ -636,7 +669,7 @@ func _roster_entry(entry: Dictionary) -> Control:
 	label.text = who if not who.is_empty() else "(이름 없음)"
 	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_font_size_override("font_size", UiScale.font(14))
 	label.add_theme_color_override("font_color",
 		Palette.color("ui", "roster_me") if bool(entry.get("me", false)) else Palette.color("ui", "hud_text"))
 	label.add_theme_color_override("font_outline_color", Palette.color("ui", "hud_outline"))
@@ -1549,6 +1582,12 @@ func _process(delta: float) -> void:
 		_zone_timer = 0.0
 		_check_zone()
 		_update_drop_tags()
+		# 단일 클라이언트 테스트는 WS 옵저버가 없어 내 위치를 확인할 방법이
+		# 이것뿐이다(스모크 테스트의 방향키 판정). 매 프레임이 아니라 이
+		# 주기 블록에서만 공개한다.
+		if _hooks != null and _player != null:
+			_hooks.set_state("x", snappedf(_player.position.x, 0.01))
+			_hooks.set_state("z", snappedf(_player.position.z, 0.01))
 
 	_autosave_timer += delta
 	if _autosave_timer >= AUTOSAVE_INTERVAL_SEC:

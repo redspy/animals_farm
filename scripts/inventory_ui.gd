@@ -42,7 +42,7 @@ func _ready() -> void:
 
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
-	panel.custom_minimum_size = PANEL_MIN
+	panel.custom_minimum_size = Vector2(UiScale.panel_width(PANEL_MIN.x), PANEL_MIN.y)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Palette.color("ui", "select_bg")
 	style.corner_radius_top_left = 10
@@ -132,7 +132,8 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 
 		var name_label := Label.new()
 		name_label.text = "%s x%d  (개당 %d벨)" % [label_text, count, price]
-		name_label.custom_minimum_size = Vector2(PANEL_MIN.x - BTN_WIDTH * 2 - 40, ROW_HEIGHT)
+		name_label.custom_minimum_size = Vector2(
+			maxf(UiScale.panel_width(PANEL_MIN.x) - BTN_WIDTH * 2 - 40, 80.0), ROW_HEIGHT)
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		name_label.add_theme_color_override("font_color", Palette.color("ui", "hud_text"))
 		row.add_child(name_label)

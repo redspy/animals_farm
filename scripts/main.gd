@@ -18,6 +18,10 @@ var _world: World = null
 func _ready() -> void:
 	# 이모지 폴백을 가장 먼저 붙인다 — 이후 만들어지는 모든 라벨에 적용된다.
 	Fonts.install_emoji_fallback()
+	# UI 배율/글자 크기도 라벨을 만들기 전에 정한다(scripts/ui_scale.gd).
+	# 화면이 바뀔 때(폰 회전, 창 크기 변경) 다시 계산해야 하므로 시그널에 건다.
+	UiScale.apply()
+	get_window().size_changed.connect(UiScale.apply)
 	_save = SaveManager.load_save()
 	_presets = DataFiles.load_dict("res://data/characters.json").get("presets", [])
 	_world_cfg = DataFiles.load_dict("res://data/world.json")

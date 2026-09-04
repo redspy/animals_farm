@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import { spawn } from 'child_process';
+import { tapGodot, godotPoint } from './godot-tap.mjs';
 import { mkdirSync, existsSync, statSync } from 'fs';
 import { createHash } from 'crypto';
 import { readFileSync } from 'fs';
@@ -15,10 +16,10 @@ import { readFileSync } from 'fs';
 //
 // 실행: npm run test:browser   (사전에 ./scripts/build-web.sh 필요)
 //
-// ⚠️ 한계: HUD가 캔버스에 그려져서 DOM으로 텍스트를 읽을 수 없다. 그래서
-// 이 테스트는 (a) 캔버스 기동, (b) JS 오류 0건, (c) 입력 전후 화면이 실제로
-// 바뀌었는지까지만 자동 판정하고, 벨/가방 숫자 같은 게임 상태는 저장된
-// 스크린샷을 사람이 확인한다.
+// HUD가 캔버스에 그려져서 DOM으로 텍스트를 읽을 수 없으므로, 게임 상태는
+// 테스트 훅이 공개하는 값(window.afTest.state)으로 판정한다 — 화면 비교만으로
+// 판정하면 "아무 일도 일어나지 않았는데 화면이 조금 달라져서" 통과한다
+// (2026-09-05: 이 테스트가 외형 선택 화면에서 멈춘 채로 몇 달 통과했다).
 
 const PORT = Number(process.env.PORT || 3112);
 const OUT = process.env.SHOT_DIR || 'build/screenshots';
@@ -39,6 +40,12 @@ process.on('exit', stopServer);
 
 const failures = [];
 const shot = (name) => `${OUT}/${name}.png`;
+/** 게임 상태(scripts/test_hooks.gd가 공개). HUD가 캔버스라 DOM으로 못 읽는다. */
+const state = async () => await page.evaluate(() => ({
+  bells: Number(window.afTest?.state?.bells ?? -1),
+  bagCount: Number(window.afTest?.state?.bagCount ?? -1),
+  z: Number(window.afTest?.state?.z ?? 0),
+}));
 const hash = (p) => createHash('sha1').update(readFileSync(p)).digest('hex');
 
 const browser = await chromium.launch({
@@ -87,21 +94,63 @@ for (let i = 0; i < 40; i++) {
 if (!started) failures.push('캔버스가 20초 안에 그려지지 않음(엔진 기동 실패 가능)');
 
 await page.waitForTimeout(1500);
-await page.screenshot({ path: shot('01-초기화면') });
+await page.screenshot({ path: shot('00-캐릭터선택') });
 
-// 시작 위치(480,280) 바로 아래 잡초(480,430)로 내려가 채집 → 판매까지 1사이클
-await page.locator('canvas').click({ position: { x: 480, y: 270 } });
+// 캐릭터를 만들어 월드까지 들어간다.
+//
+// 예전에는 캔버스 중앙(480,270)을 그냥 클릭했는데, 그건 **외형 선택 화면을
+// 클릭한 것**이어서 월드에 들어가지 못한 채로 아래 판정을 다 돌렸다. 화면이
+// 캔버스라 "무슨 화면인지"가 코드에 안 보여 몇 달 동안 드러나지 않았고,
+// 걷기·채집 판정이 조용히 실패로 남아 있었다(2026-09-05 확인).
+// 좌표는 테스트 훅이 알려주는 실제 UI 위치를 쓴다(tests/godot-tap.mjs).
+await page.waitForFunction(() => window.afTest?.points?.slot1, null, { timeout: 30000 });
+await tapGodot(page, 'slot1');
+await page.waitForTimeout(400);
+await tapGodot(page, 'preset1');
+await page.waitForTimeout(400);
+await tapGodot(page, 'nameField');
+await page.keyboard.type('Smoke', { delay: 50 });   // 한글은 합성 키로 안 들어간다
+await tapGodot(page, 'startButton');
+await page.waitForFunction(() => window.afTest?.points?.playerScreen, null, { timeout: 30000 });
+await page.waitForTimeout(1200);
+await page.screenshot({ path: shot('01-초기화면') });   // 월드 진입 상태로 다시 찍는다
+
+// 방향키가 게임에 전달되는지 — 화면 비교로만 보던 것을 좌표로 확인한다.
+const beforeMove = await state();
 await page.keyboard.down('ArrowDown');
 await page.waitForTimeout(700);
 await page.keyboard.up('ArrowDown');
 await page.screenshot({ path: shot('02-이동후') });
+const afterMove = await state();
+if (!(Math.abs(afterMove.z - beforeMove.z) > 0.3)) {
+  failures.push(`아래 방향키를 눌렀는데 z가 거의 그대로(${beforeMove.z} → ${afterMove.z})`);
+}
 
-await page.keyboard.press('Space');
-await page.waitForTimeout(700);
+// 채집 1사이클. 예전에는 "시작 위치 아래에 잡초가 있다"고 가정해 Space만
+// 눌렀는데, 근처에 채집물이 없으면 아무 일도 일어나지 않고 화면만 조금
+// 달라져서 통과했다 — 가방 개수를 실제로 확인한다.
+const bush = await godotPoint(page, 'nearestGatherable');
+await page.mouse.click(bush.x, bush.y);
+let bagged = false;
+for (let i = 0; i < 40; i++) {
+  if ((await state()).bagCount > 0) { bagged = true; break; }
+  await page.waitForTimeout(300);
+}
 await page.screenshot({ path: shot('03-채집') });
+if (!bagged) failures.push('채집물을 클릭해도 가방이 늘지 않음 — 채집이 동작하지 않는다');
 
+// 판매까지. S는 가방 화면을 열고, 거기서 전부 판매를 확정한다.
 await page.keyboard.press('KeyS');
-await page.waitForTimeout(700);
+await page.waitForTimeout(500);
+if (bagged) {
+  await tapGodot(page, 'invSellAll');
+  let sold = false;
+  for (let i = 0; i < 30; i++) {
+    if ((await state()).bells > 0) { sold = true; break; }
+    await page.waitForTimeout(300);
+  }
+  if (!sold) failures.push('전부 판매를 눌렀는데 벨이 늘지 않음 — 판매가 동작하지 않는다');
+}
 await page.screenshot({ path: shot('04-판매후') });
 
 // 걷기 애니메이션 검증: 방향키를 계속 누른 상태로 짧은 간격 프레임을 찍어
@@ -125,13 +174,16 @@ if (new Set(walkShots).size < 2) {
 }
 
 // 입력이 실제로 게임에 전달됐는지 — 화면이 바뀌지 않았다면 입력이 먹지 않은 것
+if (hash(shot('00-캐릭터선택')) === hash(shot('01-초기화면'))) {
+  failures.push('캐릭터를 만들어도 화면이 그대로 — 월드에 진입하지 못했다');
+}
 if (hash(shot('01-초기화면')) === hash(shot('02-이동후'))) {
   failures.push('방향키 입력 전후 화면이 동일 — 입력이 게임에 전달되지 않음');
 }
 if (hash(shot('02-이동후')) === hash(shot('03-채집'))) {
   failures.push('채집 키 입력 전후 화면이 동일 — 채집 상호작용이 동작하지 않음');
 }
-for (const name of ['01-초기화면', '02-이동후', '03-채집', '04-판매후']) {
+for (const name of ['00-캐릭터선택', '01-초기화면', '02-이동후', '03-채집', '04-판매후']) {
   if (statSync(shot(name)).size < 2000) failures.push(`${name} 스크린샷이 비정상적으로 작음(렌더 실패 의심)`);
 }
 
@@ -150,4 +202,4 @@ if (failures.length) {
   process.exit(1);
 }
 console.log('\n✅ 브라우저 스모크 통과 — 기동/입력/채집/판매 사이클 정상, JS 오류 없음');
-console.log('   (벨·가방 숫자 등 게임 상태는 위 스크린샷으로 눈으로 확인할 것)');
+console.log('   (가방 개수·벨은 테스트 훅으로 확인했고, 스크린샷은 눈으로 볼 용도다)');

@@ -24,6 +24,11 @@ static func label() -> String:
 	var t := now()
 	return "%04d-%02d-%02d %02d:%02d (%s)" % [t.year, t.month, t.day, t.hour, t.minute, season_of(int(t.month))]
 
+## 좁은 화면(폰)용 짧은 표기 — 연도는 화면 폭을 먹는 만큼의 정보가 없다.
+static func short_label() -> String:
+	var t := now()
+	return "%02d-%02d %02d:%02d (%s)" % [t.month, t.day, t.hour, t.minute, season_of(int(t.month))]
+
 ## 마지막 접속 이후 하루가 지났는지 — 채집물 전체 리스폰/일일 이벤트 트리거용.
 static func days_since(last_unix: int) -> int:
 	if last_unix <= 0:

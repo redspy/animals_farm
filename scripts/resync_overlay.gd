@@ -51,7 +51,7 @@ func _ready() -> void:
 	box.add_child(_label)
 
 	_bar = ProgressBar.new()
-	_bar.custom_minimum_size = Vector2(260, 16)
+	_bar.custom_minimum_size = Vector2(UiScale.panel_width(260.0, 80.0), 16)
 	_bar.min_value = 0.0
 	_bar.max_value = 1.0
 	_bar.value = 0.0

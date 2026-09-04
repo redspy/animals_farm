@@ -48,11 +48,16 @@ func _ready() -> void:
 	add_child(_hooks)
 
 	_root = VBoxContainer.new()
-	_root.custom_minimum_size = Vector2(PANEL_WIDTH, 0)
+	_root.custom_minimum_size = Vector2(_panel_width(), 0)
 	_root.add_theme_constant_override("separation", 8)
 	center.add_child(_root)
 
 	_show_slot_list()
+
+## 패널 폭. 560px은 데스크톱 기준이라 폰의 논리 폭(411px)을 넘어 잘린다
+## (2026-09-05, UiScale로 1 UI 단위 = 1 CSS 픽셀이 된 뒤 드러났다).
+func _panel_width() -> float:
+	return UiScale.panel_width(PANEL_WIDTH)
 
 func _clear_root() -> void:
 	# queue_free는 프레임 끝에 처리되므로 자식이 즉시 사라지지 않는다 — 이 상태로
@@ -98,7 +103,8 @@ func _show_slot_list() -> void:
 		row.add_child(slot_portrait)
 
 		var enter := Button.new()
-		enter.custom_minimum_size = Vector2(PANEL_WIDTH - 120.0 - PORTRAIT.x * 0.7, ROW_HEIGHT)
+		enter.custom_minimum_size = Vector2(
+			maxf(_panel_width() - UiScale.dim(104.0) - 16.0 - PORTRAIT.x * 0.7, 120.0), ROW_HEIGHT)
 		if slot.is_empty():
 			enter.text = "%d. 빈 슬롯 — 새 캐릭터 만들기" % (i + 1)
 		else:
@@ -114,7 +120,7 @@ func _show_slot_list() -> void:
 		_mark("slot%d" % (i + 1), enter)
 
 		var del := Button.new()
-		del.custom_minimum_size = Vector2(104.0, ROW_HEIGHT)
+		del.custom_minimum_size = Vector2(UiScale.dim(104.0), ROW_HEIGHT)
 		del.text = "이름 삭제"
 		del.disabled = slot.is_empty()
 		del.pressed.connect(_on_delete_pressed.bind(i))
@@ -199,7 +205,7 @@ func _show_preset_picker() -> void:
 		row.add_child(portrait)
 
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(PANEL_WIDTH - PORTRAIT.x - 20.0, PORTRAIT.y)
+		b.custom_minimum_size = Vector2(maxf(_panel_width() - PORTRAIT.x - 20.0, 120.0), PORTRAIT.y)
 		var gender_text := "여" if String(preset.get("gender", "")) == "female" else "남"
 		b.text = "%s (%s)" % [String(preset.get("label", "")), gender_text]
 		b.pressed.connect(_on_preset_pressed.bind(String(preset.get("id", ""))))
