@@ -30,9 +30,29 @@
 | 엔진 | Godot **4.7.1 stable (표준 빌드)** | 웹 export를 공식 지원. **mono(.NET) 빌드는 웹 export 템플릿이 없어 사용 불가** — 2026-09-03 이 머신(4.6.3-mono)에서 웹 템플릿 부재 및 헤드리스 실행이 .NET 초기화에서 멈추는 것을 실측 확인 |
 | 언어 | GDScript | 웹 타깃에서 C#은 미지원. 정적 타입 힌트를 강제해 런타임 오류를 줄인다 |
 | 렌더러 | GL Compatibility (WebGL2) | 브라우저·모바일 호환성 최우선. `project.godot`에 고정 |
+| 화면 구성 | **2.5D (3D 월드 + 2D 캐릭터 + 2D HUD)** | §2.1 참고 |
 | 스레드 | **nothreads export** | 스레드 빌드는 `SharedArrayBuffer` 때문에 COOP/COEP 헤더가 필수이고 iOS Safari 등에서 실패율이 높다. 서버는 헤더를 미리 보내지만(`docs/deploy.md` §3) 프리셋은 nothreads로 둔다 |
 | 해상도 | 960×540 기준, `canvas_items` 스트레치 | 모바일 브라우저 세로/가로 모두 수용 |
 | 세이브 | `user://save.json` (웹 = IndexedDB) | 서버 계정이 없어도 진행도 유지. 서버 동기화는 미확정 |
+
+### 2.1 2.5D 화면 구성
+
+"2D와 3D가 섞인" 룩을 다음 세 층으로 만든다.
+
+| 층 | 무엇 | 구현 |
+|---|---|---|
+| 3D 월드 | 섬(두께 있는 박스) · 모래 테두리 · 바다 · 나무(원기둥+구) · 조개 · 잡초 | `main.gd::_build_environment`, `gatherable.gd` — 전부 Godot 프리미티브 메시. 방향광 그림자가 있어 입체로 읽힌다 |
+| 2D 캐릭터 | 플레이어 (32×40 픽셀 스프라이트, 4방향 × 걷기 6프레임 10FPS + idle) | `player_sprite.gd` — `AnimatedSprite3D` 빌보드. 프레임은 **런타임에 픽셀로 생성**(외부 아트 에셋 0개), 좌측은 우측 프레임을 반전해 재사용 |
+| 2D UI | 시계·벨·가방·조작 안내·토스트 | `main.gd::_build_hud` — 3D 위에 얹은 `CanvasLayer` + `Label` |
+
+카메라는 **직교 투영**(`PROJECTION_ORTHOGONAL`, size 9.5)에 pitch -38°, yaw 0°이고 플레이어를 부드럽게 따라간다. yaw를 0으로 고정한 이유는 화면 위쪽이 월드 -Z와 일치해 입력 매핑이 단순해지기 때문이다 — 카메라를 회전시키면 `player.gd`의 입력→월드 변환도 같이 고쳐야 한다.
+
+빌보드 캐릭터에서 실측으로 걸린 함정 세 가지(2026-09-04, 브라우저):
+- 완전 빌보드(`BILLBOARD_ENABLED`)는 카메라 피치까지 따라가 캐릭터가 뒤로 누운 것처럼 보인다 → `BILLBOARD_FIXED_Y`
+- 노드 원점이 스프라이트 중앙이면 배치가 어긋난다 → `offset`으로 원점을 발바닥에 맞춤
+- 빌보드가 방향광 그림자를 드리우면 공중에 뜬 얼룩처럼 보인다 → 스프라이트 그림자는 끄고, 발밑에 타원 데칼을 따로 깐다(`player.gd::_add_ground_shadow`)
+
+`player_sprite.gd`는 **Gemini CLI(`agy`)가 구현**했다 — 걷기 사이클처럼 결과를 눈으로 판정하는 작업을 다른 모델에 맡기고, 이 세션은 계약(애니메이션 이름 8개, `set_move_dir`/`facing` API, 웹 제약)과 검증(헤드리스 + 브라우저 스모크)을 담당했다(`docs/agents/roles.md` §3).
 
 ## 3. 밸런스·경제 데이터 규칙
 

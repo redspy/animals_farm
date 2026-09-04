@@ -84,6 +84,7 @@ npm run test:browser            # build/web를 서버에 올려 Chromium으로 �
 | 웹 export 산출물(index.html/.wasm/.pck) | ✅ 로컬 실측 생성 |
 | 정적 서버 MIME·COOP/COEP·`/healthz` | ✅ 로컬 실측 통과 |
 | 브라우저 기동·입력·채집·판매 1사이클 | ✅ 로컬 실측 통과(`npm run test:browser`, Chromium) |
+| 걷기 애니메이션 재생 | ✅ 섬 경계에 붙여 이동이 멈춘 상태에서 프레임이 바뀌는지로 판정(`test:browser`) |
 | **배포 서버 파이프라인(deploy.bat 전체)** | ⚠️ **미검증** — Windows 서버에서 첫 배포를 돌려봐야 한다. 서버에 Godot 4.7.1 표준 + export 템플릿 설치가 선행 조건(§2) |
 | 모바일 브라우저 / 터치 조작 | ⚠️ 미검증 — 터치 조작 자체가 미구현 |
 

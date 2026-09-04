@@ -104,6 +104,26 @@ await page.keyboard.press('KeyS');
 await page.waitForTimeout(700);
 await page.screenshot({ path: shot('04-판매후') });
 
+// 걷기 애니메이션 검증: 방향키를 계속 누른 상태로 짧은 간격 프레임을 찍어
+// 스프라이트 프레임이 실제로 교체되는지 본다. 카메라가 플레이어를 따라가므로
+// "이동해서 화면이 달라진 것"과 구분되지 않을 수 있어, 벽(섬 경계)에 붙여
+// 더 이상 움직이지 못하는 상태에서 찍는다 — 그때 달라지는 것은 애니메이션뿐이다.
+await page.keyboard.down('ArrowRight');
+await page.waitForTimeout(3000);          // 섬 오른쪽 끝까지 이동해 벽에 붙임
+const walkShots = [];
+for (let i = 0; i < 4; i++) {
+  const p = shot(`05-걷기-${i}`);
+  await page.screenshot({ path: p });
+  walkShots.push(hash(p));
+  await page.waitForTimeout(130);         // 8FPS 기준 한 프레임(125ms)보다 약간 길게
+}
+await page.keyboard.up('ArrowRight');
+if (new Set(walkShots).size < 2) {
+  failures.push('벽에 붙은 상태에서 프레임이 전혀 바뀌지 않음 — 걷기 애니메이션이 재생되지 않는다');
+} else {
+  console.log(`걷기 애니메이션 확인: 4장 중 서로 다른 화면 ${new Set(walkShots).size}종`);
+}
+
 // 입력이 실제로 게임에 전달됐는지 — 화면이 바뀌지 않았다면 입력이 먹지 않은 것
 if (hash(shot('01-초기화면')) === hash(shot('02-이동후'))) {
   failures.push('방향키 입력 전후 화면이 동일 — 입력이 게임에 전달되지 않음');

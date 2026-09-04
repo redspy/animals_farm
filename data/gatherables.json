@@ -1,15 +1,16 @@
 {
-  "_comment": "채집물 배치와 재생 시간. 유효범위는 주석이 아니라 아래 limits 필드가 단일 출처이며, 코드는 이 값으로 클램프하고 경고를 남긴다(docs/design.md §3).",
-  "schema_version": 2,
+  "_comment": "채집물 배치와 재생 시간. 좌표는 3D 월드 단위(x=좌우, z=앞뒤, 원점=섬 중앙, 1단위≈캐릭터 1.3명 폭)다. schema_version 2까지는 2D 픽셀 좌표(x,y)였고 3에서 월드 좌표(x,z)로 바뀌었다. 유효범위는 주석이 아니라 limits 필드가 단일 출처이며 코드(Balance.clamp_value)가 클램프하고 경고를 남긴다.",
+  "schema_version": 3,
+  "island": { "size_x": 20.0, "size_z": 12.0 },
   "limits": {
     "respawn_sec": [10, 86400]
   },
   "spawns": [
-    { "kind": "tree",  "item": "wood",  "x": 220, "y": 180, "respawn_sec": 30 },
-    { "kind": "tree",  "item": "fruit", "x": 340, "y": 300, "respawn_sec": 45 },
-    { "kind": "tree",  "item": "wood",  "x": 640, "y": 220, "respawn_sec": 30 },
-    { "kind": "shell", "item": "shell", "x": 780, "y": 420, "respawn_sec": 60 },
-    { "kind": "weed",  "item": "weed",  "x": 480, "y": 430, "respawn_sec": 20 },
-    { "kind": "weed",  "item": "weed",  "x": 150, "y": 400, "respawn_sec": 20 }
+    { "kind": "tree",  "item": "wood",  "x": -5.0, "z": -2.0, "respawn_sec": 30 },
+    { "kind": "tree",  "item": "fruit", "x": -2.5, "z": 1.5,  "respawn_sec": 45 },
+    { "kind": "tree",  "item": "wood",  "x": 3.5,  "z": -1.5, "respawn_sec": 30 },
+    { "kind": "shell", "item": "shell", "x": 6.5,  "z": 3.5,  "respawn_sec": 60 },
+    { "kind": "weed",  "item": "weed",  "x": 0.0,  "z": 3.0,  "respawn_sec": 20 },
+    { "kind": "weed",  "item": "weed",  "x": -7.0, "z": 2.5,  "respawn_sec": 20 }
   ]
 }
