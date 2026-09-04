@@ -1,0 +1,168 @@
+extends Node
+class_name ChatInput
+
+## 채팅 입력 경로를 한 곳으로 모은 노드.
+##
+## 웹에서는 캔버스 위에 **실제 DOM `<input>`을 얹는다**. Godot 웹의
+## `experimental_virtual_keyboard`를 쓰지 않는 이유는 회의 결과에 있다
+## (docs/meetings/2026-09-04-1150-폰-터치-조작-설계.md §9-나):
+## 모바일 브라우저에서 한글 IME 조합이 풀리거나 글자가 중복 입력되는 사례가
+## 보고돼 있고, 이 게임은 한국어 채팅이 기능의 핵심이다. DOM 입력은 브라우저
+## 네이티브라 OS 키보드·IME와 그대로 연동된다.
+##
+## 웹이 아닌 환경(에디터/데스크톱/헤드리스 테스트)에서는 DOM이 없으므로
+## Godot `LineEdit`으로 갈라진다. 바깥 코드는 어느 쪽인지 몰라도 되게
+## `open()` / `close()` / `submitted` 만 본다.
+
+signal submitted(text: String)
+signal closed
+
+const MAX_LEN := 200
+## DOM 입력을 만들 때 쓰는 요소 id. 재접속/재생성 시 중복 생성을 막는 열쇠다.
+const DOM_ID := "af-chat-input"
+
+var _is_web := false
+var _open := false
+var _line_edit: LineEdit = null
+var _js_submit_cb: JavaScriptObject = null
+var _js_cancel_cb: JavaScriptObject = null
+
+func _ready() -> void:
+	_is_web = OS.has_feature("web") and JavaScriptBridge.get_interface("document") != null
+	if _is_web:
+		_setup_dom()
+	else:
+		_setup_line_edit()
+
+func is_open() -> bool:
+	return _open
+
+func open() -> void:
+	if _open:
+		return
+	_open = true
+	if _is_web:
+		# 포커스는 사용자 제스처(버튼 탭/키 입력) 안에서 걸어야 모바일
+		# 브라우저가 키보드를 띄운다 — 지연 호출하면 무시된다.
+		JavaScriptBridge.eval("""
+			(function(){
+				var el = document.getElementById('%s');
+				if (!el) return;
+				el.style.display = 'block';
+				el.value = '';
+				el.focus();
+			})();
+		""" % DOM_ID, true)
+	elif _line_edit != null:
+		_line_edit.visible = true
+		_line_edit.text = ""
+		_line_edit.grab_focus()
+
+func close() -> void:
+	if not _open:
+		return
+	_open = false
+	if _is_web:
+		JavaScriptBridge.eval("""
+			(function(){
+				var el = document.getElementById('%s');
+				if (!el) return;
+				el.blur();
+				el.style.display = 'none';
+			})();
+		""" % DOM_ID, true)
+	elif _line_edit != null:
+		_line_edit.visible = false
+		_line_edit.release_focus()
+	closed.emit()
+
+# ---------------------------------------------------------------------------
+# 웹: DOM <input> 오버레이
+# ---------------------------------------------------------------------------
+
+func _setup_dom() -> void:
+	# 콜백을 멤버로 들고 있어야 GC되지 않는다(해제되면 Enter가 먹지 않는다).
+	_js_submit_cb = JavaScriptBridge.create_callback(_on_dom_submit)
+	_js_cancel_cb = JavaScriptBridge.create_callback(_on_dom_cancel)
+	var window := JavaScriptBridge.get_interface("window")
+	window.afChatSubmit = _js_submit_cb
+	window.afChatCancel = _js_cancel_cb
+
+	# 캔버스 위에 고정 배치. 폰에서 키보드가 올라오면 브라우저가 뷰포트를
+	# 줄이므로 bottom 기준으로 붙여야 입력창이 키보드에 가리지 않는다.
+	JavaScriptBridge.eval("""
+		(function(){
+			if (document.getElementById('%s')) return;
+			var el = document.createElement('input');
+			el.id = '%s';
+			el.type = 'text';
+			el.maxLength = %d;
+			el.placeholder = '메시지 입력 후 Enter';
+			el.autocomplete = 'off';
+			el.style.cssText = [
+				'display:none', 'position:fixed', 'left:3%%', 'bottom:12px', 'width:70%%',
+				'max-width:600px', 'padding:12px 14px', 'font-size:17px',
+				'border:2px solid rgba(255,255,255,0.6)', 'border-radius:10px',
+				'background:rgba(18,38,31,0.92)', 'color:#fff', 'z-index:2147483647',
+				'outline:none', '-webkit-user-select:text', 'user-select:text'
+			].join(';');
+			el.addEventListener('keydown', function(ev){
+				if (ev.key === 'Enter') {
+					// IME 조합 중의 Enter는 조합 확정이므로 전송하지 않는다 —
+					// 이걸 빼면 한글 입력 중 첫 Enter에 조합이 잘린 채 전송된다.
+					if (ev.isComposing) return;
+					ev.preventDefault();
+					window.afChatSubmit(el.value);
+				} else if (ev.key === 'Escape') {
+					ev.preventDefault();
+					window.afChatCancel();
+				}
+				// 게임이 키를 같이 먹지 않도록 캔버스로 전파하지 않는다.
+				ev.stopPropagation();
+			});
+			el.addEventListener('keyup', function(ev){ ev.stopPropagation(); });
+			el.addEventListener('keypress', function(ev){ ev.stopPropagation(); });
+			document.body.appendChild(el);
+		})();
+	""" % [DOM_ID, DOM_ID, MAX_LEN], true)
+
+func _on_dom_submit(args: Array) -> void:
+	var text := String(args[0]) if args.size() > 0 else ""
+	close()
+	var clean := text.strip_edges()
+	if not clean.is_empty():
+		submitted.emit(clean.substr(0, MAX_LEN))
+
+func _on_dom_cancel(_args: Array) -> void:
+	close()
+
+# ---------------------------------------------------------------------------
+# 비웹: Godot LineEdit
+# ---------------------------------------------------------------------------
+
+func _setup_line_edit() -> void:
+	var layer := CanvasLayer.new()
+	add_child(layer)
+	_line_edit = LineEdit.new()
+	_line_edit.max_length = MAX_LEN
+	_line_edit.placeholder_text = "메시지 입력 후 Enter (Esc 취소)"
+	_line_edit.visible = false
+	# 앵커로 붙여 좁은 화면에서도 잘리지 않게 한다.
+	_line_edit.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_line_edit.offset_left = 16
+	_line_edit.offset_right = -16
+	_line_edit.offset_top = -52
+	_line_edit.offset_bottom = -16
+	_line_edit.text_submitted.connect(func(text: String) -> void:
+		close()
+		var clean := text.strip_edges()
+		if not clean.is_empty():
+			submitted.emit(clean)
+	)
+	layer.add_child(_line_edit)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if _is_web or not _open:
+		return
+	if event is InputEventKey and event.pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
+		close()

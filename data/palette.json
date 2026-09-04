@@ -21,7 +21,9 @@
     "select_bg": "#12261fe6",
     "warn_text": "#ffb4a2",
     "chat_text": "#ffffff",
-    "zone_text": "#ffe9a8"
+    "zone_text": "#ffe9a8",
+    "stick_base": "#ffffff26",
+    "stick_knob": "#ffffff8c"
   },
   "character": {
     "skin": "#ffd9b3",

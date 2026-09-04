@@ -23,6 +23,8 @@ scripts/*.gd         게임 코드
                      main(라우터) / character_select(슬롯·이름) / world(월드맵)
                      player / player_sprite(외형·걷기) / remote_player(다른 기기 캐릭터)
                      avatar_extras(이름표·말풍선) / net(WebSocket) / gatherable
+                     touch_controls(폰 터치 조작) / chat_input(DOM 입력 오버레이)
+                     test_hooks(E2E가 UI 위치를 읽는 seam)
                      save_manager(슬롯 스키마) / game_clock / balance / palette / data_files
                      ※ player_sprite.gd는 Gemini CLI(agy)가 구현한 파일 — 걷기 애니메이션 담당
 data/*.json          밸런스·배치 데이터(유효범위 포함, 코드가 클램프) + palette.json(화면 색 단일 출처)
@@ -40,6 +42,8 @@ export GODOT_BIN="$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot"   # �
 npm run test:browser                 # 브라우저 스모크 (build/web 필요)
 npm run test:server                  # 서버 규칙 유닛 테스트 (소켓 불필요)
 npm run test:multiplayer             # 2탭 + WS 옵저버로 실시간 동기화 검증
+npm run test:mobile                  # 폰 터치 에뮬레이션(조이스틱·버튼·DOM 채팅)
+npm run capture:chat                 # 채팅 UI 상태별 캡쳐(문서용)
 node server/index.js                 # 정적 + WebSocket 서버 (기본 3001)
 GODOT_BIN=<표준빌드> ./scripts/build-web.sh   # 웹 export → build/web/
 node server/index.js                 # http://localhost:3001 로 웹 빌드 서빙

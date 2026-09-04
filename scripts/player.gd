@@ -19,6 +19,9 @@ var sprite: PlayerSprite = null
 var _half_x := 10.0
 var _half_z := 6.0
 var _preset: Dictionary = {}
+## 터치 조이스틱 입력(world.gd가 매 프레임 넣어 준다). 키보드와 합산하지 않고
+## **더 큰 쪽**을 쓴다 — 합산하면 둘을 같이 쓸 때 속도가 두 배가 된다.
+var _touch_vector := Vector2.ZERO
 
 ## world_size는 data/world.json의 size_x/size_z, preset은 data/characters.json의
 ## 프리셋 한 항목이다(외형만 결정하며 능력 차이는 없다).
@@ -55,15 +58,21 @@ func _add_ground_shadow() -> void:
 	shadow.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(shadow)
 
+func set_touch_vector(v: Vector2) -> void:
+	_touch_vector = v
+
 func _physics_process(delta: float) -> void:
 	# 화면 기준 입력 → 월드 XZ. 카메라 yaw가 0이라 화면 위쪽이 -Z와 같다
 	# (카메라를 회전시키면 이 매핑도 함께 고쳐야 한다 — main.gd CAMERA_YAW_DEG).
-	var dir := Vector2(
+	var keys := Vector2(
 		Input.get_axis("ui_left", "ui_right"),
 		Input.get_axis("ui_up", "ui_down")
 	)
+	var dir := keys if keys.length() >= _touch_vector.length() else _touch_vector
 	if dir != Vector2.ZERO:
-		var step := dir.normalized() * SPEED * delta
+		# 조이스틱은 기울기(0~1)를 주므로 살살 밀면 천천히 걷는다. 키보드는
+		# 항상 1이라 기존 속도와 같다.
+		var step := dir.normalized() * SPEED * delta * clampf(dir.length(), 0.0, 1.0)
 		position.x = clampf(position.x + step.x, -_half_x, _half_x)
 		position.z = clampf(position.z + step.y, -_half_z, _half_z)
 	if sprite != null:

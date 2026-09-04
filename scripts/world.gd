@@ -20,12 +20,25 @@ const CAMERA_YAW_DEG := 0.0
 const CAMERA_SIZE := 9.5
 const CAMERA_DISTANCE := 16.0
 const CAMERA_FOLLOW_SPEED := 6.0
+## 기준 화면 비율(16:9). 세로 모드처럼 이보다 좁아지면 직교 size는 세로 기준이라
+## 가로 시야가 급격히 줄어든다 — 비율만큼 size를 키워 가로 시야를 지킨다
+## (회의 결정 ⑤, agy도 같은 결론). 다만 무한정 키우면 캐릭터가 점이 되므로
+## 배율에 상한을 둔다.
+const CAMERA_BASE_ASPECT := 16.0 / 9.0
+const CAMERA_MAX_ZOOM_OUT := 1.8
 
 ## 존 진입 판정 주기(초). 매 프레임 거리를 재는 건 낭비다.
 const ZONE_CHECK_INTERVAL := 0.25
 
-## 화면에 남겨두는 채팅 줄 수.
+## 화면에 남겨두는 채팅 줄 수. 세로 모드처럼 화면이 짧으면 줄여서 월드를 가리지 않게 한다.
 const CHAT_LOG_LINES := 6
+const CHAT_LOG_LINES_SHORT := 3
+## 화면 **폭**이 이보다 좁으면 "좁은 화면"으로 본다(px). 처음에는 높이로
+## 판단했는데 폰 세로(412×839)는 높이가 충분해서 판정에 걸리지 않았고, 정작
+## 문제는 좁은 폭에서 채팅 로그가 캐릭터를 가리는 것이었다(세로 실측).
+const NARROW_SCREEN_WIDTH := 700.0
+## HUD 안전 마진(px). 노치·둥근 모서리를 감안해 넉넉히 잡는다.
+const HUD_MARGIN := 18.0
 ## 월드에 놓인 물건을 주울 수 있는 거리(월드 단위).
 const PICKUP_DISTANCE := 1.6
 ## 드랍 아이템 메시 크기.
@@ -61,7 +74,8 @@ var _drop_items: Dictionary = {}    # entity id -> item_id (줍기 판정용)
 var _presets: Dictionary = {}       # preset id -> 프리셋 Dictionary
 var _emotes: Array = []
 var _chat_log: Array[String] = []
-var _chat_input: LineEdit
+var _chat: ChatInput
+var _touch: TouchControls
 var _chat_label: Label
 var _net_label: Label
 var _my_extras: AvatarExtras
@@ -123,6 +137,7 @@ func _build_world() -> void:
 
 	_build_hud()
 	_update_camera(1.0)
+	get_viewport().size_changed.connect(_on_viewport_resized)
 
 func _build_environment() -> void:
 	# 바다: 맵보다 넓은 평면을 살짝 아래에 깔아 섬이 물 위에 뜬 것처럼 보이게 한다.
@@ -177,7 +192,10 @@ func _build_environment() -> void:
 	# 1.1은 실측 결과 색이 전부 하얗게 날아갔다 — 색이 살아 있도록 낮춘다.
 	light.light_energy = 0.85
 	# 그림자가 있어야 2D 캐릭터가 3D 지형 위에 서 있는 것처럼 읽힌다.
-	light.shadow_enabled = true
+	# 폰(터치 환경)에서는 방향광 그림자를 끈다 — WebGL2에서 실시간 그림자가
+	# 발열·프레임 드랍의 가장 큰 원인이고, 캐릭터 접지감은 발밑 타원 데칼이
+	# 따로 담당하므로 입체감이 크게 깨지지 않는다(회의 결정 ⑥, agy 동일 의견).
+	light.shadow_enabled = not DisplayServer.is_touchscreen_available()
 	add_child(light)
 
 	var env := WorldEnvironment.new()
@@ -192,12 +210,28 @@ func _build_environment() -> void:
 
 	var cam := Camera3D.new()
 	cam.projection = Camera3D.PROJECTION_ORTHOGONAL
-	cam.size = CAMERA_SIZE
+	cam.size = _camera_size_for_screen()
 	cam.rotation_degrees = Vector3(CAMERA_PITCH_DEG, CAMERA_YAW_DEG, 0)
 	cam.near = 0.1
 	cam.far = 120.0
 	add_child(cam)
 	_camera = cam
+
+## 직교 카메라의 size는 세로 기준이라, 세로 모드에서는 가로 시야가 급격히
+## 좁아진다(390x844면 가로가 약 4.4 유닛밖에 안 된다). 기준 비율보다 좁아진
+## 만큼 size를 키워 가로 시야를 지키고, 캐릭터가 점이 되지 않도록 상한을 둔다.
+func _camera_size_for_screen() -> float:
+	var vp := get_viewport()
+	if vp == null:
+		return CAMERA_SIZE
+	var rect := vp.get_visible_rect().size
+	if rect.x <= 0.0 or rect.y <= 0.0:
+		return CAMERA_SIZE
+	var aspect := rect.x / rect.y
+	if aspect >= CAMERA_BASE_ASPECT:
+		return CAMERA_SIZE
+	var zoom := clampf(CAMERA_BASE_ASPECT / aspect, 1.0, CAMERA_MAX_ZOOM_OUT)
+	return CAMERA_SIZE * zoom
 
 func _flat_material(color: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
@@ -208,6 +242,10 @@ func _flat_material(color: Color) -> StandardMaterial3D:
 
 func _build_hud() -> void:
 	# 3D 위에 얹는 2D UI — 2.5D 구성의 "2D" 한 축.
+	#
+	# 좌표는 전부 **앵커 + 마진**이다. 예전에는 Vector2(760, 12)처럼 절대좌표를
+	# 박아서 폰 세로 모드(폭 390 등)에서는 화면 밖으로 잘려 상태를 볼 수 없었다
+	# (회의 결정 ①, agy도 같은 지적).
 	var layer := CanvasLayer.new()
 	add_child(layer)
 
@@ -216,53 +254,83 @@ func _build_hud() -> void:
 	var text_color := Palette.color("ui", "hud_text")
 	var outline_color := Palette.color("ui", "hud_outline")
 
-	_hud = Label.new()
-	_hud.position = Vector2(16, 12)
-	_hud.add_theme_color_override("font_color", text_color)
-	_hud.add_theme_color_override("font_outline_color", outline_color)
-	_hud.add_theme_constant_override("outline_size", 4)
+	_hud = _make_label(layer, Control.PRESET_TOP_LEFT, text_color, outline_color)
+	_hud.offset_left = HUD_MARGIN
+	_hud.offset_top = HUD_MARGIN
 	_hud.add_theme_constant_override("line_spacing", 4)
-	layer.add_child(_hud)
+	# 가방 줄을 탭하면 판매 확인 시트를 띄운다 — 판매 버튼을 상시 노출하지
+	# 않는 이유는 되돌릴 수 없는 동작이기 때문이다(회의 결정 ②).
+	_hud.mouse_filter = Control.MOUSE_FILTER_STOP
+	_hud.gui_input.connect(_on_hud_clicked)
 
-	_zone_label = Label.new()
-	_zone_label.position = Vector2(16, 440)
-	_zone_label.add_theme_color_override("font_color", Palette.color("ui", "zone_text"))
-	_zone_label.add_theme_color_override("font_outline_color", outline_color)
-	_zone_label.add_theme_constant_override("outline_size", 4)
-	layer.add_child(_zone_label)
-
-	_chat_label = Label.new()
-	_chat_label.position = Vector2(16, 250)
-	_chat_label.add_theme_color_override("font_color", Palette.color("ui", "chat_text"))
-	_chat_label.add_theme_color_override("font_outline_color", outline_color)
-	_chat_label.add_theme_constant_override("outline_size", 4)
-	_chat_label.add_theme_constant_override("line_spacing", 2)
-	layer.add_child(_chat_label)
-
-	_net_label = Label.new()
-	_net_label.position = Vector2(760, 12)
-	_net_label.add_theme_color_override("font_color", Palette.color("ui", "warn_text"))
-	_net_label.add_theme_color_override("font_outline_color", outline_color)
-	_net_label.add_theme_constant_override("outline_size", 4)
+	_net_label = _make_label(layer, Control.PRESET_TOP_RIGHT, Palette.color("ui", "warn_text"), outline_color)
+	_net_label.offset_right = -HUD_MARGIN
+	_net_label.offset_top = HUD_MARGIN
+	_net_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_net_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_net_label.text = "서버 연결 중…"
-	layer.add_child(_net_label)
 
-	# 채팅 입력창은 평소 숨겨두고 T로 연다 — 항상 떠 있으면 방향키 입력을 먹는다.
-	_chat_input = LineEdit.new()
-	_chat_input.position = Vector2(16, 500)
-	_chat_input.size = Vector2(600, 30)
-	_chat_input.max_length = 200
-	_chat_input.placeholder_text = "메시지 입력 후 Enter (Esc 취소)"
-	_chat_input.visible = false
-	_chat_input.text_submitted.connect(_on_chat_submitted)
-	layer.add_child(_chat_input)
+	# 좁은 화면(폰 세로)에서는 화면 중앙에 두면 캐릭터를 가린다 — 아래쪽에 붙인다.
+	var chat_preset := Control.PRESET_BOTTOM_LEFT if _is_narrow_screen() else Control.PRESET_CENTER_LEFT
+	_chat_label = _make_label(layer, chat_preset, Palette.color("ui", "chat_text"), outline_color)
+	_chat_label.offset_left = HUD_MARGIN
+	if _is_narrow_screen():
+		_chat_label.offset_bottom = -(HUD_MARGIN + 150.0)
+		_chat_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	_chat_label.add_theme_constant_override("line_spacing", 2)
 
-	_toast = Label.new()
-	_toast.position = Vector2(16, 470)
-	_toast.add_theme_color_override("font_color", text_color)
-	_toast.add_theme_color_override("font_outline_color", outline_color)
-	_toast.add_theme_constant_override("outline_size", 4)
-	layer.add_child(_toast)
+	_zone_label = _make_label(layer, Control.PRESET_BOTTOM_LEFT, Palette.color("ui", "zone_text"), outline_color)
+	_zone_label.offset_left = HUD_MARGIN
+	_zone_label.offset_bottom = -(HUD_MARGIN + 46.0)
+	_zone_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
+
+	_toast = _make_label(layer, Control.PRESET_BOTTOM_LEFT, text_color, outline_color)
+	_toast.offset_left = HUD_MARGIN
+	_toast.offset_bottom = -HUD_MARGIN
+	_toast.grow_vertical = Control.GROW_DIRECTION_BEGIN
+
+	# 채팅 입력은 웹이면 DOM <input>, 아니면 LineEdit — ChatInput이 갈라 준다.
+	_chat = ChatInput.new()
+	_chat.submitted.connect(_on_chat_submitted)
+	add_child(_chat)
+
+	if DisplayServer.is_touchscreen_available():
+		# 의심스러우면 띄운다 — 폰에서 안 뜨는 쪽이 치명적이다(회의 §10).
+		_touch = TouchControls.new()
+		_touch.setup(_emotes)
+		_touch.action_pressed.connect(_try_interact)
+		_touch.chat_pressed.connect(_open_chat_input)
+		_touch.drop_pressed.connect(_drop_one)
+		_touch.emote_selected.connect(_send_emote)
+		_touch.sell_requested.connect(_sell_all)
+		add_child(_touch)
+
+func _is_narrow_screen() -> bool:
+	var vp := get_viewport()
+	if vp == null:
+		return false
+	return vp.get_visible_rect().size.x < NARROW_SCREEN_WIDTH
+
+func _make_label(layer: CanvasLayer, preset: int, color: Color, outline: Color) -> Label:
+	var l := Label.new()
+	l.set_anchors_preset(preset)
+	l.add_theme_color_override("font_color", color)
+	l.add_theme_color_override("font_outline_color", outline)
+	l.add_theme_constant_override("outline_size", 4)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(l)
+	return l
+
+## 가방 줄(HUD 3번째 줄) 근처를 탭하면 판매 확인을 띄운다. 터치 UI가 없는
+## 환경에서는 기존 S 키가 그대로 즉시 판매한다.
+func _on_hud_clicked(event: InputEvent) -> void:
+	if not (event is InputEventMouseButton):
+		return
+	var mb := event as InputEventMouseButton
+	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
+		return
+	if _touch != null:
+		_touch.show_sell_confirm()
 
 ## 마지막 접속 이후 하루 이상 지났으면 채집물 전체를 되살린다.
 func _apply_daily_respawn() -> void:
@@ -338,15 +406,23 @@ func _refresh_hud() -> void:
 		parts.append("%s x%d" % [_label_of(item_id), int(inv[item_id])])
 	var bag := "가방: 비었음" if parts.is_empty() else "가방: " + ", ".join(parts)
 	var who := String(_slot.get("name", "(이름 없음)"))
-	_hud.text = "%s  |  %s\n벨: %d\n%s\n[방향키] 이동  [Space] 채집/줍기  [S] 판매  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % [
-		who, GameClock.label(), int(_slot.get("bells", 0)), bag, maxi(_emotes.size(), 1)
+	# 조작 안내는 실제 조작 수단에 맞춘다 — 폰에서 "[방향키] 이동"은 아무 의미가
+	# 없고, 오히려 터치 UI를 못 찾게 만든다.
+	var hint := "왼쪽 아래를 끌어 이동 · 오른쪽 버튼으로 채집/채팅/감정 · 가방 줄을 탭하면 판매" \
+		if _touch != null \
+		else "[방향키] 이동  [Space] 채집/줍기  [S] 판매  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % maxi(_emotes.size(), 1)
+	_hud.text = "%s  |  %s\n벨: %d\n%s\n%s" % [
+		who, GameClock.label(), int(_slot.get("bells", 0)), bag, hint
 	]
 
 ## 채팅 로그는 최근 CHAT_LOG_LINES줄만 화면에 남긴다 — 더 쌓아두면 화면을
 ## 가리고, 스크롤 가능한 채팅창은 P6(UI 정리)에서 다룬다.
 func _append_chat(line: String) -> void:
 	_chat_log.append(line)
-	while _chat_log.size() > CHAT_LOG_LINES:
+	var limit := CHAT_LOG_LINES
+	if _is_narrow_screen():
+		limit = CHAT_LOG_LINES_SHORT
+	while _chat_log.size() > limit:
 		_chat_log.remove_at(0)
 	if _chat_label != null:
 		_chat_label.text = "\n".join(_chat_log)
@@ -356,10 +432,11 @@ func _show_toast(text: String) -> void:
 	_toast_timer = 2.5
 
 func _unhandled_input(event: InputEvent) -> void:
-	# 채팅 입력 중에는 게임 조작을 받지 않는다 — 안 그러면 "s"를 치면 물건이 팔린다.
-	if _chat_input != null and _chat_input.visible:
-		if event is InputEventKey and event.pressed and (event as InputEventKey).keycode == KEY_ESCAPE:
-			_close_chat_input()
+	# 채팅 입력 중이거나 시트가 열려 있으면 게임 조작을 받지 않는다 —
+	# 안 그러면 "s"를 치는 순간 물건이 팔리고, 시트 뒤에서 캐릭터가 움직인다.
+	if _chat != null and _chat.is_open():
+		return
+	if _touch != null and _touch.is_sheet_open():
 		return
 
 	if event.is_action_pressed("ui_accept"):
@@ -385,14 +462,18 @@ func _try_emote_key(keycode: int) -> void:
 	var emote: Variant = _emotes[index]
 	if typeof(emote) != TYPE_DICTIONARY:
 		return
-	var id := String((emote as Dictionary).get("id", ""))
-	var glyph := String((emote as Dictionary).get("glyph", "?"))
+	_send_emote(String((emote as Dictionary).get("id", "")))
+
+## 키보드 숫자키와 터치 시트가 같은 경로를 쓴다.
+func _send_emote(emote_id: String) -> void:
+	if emote_id.is_empty():
+		return
 	# 내 화면에는 즉시 보여주고(반응성) 서버에도 알린다. 서버가 거절하면
 	# 남들에게만 안 보이는데, 그 경우는 error 메시지로 화면에 뜬다.
 	if _my_extras != null:
-		_my_extras.show_emote(glyph)
+		_my_extras.show_emote(_emote_glyph(emote_id))
 	if _net != null:
-		_net.send_emote(id)
+		_net.send_emote(emote_id)
 
 ## Space: 주변에 놓인 물건이 있으면 줍고, 없으면 채집한다.
 func _try_interact() -> void:
@@ -432,79 +513,17 @@ func _drop_one() -> void:
 	_net.send_drop(item_id, _player.position)
 
 func _open_chat_input() -> void:
-	if _chat_input == null:
-		return
-	_chat_input.visible = true
-	_chat_input.text = ""
-	_chat_input.grab_focus()
-
-func _close_chat_input() -> void:
-	if _chat_input == null:
-		return
-	_chat_input.visible = false
-	_chat_input.release_focus()
+	if _chat != null:
+		_chat.open()
 
 func _on_chat_submitted(text: String) -> void:
-	var clean := text.strip_edges()
-	_close_chat_input()
-	if clean.is_empty():
-		return
 	if _net == null or not _net.connected:
 		# 혼자 플레이 중에도 입력이 사라지지 않게 내 화면에는 남긴다.
-		_append_chat("(연결 없음) %s: %s" % [String(_slot.get("name", "")), clean])
+		_append_chat("(연결 없음) %s: %s" % [String(_slot.get("name", "")), text])
 		if _my_extras != null:
-			_my_extras.show_chat(clean)
+			_my_extras.show_chat(text)
 		return
-	_net.send_chat(clean)
-
-func _try_gather() -> void:
-	var nearest: Gatherable = null
-	var best := INF
-	for g in _gatherables:
-		if not g.can_interact(_player.position):
-			continue
-		var d := _player.position.distance_to(g.position)
-		if d < best:
-			best = d
-			nearest = g
-	if nearest == null:
-		_show_toast("주변에 채집할 것이 없습니다")
-		return
-	nearest.gather()
-
-## 카메라를 플레이어 위로 옮긴다. weight=1.0이면 즉시 스냅.
-func _update_camera(weight: float) -> void:
-	if _camera == null or _player == null:
-		return
-	# basis.z는 카메라가 바라보는 반대 방향이라, 그만큼 뒤로 물러난 위치가
-	# 플레이어를 화면 중앙에 두는 카메라 위치가 된다.
-	var target := _player.position + _camera.transform.basis.z * CAMERA_DISTANCE
-	_camera.position = _camera.position.lerp(target, clampf(weight, 0.0, 1.0))
-
-## 모임 존 진입/이탈 감지. 지금은 안내만 하고, 미니게임은 P5에서 붙인다
-## (docs/roadmap.md). 판정을 클라이언트가 하고 있다는 점은 protocol.md §3에
-## 명시된 신뢰 경계 안이다 — 결과가 걸린 상호작용을 붙일 때 서버로 옮겨야 한다.
-func _check_zone() -> void:
-	var here := ""
-	var label := ""
-	var p := Vector2(_player.position.x, _player.position.z)
-	for z: Variant in _zones:
-		if typeof(z) != TYPE_DICTIONARY:
-			continue
-		var zone := z as Dictionary
-		var c := Vector2(float(zone.get("x", 0.0)), float(zone.get("z", 0.0)))
-		if p.distance_to(c) <= float(zone.get("radius", 3.0)):
-			here = String(zone.get("id", ""))
-			label = String(zone.get("label", here))
-			break
-	if here == _current_zone:
-		return
-	_current_zone = here
-	if here.is_empty():
-		_zone_label.text = ""
-	else:
-		_zone_label.text = "[%s] 모임 장소 — 미니게임 준비 중" % label
-		_show_toast("%s에 들어왔습니다" % label)
+	_net.send_chat(text)
 
 # ---------------------------------------------------------------------------
 # 멀티플레이 (docs/protocol.md)
@@ -688,6 +707,55 @@ func _on_server_error(code: String, message: String) -> void:
 	_show_toast("서버: %s" % message)
 	push_warning("서버 오류(%s): %s" % [code, message])
 
+func _try_gather() -> void:
+	var nearest: Gatherable = null
+	var best := INF
+	for g in _gatherables:
+		if not g.can_interact(_player.position):
+			continue
+		var d := _player.position.distance_to(g.position)
+		if d < best:
+			best = d
+			nearest = g
+	if nearest == null:
+		_show_toast("주변에 채집할 것이 없습니다")
+		return
+	nearest.gather()
+
+## 카메라를 플레이어 위로 옮긴다. weight=1.0이면 즉시 스냅.
+func _update_camera(weight: float) -> void:
+	if _camera == null or _player == null:
+		return
+	# basis.z는 카메라가 바라보는 반대 방향이라, 그만큼 뒤로 물러난 위치가
+	# 플레이어를 화면 중앙에 두는 카메라 위치가 된다.
+	var target := _player.position + _camera.transform.basis.z * CAMERA_DISTANCE
+	_camera.position = _camera.position.lerp(target, clampf(weight, 0.0, 1.0))
+
+## 모임 존 진입/이탈 감지. 지금은 안내만 하고, 미니게임은 P5에서 붙인다
+## (docs/roadmap.md). 판정을 클라이언트가 하고 있다는 점은 protocol.md §3에
+## 명시된 신뢰 경계 안이다 — 결과가 걸린 상호작용을 붙일 때 서버로 옮겨야 한다.
+func _check_zone() -> void:
+	var here := ""
+	var label := ""
+	var p := Vector2(_player.position.x, _player.position.z)
+	for z: Variant in _zones:
+		if typeof(z) != TYPE_DICTIONARY:
+			continue
+		var zone := z as Dictionary
+		var c := Vector2(float(zone.get("x", 0.0)), float(zone.get("z", 0.0)))
+		if p.distance_to(c) <= float(zone.get("radius", 3.0)):
+			here = String(zone.get("id", ""))
+			label = String(zone.get("label", here))
+			break
+	if here == _current_zone:
+		return
+	_current_zone = here
+	if here.is_empty():
+		_zone_label.text = ""
+	else:
+		_zone_label.text = "[%s] 모임 장소 — 미니게임 준비 중" % label
+		_show_toast("%s에 들어왔습니다" % label)
+
 ## 슬롯에 현재 상태(위치·벨·가방)를 반영해 저장한다.
 func _persist() -> void:
 	_slot["pos"] = {"x": snappedf(_player.position.x, 0.01), "z": snappedf(_player.position.z, 0.01)}
@@ -695,9 +763,21 @@ func _persist() -> void:
 	SaveManager.put_slot(_save, _slot_index, _slot)
 	SaveManager.save(_save)
 
+## 폰을 돌리면(세로↔가로) 뷰포트 비율이 바뀌므로 카메라 size를 다시 계산한다.
+func _on_viewport_resized() -> void:
+	if _camera != null:
+		_camera.size = _camera_size_for_screen()
+
 func _process(delta: float) -> void:
 	_update_camera(CAMERA_FOLLOW_SPEED * delta)
 
+	if _player != null:
+		# 터치 조이스틱 입력을 플레이어에 넘긴다(키보드와 병행 — player.gd가
+		# 더 큰 쪽을 쓴다). 시트가 열려 있으면 이동을 멈춘다.
+		var touch_vec := Vector2.ZERO
+		if _touch != null and not _touch.is_sheet_open():
+			touch_vec = _touch.move_vector
+		_player.set_touch_vector(touch_vec)
 	if _net != null and _player != null and _player.sprite != null:
 		_net.send_move(_player.position, _player.sprite.facing())
 

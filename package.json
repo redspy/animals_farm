@@ -17,7 +17,9 @@
     "test:browser": "node tests/browser-smoke.mjs",
     "test:server": "node --test tests/server-world.test.mjs",
     "test": "npm run test:server",
-    "test:multiplayer": "node tests/browser-multiplayer.mjs"
+    "test:multiplayer": "node tests/browser-multiplayer.mjs",
+    "capture:chat": "node tests/capture-chat-ui.mjs",
+    "test:mobile": "node tests/browser-mobile.mjs"
   },
   "keywords": [],
   "author": "",

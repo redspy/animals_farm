@@ -20,6 +20,9 @@ var _presets: Array = []
 var _spawn := Vector2.ZERO
 
 var _root: VBoxContainer
+## E2E 테스트가 탭할 지점(슬롯/프리셋/이름칸/시작 버튼). 테스트 seam 설명은
+## scripts/test_hooks.gd 참고.
+var _hooks: TestHooks
 var _pending_index := -1          # 프리셋/이름 입력 중인 슬롯
 var _pending_preset: String = ""
 
@@ -38,6 +41,9 @@ func _ready() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(center)
 
+	_hooks = TestHooks.new()
+	add_child(_hooks)
+
 	_root = VBoxContainer.new()
 	_root.custom_minimum_size = Vector2(PANEL_WIDTH, 0)
 	_root.add_theme_constant_override("separation", 8)
@@ -46,8 +52,18 @@ func _ready() -> void:
 	_show_slot_list()
 
 func _clear_root() -> void:
+	# queue_free는 프레임 끝에 처리되므로 자식이 즉시 사라지지 않는다 — 이 상태로
+	# 새 화면을 만들면 get_child_count()가 이전 화면 노드까지 세서 인덱스가 밀린다
+	# (테스트 훅의 preset1 키가 preset8로 밀려 나갔다, 2026-09-04 실측).
 	for c in _root.get_children():
+		_root.remove_child(c)
 		c.queue_free()
+	if _hooks != null:
+		_hooks.clear()
+
+func _mark(key: String, control: Control) -> void:
+	if _hooks != null:
+		_hooks.track(key, control)
 
 func _title(text: String) -> void:
 	var l := Label.new()
@@ -81,6 +97,7 @@ func _show_slot_list() -> void:
 				enter.text = "%d. %s — %s · %d벨" % [i + 1, name_text, preset_label, int(slot.get("bells", 0))]
 		enter.pressed.connect(_on_slot_pressed.bind(i))
 		row.add_child(enter)
+		_mark("slot%d" % (i + 1), enter)
 
 		var del := Button.new()
 		del.custom_minimum_size = Vector2(104.0, ROW_HEIGHT)
@@ -88,6 +105,7 @@ func _show_slot_list() -> void:
 		del.disabled = slot.is_empty()
 		del.pressed.connect(_on_delete_pressed.bind(i))
 		row.add_child(del)
+		_mark("delete%d" % (i + 1), del)
 
 func _preset_label(preset_id: String) -> String:
 	for p: Variant in _presets:
@@ -141,16 +159,21 @@ func _confirm_delete() -> void:
 func _show_preset_picker() -> void:
 	_clear_root()
 	_title("외형을 고르세요")
+	var index := 0
 	for p: Variant in _presets:
 		if typeof(p) != TYPE_DICTIONARY:
 			continue
 		var preset := p as Dictionary
+		index += 1
 		var b := Button.new()
 		b.custom_minimum_size = Vector2(0, ROW_HEIGHT)
 		var gender_text := "여" if String(preset.get("gender", "")) == "female" else "남"
 		b.text = "%s (%s)" % [String(preset.get("label", "")), gender_text]
 		b.pressed.connect(_on_preset_pressed.bind(String(preset.get("id", ""))))
 		_root.add_child(b)
+		# 자식 개수가 아니라 프리셋 순번을 쓴다 — 개수는 화면 전환 잔여 노드에
+		# 오염될 수 있다.
+		_mark("preset%d" % index, b)
 
 	var back := Button.new()
 	back.text = "뒤로"
@@ -172,6 +195,7 @@ func _show_name_input() -> void:
 	edit.placeholder_text = "이름"
 	_root.add_child(edit)
 	edit.grab_focus()
+	_mark("nameField", edit)
 
 	var hint := Label.new()
 	hint.text = "이 이름은 삭제할 때까지 기억됩니다."
@@ -184,6 +208,7 @@ func _show_name_input() -> void:
 	ok.custom_minimum_size = Vector2(0, ROW_HEIGHT)
 	ok.pressed.connect(_on_name_confirmed.bind(edit))
 	_root.add_child(ok)
+	_mark("startButton", ok)
 
 	# 엔터로도 확정되게 — 이름 입력 후 마우스로 버튼을 찾아가는 건 번거롭다.
 	edit.text_submitted.connect(func(_t: String) -> void: _on_name_confirmed(edit))
