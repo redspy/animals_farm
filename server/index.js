@@ -31,13 +31,17 @@ const ROOT = resolve(join(__dirname, '..', 'build', 'web'));
 const PORT = Number(process.env.PORT || 3001);
 const HOST = process.env.HOST || '0.0.0.0';
 
-// Godot 웹 빌드는 **보안 컨텍스트가 아니면 실행 자체를 거부**한다
+// Godot 웹 빌드는 기본 셸에서 **보안 컨텍스트가 아니면 실행을 거부**한다
 // ("Secure Context - Check web server configuration (use HTTPS)"). localhost는
 // 브라우저가 보안 컨텍스트로 취급하지만, 같은 와이파이의 폰에서 http://192.168.x.x로
-// 붙으면 아니다 — 그래서 개발 중에도 HTTPS가 필요하다(2026-09-04 실기 확인).
+// 붙으면 아니다(2026-09-04 실기 확인).
 //
-// 인증서가 있으면 https로, 없으면 http로 뜬다. 개발용 인증서는
-// ./scripts/make-dev-cert.sh 로 만든다.
+// 그래서 커스텀 셸(web/shell.html)에서 이 요구를 완화했다 — 사용자가 http로
+// 접속할 수 있기를 원했고, 실제로 필요한 기능(WebGL2·WebSocket)은 비보안
+// 컨텍스트에서도 동작한다. 즉 **http로도 폰에서 실행된다**.
+// 인증서가 있으면 여전히 https를 쓴다(있는 쪽이 낫다: COOP/COEP를 켤 수 있고
+// 뒤에 카메라/마이크 같은 보안 컨텍스트 전용 API가 필요해질 수 있다).
+// 개발용 인증서는 ./scripts/make-dev-cert.sh 로 만든다.
 const TLS_CERT = process.env.TLS_CERT || join(__dirname, 'certs', 'dev-cert.pem');
 const TLS_KEY = process.env.TLS_KEY || join(__dirname, 'certs', 'dev-key.pem');
 // TLS=off 로 강제로 http 기동(비보안 컨텍스트 동작을 검증할 때 쓴다).
@@ -378,8 +382,8 @@ server.listen(PORT, HOST, () => {
   console.log(`[animals_farm] WebSocket: ${wsScheme}://${HOST}:${PORT}/ws  월드 ${world.sizeX} x ${world.sizeZ}`);
   if (!useTls) {
     // 조용히 http로 뜨면 "폰에서 왜 안 되지"로 시간을 버린다 — 기동 시점에 알린다.
-    console.log('[animals_farm] ⚠️  TLS 인증서가 없어 http로 기동했습니다.');
-    console.log('[animals_farm]    localhost에서는 동작하지만 **폰/다른 기기에서는 Godot이 실행을 거부**합니다');
-    console.log('[animals_farm]    (Secure Context 요구). ./scripts/make-dev-cert.sh 로 인증서를 만드세요.');
+    console.log('[animals_farm] http로 기동했습니다(TLS 인증서 없음 또는 TLS=off).');
+    console.log('[animals_farm]    커스텀 셸이 Secure Context 요구를 완화해 폰에서도 http로 접속됩니다.');
+    console.log('[animals_farm]    https가 필요하면 ./scripts/make-dev-cert.sh 로 인증서를 만드세요.');
   }
 });
