@@ -15,8 +15,7 @@
     "zone_floor": "#ffe9a83d",
     "drop_item": "#f0e0a0",
     "rock": "#8c8f96",
-    "rock_dark": "#6b6e75",
-    "rock_moss": "#5f8a52"
+    "rock_dark": "#6b6e75"
   },
   "ui": {
     "hud_text": "#ffffff",
@@ -27,7 +26,9 @@
     "zone_text": "#ffe9a8",
     "stick_base": "#ffffff26",
     "stick_knob": "#ffffff8c",
-    "move_marker": "#ffffff73"
+    "move_marker": "#ffffff73",
+    "roster_bg": "#12261fb3",
+    "roster_me": "#ffe9a8"
   },
   "character": {
     "skin": "#ffd9b3",

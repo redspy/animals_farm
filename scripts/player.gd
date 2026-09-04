@@ -3,6 +3,11 @@ class_name Player
 
 ## 목표 지점에 도착했을 때. world.gd가 이때 자동 채집/줍기를 실행한다.
 signal arrived
+## 수동 입력(방향키·조이스틱)으로 목표가 취소됐을 때. 이걸 알리지 않으면
+## "무엇을 하려고 갔는지"(자동 채집 등)가 남아 있다가 **엉뚱한 시점에 실행**된다
+## — 실제로 탭 이동이 끝날 때마다 근처 나무가 채집되는 버그가 났다
+## (2026-09-04 사용자 보고).
+signal move_cancelled
 
 ## 플레이어. 이동은 3D(XZ 평면)에서 하고, 보이는 몸은 2D 빌보드 스프라이트
 ## (PlayerSprite)다 — 이 조합이 2.5D 룩의 핵심이다(docs/design.md §2).
@@ -14,6 +19,11 @@ const RADIUS := 0.35
 ## 목표에 이만큼 가까워지면 도착으로 본다(월드 단위). 너무 작으면 부동소수
 ## 오차로 목표 주변을 진동한다.
 const ARRIVE_EPSILON := 0.14
+## 캐릭터 두 명이 이보다 가까워지지 않는다(월드 단위). 스프라이트 폭보다 좁게
+## 잡아 서로 대화할 만큼은 붙을 수 있게 한다.
+const SEPARATION := 0.8
+## 겹침을 푸는 속도(초당). 순간이동으로 풀면 상대가 튀어 보인다.
+const SEPARATION_SPEED := 2.5
 
 ## 발밑 그림자 크기(월드 단위) — 빌보드 스프라이트는 실제 그림자를 드리우기가
 ## 부자연스러워서, 2.5D에서 흔히 쓰는 방식대로 바닥에 타원 데칼을 깐다.
@@ -35,6 +45,8 @@ var _touch_vector := Vector2.ZERO
 var _path: Array[Vector3] = []
 ## 통과할 수 없는 바위들(data/world.json의 obstacles). 수동 이동에서도 막힌다.
 var _obstacles: Array = []
+## 다른 캐릭터들의 위치(world.gd가 매 프레임 갱신). 겹치지 않게 밀어내는 데 쓴다.
+var _others: Array = []
 
 ## world_size는 data/world.json의 size_x/size_z, preset은 data/characters.json의
 ## 프리셋 한 항목이다(외형만 결정하며 능력 차이는 없다).
@@ -75,6 +87,10 @@ func _add_ground_shadow() -> void:
 func set_touch_vector(v: Vector2) -> void:
 	_touch_vector = v
 
+## 다른 캐릭터 위치 목록(원격 캐릭터). 매 프레임 갱신된다.
+func set_others(others: Array) -> void:
+	_others = others
+
 ## 탭한 지점으로 걸어간다. 바위가 막으면 짧은 쪽으로 돌아가는 경유지가 생긴다.
 ## 마지막 경유지에 도착하면 arrived 시그널.
 func move_to(target: Vector3) -> void:
@@ -106,7 +122,9 @@ func _physics_process(delta: float) -> void:
 	# 수동 입력이 들어오면 탭 경로를 버린다 — 손으로 조작하는 중에 캐릭터가
 	# 예전 목표로 끌려가면 조작을 빼앗긴 느낌이 된다.
 	if dir != Vector2.ZERO:
-		_path.clear()
+		if not _path.is_empty():
+			_path.clear()
+			move_cancelled.emit()
 	elif not _path.is_empty():
 		var to_target := _path[0] - position
 		to_target.y = 0.0
@@ -126,5 +144,14 @@ func _physics_process(delta: float) -> void:
 		# 바위를 통과하지 못하게 표면 밖으로 되돌린다. 이동을 막는 대신 밀어내면
 		# 바위에 붙어 미끄러지듯 지나가서 조작이 답답하지 않다.
 		position = PathPlanner.push_out(position, _obstacles, RADIUS)
+
+	# 캐릭터 겹침은 **가만히 있을 때도** 푼다 — 모두 같은 지점에서 시작하고,
+	# 남이 걸어와 겹치는 경우도 있다. 바위 밀림보다 먼저 풀고 나서 다시 바위
+	# 밖으로 되돌린다(겹침을 피하다 바위 안으로 들어가는 것 방지).
+	var separated := PathPlanner.separate(position, _others, SEPARATION, SEPARATION_SPEED * delta)
+	if separated != position:
+		position = PathPlanner.push_out(separated, _obstacles, RADIUS)
+		position.x = clampf(position.x, -_half_x, _half_x)
+		position.z = clampf(position.z, -_half_z, _half_z)
 	if sprite != null:
 		sprite.set_move_dir(dir)

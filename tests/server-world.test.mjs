@@ -137,6 +137,35 @@ test('월드 아이템 총량 상한', () => {
   assert.equal(w.drop(TOKEN_A, 'weed', 0, 0).error.code, 'world_full');
 });
 
+test('새 캐릭터는 스폰 지점에 겹치지 않게 흩어진다', () => {
+  const w = fresh();
+  // 모두 같은 지점에서 시작하면 캐릭터가 한 점에 쌓인다 — 접속 순서에 따라
+  // 링 위로 흩어 놓는다(결정적이어야 테스트가 재현된다).
+  const tokens = [
+    '33333333-3333-4333-8333-333333333331',
+    '33333333-3333-4333-8333-333333333332',
+    '33333333-3333-4333-8333-333333333333',
+    '33333333-3333-4333-8333-333333333334',
+  ];
+  const spots = tokens.map((tk, i) => {
+    const p = w.join({ token: tk, name: `p${i}`, preset: 'f1' }).player;
+    return { x: p.x, z: p.z };
+  });
+  for (let i = 0; i < spots.length; i++) {
+    for (let j = i + 1; j < spots.length; j++) {
+      const d = Math.hypot(spots[i].x - spots[j].x, spots[i].z - spots[j].z);
+      assert.ok(d > 0.7, `${i}번과 ${j}번 스폰이 너무 가깝다: ${d.toFixed(2)}`);
+    }
+  }
+  // 결정적: 같은 순서로 다시 만들면 같은 자리.
+  const w2 = fresh();
+  const again = tokens.map((tk, i) => {
+    const p = w2.join({ token: tk, name: `p${i}`, preset: 'f1' }).player;
+    return { x: p.x, z: p.z };
+  });
+  assert.deepEqual(again, spots, '스폰 배치가 결정적이어야 한다');
+});
+
 test('재접속하면 위치와 가방을 기억한다', () => {
   const w = fresh();
   const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;

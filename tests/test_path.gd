@@ -18,6 +18,7 @@ func _initialize() -> void:
 	_test_multiple_obstacles_terminate()
 	_test_start_inside_obstacle_does_not_loop()
 	_test_push_out()
+	_test_separate()
 
 	if _failures > 0:
 		printerr("❌ 경로 계산 테스트 실패 %d건" % _failures)
@@ -118,6 +119,36 @@ func _test_start_inside_obstacle_does_not_loop() -> void:
 	_check(path.size() >= 1 and path.size() <= PathPlanner.MAX_DETOURS * PathPlanner.ARC_MAX_POINTS + 1,
 		"경로 길이 %d" % path.size())
 	_check(path[path.size() - 1].is_equal_approx(Vector3(8, 0, 0)), "목표로 향한다")
+
+## 캐릭터 겹침 분리 — 겹치면 떨어지고, 한 프레임 이동량은 제한된다.
+func _test_separate() -> void:
+	print("[test] 캐릭터끼리 겹치지 않게 밀어낸다")
+	var sep := 0.8
+
+	# 겹친 상태 → 멀어지는 방향으로 밀린다.
+	var moved := PathPlanner.separate(Vector3(0.2, 0, 0), [Vector3.ZERO], sep, 10.0)
+	_check(Vector2(moved.x, moved.z).length() >= sep - 0.01,
+		"겹침이 풀려 최소 간격 확보(거리 %.2f)" % Vector2(moved.x, moved.z).length())
+	_check(moved.x > 0.2, "겹친 상대의 반대 방향으로 밀린다")
+
+	# 한 프레임 이동량 상한이 지켜진다(순간이동 방지).
+	var capped := PathPlanner.separate(Vector3(0.05, 0, 0), [Vector3.ZERO], sep, 0.1)
+	_check(Vector2(capped.x - 0.05, capped.z).length() <= 0.1001,
+		"한 프레임 이동량이 상한(0.1) 이내: %.3f" % Vector2(capped.x - 0.05, capped.z).length())
+
+	# 정확히 같은 자리여도 크래시 없이 밀려난다(모두 같은 지점에서 시작하는 경우).
+	var exact := PathPlanner.separate(Vector3.ZERO, [Vector3.ZERO], sep, 10.0)
+	_check(Vector2(exact.x, exact.z).length() > 0.0, "같은 자리에 겹쳐도 밀려남")
+
+	# 충분히 떨어진 상대는 무시한다(가만히 있는 캐릭터가 끌려다니면 안 된다).
+	var far := PathPlanner.separate(Vector3(5, 0, 5), [Vector3.ZERO], sep, 10.0)
+	_check(far.is_equal_approx(Vector3(5, 0, 5)), "멀리 있는 상대는 영향 없음")
+
+	# 여러 명에게 둘러싸여도 결과가 유한하다.
+	var crowd := PathPlanner.separate(Vector3.ZERO, [
+		Vector3(0.3, 0, 0), Vector3(-0.3, 0, 0), Vector3(0, 0, 0.3), Vector3(0, 0, -0.3),
+	], sep, 1.0)
+	_check(is_finite(crowd.x) and is_finite(crowd.z), "여러 명에 둘러싸여도 유한한 결과")
 
 func _test_push_out() -> void:
 	print("[test] 바위 안으로 들어간 위치를 표면 밖으로 되돌린다")

@@ -135,6 +135,41 @@ static func _arc_points(center: Vector2, r: float, from_angle: float, to_angle: 
 		points.append(center + Vector2(cos(a), sin(a)) * r)
 	return points
 
+## 다른 캐릭터와 겹치지 않게 밀어낸다.
+##
+## 바위(push_out)와 달리 **한 프레임에 밀리는 양을 제한**한다: 겹친 상태가
+## 순간이동으로 풀리면 상대가 갑자기 튀어 보이고, 스폰이 겹칠 때(모두 같은
+## 지점에서 시작한다) 여러 명이 한꺼번에 튕겨 나간다. 살짝 밀리는 느낌이 되게
+## 초당 속도 상한을 둔다.
+##
+## 왜 서버가 아니라 각 클라이언트가 푸는가: 위치는 이미 클라이언트가 보내고
+## 서버는 경계·속도만 검증한다(docs/protocol.md §3). 겹침은 결과가 걸린 판정이
+## 아니라 보기의 문제라, 양쪽이 각자 자기 자신을 밀어내면 대칭적으로 떨어진다.
+## 대신 조작된 클라이언트는 겹칠 수 있다 — 그 한계를 문서에 남긴다.
+##
+## others: 다른 캐릭터들의 위치(Vector3). radius_sum: 두 캐릭터 반지름의 합.
+static func separate(pos: Vector3, others: Array, radius_sum: float, max_step: float) -> Vector3:
+	var p := Vector2(pos.x, pos.z)
+	var push := Vector2.ZERO
+	for o: Variant in others:
+		if typeof(o) != TYPE_VECTOR3:
+			continue
+		var other := o as Vector3
+		var to_me := p - Vector2(other.x, other.z)
+		var d := to_me.length()
+		if d >= radius_sum:
+			continue
+		if d <= 0.0001:
+			# 정확히 같은 자리(스폰 겹침 등) — 방향이 없으니 임의 방향으로 민다.
+			push += Vector2(radius_sum, 0.0)
+		else:
+			push += to_me / d * (radius_sum - d)
+	if push == Vector2.ZERO:
+		return pos
+	if push.length() > max_step:
+		push = push.normalized() * max_step
+	return Vector3(pos.x + push.x, pos.y, pos.z + push.y)
+
 ## 원 안으로 밀려 들어간 위치를 표면 밖으로 되돌린다(수동 이동 충돌 처리).
 static func push_out(pos: Vector3, obstacles: Array, agent_radius: float) -> Vector3:
 	var p := Vector2(pos.x, pos.z)

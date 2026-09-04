@@ -30,6 +30,13 @@ const CAMERA_MAX_ZOOM_OUT := 1.8
 ## 존 진입 판정 주기(초). 매 프레임 거리를 재는 건 낭비다.
 const ZONE_CHECK_INTERVAL := 0.25
 
+## 하단 접속자 바에 표시할 인원 상한. 넘치면 "+N"으로 줄인다 — 좁은 화면에서
+## 인원이 늘어나면 바가 화면을 넘어간다.
+const ROSTER_MAX := 8
+const ROSTER_MAX_NARROW := 4
+## 접속자 바의 초상화 크기(px).
+const ROSTER_PORTRAIT := Vector2(38, 46)
+
 ## 화면에 남겨두는 채팅 줄 수. 세로 모드처럼 화면이 짧으면 줄여서 월드를 가리지 않게 한다.
 const CHAT_LOG_LINES := 6
 const CHAT_LOG_LINES_SHORT := 3
@@ -45,8 +52,10 @@ const PICKUP_DISTANCE := 1.6
 const DROP_MESH_RADIUS := 0.18
 
 ## 탭한 지점에서 이 거리 안에 대상이 있으면 "그 대상을 탭했다"로 본다(월드 단위).
-## 손가락은 뭉툭하니 넉넉해야 하지만, 너무 크면 옆 나무를 집는다.
-const TAP_PICK_RADIUS := 1.3
+## 손가락은 뭉툭하니 넉넉해야 하지만, 너무 크면 **나무 옆 땅을 탭했는데 나무를
+## 집는다** — 1.3은 실제로 그렇게 느껴졌다(2026-09-04 사용자 보고). 나무 수관
+## 반지름(0.95)에 손가락 여유만 더한 값으로 좁혔다.
+const TAP_PICK_RADIUS := 1.0
 ## 대상에 다가갈 때 얼마나 가까이 설지 — 상호작용 사거리(1.6)보다 조금 안쪽.
 const APPROACH_DISTANCE := 1.1
 ## 목표 지점 마커 크기.
@@ -95,7 +104,11 @@ var _net_label: Label
 var _my_extras: AvatarExtras
 ## 탭 이동의 "도착하면 무엇을 할지". kind: ""(그냥 이동) | "gather" | "pickup"
 var _tap_intent := {"kind": "", "id": ""}
+## 자동 채집할 대상. "근처에서 아무거나"가 아니라 **탭한 그 대상**만 캔다.
+var _tap_gatherable: Gatherable = null
 var _marker: Node3D
+## 하단 접속자 바(내 캐릭터 + 접속 중인 다른 캐릭터의 초상화·이름).
+var _roster_box: HBoxContainer
 var _hooks: TestHooks
 ## 서버가 끊긴 동안 채집한 것. 다시 붙으면 서버로 흘려보낸다 — 안 하면 서버의
 ## welcome이 로컬 가방을 덮어써 오프라인 채집이 사라진다(docs/protocol.md §4).
@@ -124,6 +137,7 @@ func _ready() -> void:
 	_build_world()
 	_apply_daily_respawn()
 	_refresh_hud()
+	_refresh_roster.call_deferred()
 	_start_net()
 
 func _build_world() -> void:
@@ -157,6 +171,7 @@ func _build_world() -> void:
 	_build_hud()
 	_build_marker()
 	_player.arrived.connect(_on_player_arrived)
+	_player.move_cancelled.connect(_on_move_cancelled)
 	_update_camera(1.0)
 	get_viewport().size_changed.connect(_on_viewport_resized)
 
@@ -353,6 +368,33 @@ func _build_hud() -> void:
 	_toast.offset_bottom = -HUD_MARGIN
 	_toast.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
+	# 하단 접속자 바 — 지금 이 월드에 누가 있는지 한눈에 보여준다.
+	# mouse_filter를 IGNORE로 두는 이유: 바가 화면 하단을 가로지르는데 입력을
+	# 먹으면 그 위를 탭했을 때 이동이 되지 않는다(조이스틱 영역과도 겹친다).
+	var roster_panel := PanelContainer.new()
+	roster_panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	roster_panel.offset_left = HUD_MARGIN
+	roster_panel.offset_right = -HUD_MARGIN
+	roster_panel.offset_top = -(ROSTER_PORTRAIT.y + 34.0)
+	roster_panel.offset_bottom = -2.0
+	roster_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var roster_style := StyleBoxFlat.new()
+	roster_style.bg_color = Palette.color("ui", "roster_bg")
+	roster_style.corner_radius_top_left = 8
+	roster_style.corner_radius_top_right = 8
+	roster_style.content_margin_left = 8
+	roster_style.content_margin_right = 8
+	roster_style.content_margin_top = 4
+	roster_style.content_margin_bottom = 4
+	roster_panel.add_theme_stylebox_override("panel", roster_style)
+	layer.add_child(roster_panel)
+
+	_roster_box = HBoxContainer.new()
+	_roster_box.add_theme_constant_override("separation", 10)
+	_roster_box.alignment = BoxContainer.ALIGNMENT_CENTER
+	_roster_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	roster_panel.add_child(_roster_box)
+
 	# 채팅 입력은 웹이면 DOM <input>, 아니면 LineEdit — ChatInput이 갈라 준다.
 	_chat = ChatInput.new()
 	_chat.submitted.connect(_on_chat_submitted)
@@ -488,6 +530,80 @@ func _refresh_hud() -> void:
 	_hud.text = "%s  |  %s\n벨: %d" % [who, GameClock.label(), int(_slot.get("bells", 0))]
 	_bag_label.text = bag
 	_hint_label.text = hint
+
+## 하단 접속자 바를 다시 만든다. 접속/퇴장/이름변경 때마다 호출된다.
+##
+## 초상화는 각 캐릭터의 PlayerSprite가 런타임에 만든 프레임을 그대로 재사용한다
+## (idle_down 0번). 초상화를 따로 그리면 캐릭터 외형이 바뀔 때 두 곳을 고쳐야
+## 하고, 프리셋이 늘어날 때마다 어긋난다.
+func _refresh_roster() -> void:
+	if _roster_box == null:
+		return
+	for c in _roster_box.get_children():
+		_roster_box.remove_child(c)
+		c.queue_free()
+	if _hooks != null:
+		# 사라진 항목 키가 남아 있으면 테스트가 인원 수를 잘못 센다.
+		for i in ROSTER_MAX:
+			_hooks.untrack("rosterEntry%d" % (i + 1))
+
+	var limit := ROSTER_MAX_NARROW if _is_narrow_screen() else ROSTER_MAX
+	var entries: Array = []
+	# 나를 항상 맨 앞에.
+	entries.append({
+		"name": String(_slot.get("name", "")),
+		"sprite": _player.sprite if _player != null else null,
+		"me": true,
+	})
+	for token: String in _remotes.keys():
+		var r := _remotes[token] as RemotePlayer
+		entries.append({"name": r.display_name(), "sprite": r.sprite, "me": false})
+
+	var shown := mini(entries.size(), limit)
+	for i in shown:
+		var entry_ui := _roster_entry(entries[i] as Dictionary)
+		_roster_box.add_child(entry_ui)
+		# E2E 테스트가 "몇 명이 표시되는지"를 볼 수 있게 항목 좌표를 공개한다.
+		if _hooks != null:
+			_hooks.track("rosterEntry%d" % (i + 1), entry_ui)
+	if entries.size() > shown:
+		var more := Label.new()
+		more.text = "+%d" % (entries.size() - shown)
+		more.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		more.add_theme_color_override("font_color", Palette.color("ui", "hud_text"))
+		more.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_roster_box.add_child(more)
+
+func _roster_entry(entry: Dictionary) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 0)
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var portrait := TextureRect.new()
+	portrait.custom_minimum_size = ROSTER_PORTRAIT
+	portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	# 픽셀 스프라이트라 보간하면 뭉개진다.
+	portrait.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+	portrait.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var sprite: PlayerSprite = entry.get("sprite")
+	if sprite != null and is_instance_valid(sprite) and sprite.sprite_frames != null \
+			and sprite.sprite_frames.has_animation("idle_down") \
+			and sprite.sprite_frames.get_frame_count("idle_down") > 0:
+		portrait.texture = sprite.sprite_frames.get_frame_texture("idle_down", 0)
+	box.add_child(portrait)
+
+	var label := Label.new()
+	var who := String(entry.get("name", ""))
+	label.text = who if not who.is_empty() else "(이름 없음)"
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	label.add_theme_font_size_override("font_size", 14)
+	label.add_theme_color_override("font_color",
+		Palette.color("ui", "roster_me") if bool(entry.get("me", false)) else Palette.color("ui", "hud_text"))
+	label.add_theme_color_override("font_outline_color", Palette.color("ui", "hud_outline"))
+	label.add_theme_constant_override("outline_size", 3)
+	box.add_child(label)
+	return box
 
 ## 채팅 로그는 최근 CHAT_LOG_LINES줄만 화면에 남긴다 — 더 쌓아두면 화면을
 ## 가리고, 스크롤 가능한 채팅창은 P6(UI 정리)에서 다룬다.
@@ -649,6 +765,7 @@ func _on_net_closed(reason: String) -> void:
 		(_drops[id] as Node).queue_free()
 	_drops.clear()
 	_drop_items.clear()
+	_refresh_roster()
 
 ## 서버가 기억하는 위치·가방이 내 로컬 값보다 우선이다(docs/protocol.md §4).
 func _on_welcome(you: Dictionary, world_cfg: Dictionary) -> void:
@@ -685,12 +802,15 @@ func _on_player_joined(player: Dictionary) -> void:
 	add_child(remote)
 	_remotes[token] = remote
 	_append_chat("%s 님이 들어왔습니다" % String(player.get("name", "")))
+	# 스프라이트 프레임은 _ready에서 만들어지므로 한 프레임 뒤에 초상화를 읽는다.
+	_refresh_roster.call_deferred()
 
 func _on_player_left(token: String) -> void:
 	if not _remotes.has(token):
 		return
 	(_remotes[token] as Node).queue_free()
 	_remotes.erase(token)
+	_refresh_roster()
 
 func _on_moves(moves: Array) -> void:
 	for m: Variant in moves:
@@ -783,6 +903,7 @@ func _on_inventory(inventory: Dictionary) -> void:
 func _on_rename(token: String, new_name: String) -> void:
 	if _remotes.has(token):
 		(_remotes[token] as RemotePlayer).set_display_name(new_name)
+		_refresh_roster()
 
 func _on_server_error(code: String, message: String) -> void:
 	# 서버 거절을 조용히 삼키면 "왜 안 되는지" 알 수 없다 — 화면에 띄운다.
@@ -827,6 +948,7 @@ func _on_world_tapped(screen_pos: Vector2) -> void:
 	var g := _gatherable_near(point)
 	if g != null:
 		_tap_intent = {"kind": "gather", "id": ""}
+		_tap_gatherable = g
 		_player.move_to(_approach_point(g.global_position))
 		_show_marker(g.global_position)
 		return
@@ -834,6 +956,7 @@ func _on_world_tapped(screen_pos: Vector2) -> void:
 	var drop_id := _drop_near(point)
 	if not drop_id.is_empty():
 		_tap_intent = {"kind": "pickup", "id": drop_id}
+		_tap_gatherable = null
 		_player.move_to(_approach_point((_drops[drop_id] as Node3D).position))
 		_show_marker((_drops[drop_id] as Node3D).position)
 		return
@@ -841,12 +964,12 @@ func _on_world_tapped(screen_pos: Vector2) -> void:
 	var remote := _remote_near(point)
 	if remote != null:
 		# 다른 캐릭터는 대화 거리까지만 다가간다(겹쳐 서면 서로 가린다).
-		_tap_intent = {"kind": "", "id": ""}
+		_clear_tap_intent()
 		_player.move_to(_approach_point(remote.position))
 		_show_marker(remote.position)
 		return
 
-	_tap_intent = {"kind": "", "id": ""}
+	_clear_tap_intent()
 	_player.move_to(point)
 	_show_marker(point)
 
@@ -893,6 +1016,12 @@ func _remote_near(point: Vector3) -> RemotePlayer:
 			found = r
 	return found
 
+## 탭으로 정해둔 "도착하면 할 일"을 지운다. 목표가 취소됐는데 이걸 남겨두면
+## 다음에 도착하는 순간 엉뚱하게 실행된다(사용자 보고 버그의 원인).
+func _clear_tap_intent() -> void:
+	_tap_intent = {"kind": "", "id": ""}
+	_tap_gatherable = null
+
 func _show_marker(at: Vector3) -> void:
 	if _marker == null:
 		return
@@ -906,15 +1035,27 @@ func _on_player_arrived() -> void:
 		_marker.visible = false
 	var kind := String(_tap_intent.get("kind", ""))
 	var id := String(_tap_intent.get("id", ""))
-	_tap_intent = {"kind": "", "id": ""}
+	var target := _tap_gatherable
+	_clear_tap_intent()
 	match kind:
 		"gather":
-			_try_gather()
+			# 탭한 그 대상만 캔다. "근처에서 아무거나"로 두면 지나가다 옆 나무를
+			# 캐게 된다.
+			if target != null and is_instance_valid(target) and target.can_interact(_player.position):
+				target.gather()
+			elif target != null:
+				_show_toast("조금 더 가까이 가야 합니다")
 		"pickup":
 			if _drops.has(id) and _net != null and _net.connected:
 				_net.send_pickup(id)
 			elif not _drops.has(id):
 				_show_toast("아쉽게도 물건이 사라졌습니다")
+
+## 수동 조작으로 목표를 버렸으면 "도착하면 할 일"도 함께 버린다.
+func _on_move_cancelled() -> void:
+	_clear_tap_intent()
+	if _marker != null:
+		_marker.visible = false
 
 ## 카메라를 플레이어 위로 옮긴다. weight=1.0이면 즉시 스냅.
 func _update_camera(weight: float) -> void:
@@ -974,6 +1115,19 @@ func _publish_test_points() -> void:
 		if found == null:
 			return Vector2(-1, -1)
 		return _camera.unproject_position(found.position + Vector3(0, 0.3, 0))
+	)
+	_hooks.track_dynamic("nearestRemote", func() -> Vector2:
+		var best := INF
+		var found: RemotePlayer = null
+		for token: String in _remotes.keys():
+			var r := _remotes[token] as RemotePlayer
+			var d := _player.position.distance_to(r.position)
+			if d < best:
+				best = d
+				found = r
+		if found == null:
+			return Vector2(-1, -1)
+		return _camera.unproject_position(found.position + Vector3(0, 0.9, 0))
 	)
 	_hooks.track_dynamic("beyondNearestRock", func() -> Vector2:
 		var rock := _nearest_rock()
@@ -1036,6 +1190,13 @@ func _process(delta: float) -> void:
 		# 수동 입력으로 목표가 취소된 경우 — 마커를 남겨두면 유령이 된다.
 		_marker.visible = false
 	if _player != null:
+		# 다른 캐릭터 위치를 넘겨 겹치지 않게 한다. 원격 캐릭터는 서버 좌표를
+		# 보간해 움직이므로 그 위치를 그대로 쓴다.
+		var others: Array = []
+		for token: String in _remotes.keys():
+			others.append((_remotes[token] as RemotePlayer).position)
+		_player.set_others(others)
+
 		# 터치 조이스틱 입력을 플레이어에 넘긴다(키보드와 병행 — player.gd가
 		# 더 큰 쪽을 쓴다). 시트가 열려 있으면 이동을 멈춘다.
 		var touch_vec := Vector2.ZERO

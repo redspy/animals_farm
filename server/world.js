@@ -27,6 +27,11 @@ export const LIMITS = {
   CHAT_MIN_INTERVAL_MS: 500,  // 초당 2건
   EMOTE_MIN_INTERVAL_MS: 500,
   MAX_WORLD_ITEMS: 300,
+  // 새 캐릭터를 스폰 지점에 그대로 놓으면 모두 한 점에 겹친다. 접속 순서에
+  // 따라 링 위로 흩어 놓는다 — 무작위가 아니라 **결정적**이어야 테스트가
+  // 재현된다.
+  SPAWN_RING_RADIUS: 1.3,
+  SPAWN_RING_SLOTS: 8,
   // 좌표 검증 유예: 네트워크 지터로 간격이 튀어도 바로 되돌리지 않도록
   // 속도 상한 계산에 최소 시간을 둔다.
   SPEED_MIN_DT_MS: 50,
@@ -107,7 +112,7 @@ export class WorldState {
     }
     let p = this.players.get(token);
     if (!p) {
-      const pos = this.clampPos(this.spawn.x, this.spawn.z);
+      const pos = this.spawnSlot(this.players.size);
       p = {
         token,
         name: cleanName,
@@ -133,6 +138,19 @@ export class WorldState {
     }
     p.online = true;
     return { player: p };
+  }
+
+  // 접속 순서(index)에 따라 스폰 링 위의 자리를 정한다. 같은 index면 항상 같은
+  // 자리 — 클라이언트 겹침 분리(PathPlanner.separate)가 나머지를 처리한다.
+  spawnSlot(index) {
+    const slot = index % LIMITS.SPAWN_RING_SLOTS;
+    // 0번은 스폰 지점 그대로 두어 "혼자 접속하면 정해진 자리"가 유지된다.
+    if (index === 0) return this.clampPos(this.spawn.x, this.spawn.z);
+    const angle = (slot / LIMITS.SPAWN_RING_SLOTS) * Math.PI * 2;
+    return this.clampPos(
+      this.spawn.x + Math.cos(angle) * LIMITS.SPAWN_RING_RADIUS,
+      this.spawn.z + Math.sin(angle) * LIMITS.SPAWN_RING_RADIUS,
+    );
   }
 
   leave(token) {

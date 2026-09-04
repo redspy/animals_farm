@@ -55,6 +55,12 @@ func track_point(key: String, point: Vector2) -> void:
 func track_dynamic(key: String, fn: Callable) -> void:
 	_dynamic[key] = fn
 
+## 등록을 하나만 취소한다(목록이 줄어드는 UI: 접속자 바 등).
+func untrack(key: String) -> void:
+	_controls.erase(key)
+	_extra.erase(key)
+	_dynamic.erase(key)
+
 func clear() -> void:
 	_controls.clear()
 	_extra.clear()

@@ -173,6 +173,78 @@ const tokenA = joinA?.player?.token;
 const tokenB = joinB?.player?.token;
 check(!!tokenA && !!tokenB && tokenA !== tokenB, '두 클라이언트가 서로 다른 토큰을 쓴다(다른 기기 조건)');
 
+console.log('\n[검증] 캐릭터끼리 겹치지 않는다');
+// B를 A 쪽으로 계속 밀어 넣어도 두 캐릭터가 겹치지 않아야 한다.
+// 판정은 옵저버가 받은 두 캐릭터 좌표의 최소 거리로 한다.
+const SEPARATION = 0.8;
+const posA0 = lastPos(tokenA);
+await focusGame(b.page);
+const overlapFrom = seen.length;
+
+// B가 A에게 다가간다. 훅으로 얻은 A의 화면 좌표는 A가 화면 밖에 있으면
+// (-1,-1)이라 클릭이 무의미하므로, **관측 좌표를 보며 방향키로 접근**한다
+// (처음엔 훅 클릭만 써서 최소 거리가 13.9로 나왔다 — 애초에 못 만난 것이다).
+async function walkTowardA(maxMs = 12000) {
+  const t0 = Date.now();
+  let held = null;
+  while (Date.now() - t0 < maxMs) {
+    const pa = lastPos(tokenA);
+    const pb = lastPos(tokenB);
+    if (!pa || !pb) break;
+    const dx = pa.x - pb.x;
+    const dz = pa.z - pb.z;
+    if (Math.hypot(dx, dz) < 0.9) break;   // 겹침 한계(0.8)에 닿음
+    const key = Math.abs(dx) > Math.abs(dz)
+      ? (dx > 0 ? 'ArrowRight' : 'ArrowLeft')
+      : (dz > 0 ? 'ArrowDown' : 'ArrowUp');
+    if (process.env.MP_DEBUG) console.log(`    [walk] B(${pb.x},${pb.z}) → A(${pa.x},${pa.z}) key=${key}`);
+    if (key !== held) {
+      if (held) await b.page.keyboard.up(held);
+      await b.page.keyboard.down(key);
+      held = key;
+    }
+    await b.page.waitForTimeout(150);
+  }
+  if (held) await b.page.keyboard.up(held);
+}
+await walkTowardA();
+// 닿은 뒤에도 계속 밀어붙여 본다 — 밀림이 없으면 여기서 겹친다.
+const pushKey = ((lastPos(tokenA)?.x ?? 0) > (lastPos(tokenB)?.x ?? 0)) ? 'ArrowRight' : 'ArrowLeft';
+await b.page.keyboard.down(pushKey);
+await b.page.waitForTimeout(2500);
+await b.page.keyboard.up(pushKey);
+await b.page.waitForTimeout(600);
+await b.page.screenshot({ path: `${OUT}/mp-09-겹침시도.png` });
+
+// 두 캐릭터의 좌표를 시간순으로 짝지어 최소 거리를 구한다.
+const trail = { [tokenA]: [], [tokenB]: [] };
+for (const m of seen.slice(overlapFrom)) {
+  if (m.t !== 'move') continue;
+  for (const v of m.moves || []) {
+    if (trail[v.token]) trail[v.token].push({ x: v.x, z: v.z });
+  }
+}
+let minDist = Infinity;
+const steps = Math.min(trail[tokenA].length, trail[tokenB].length);
+for (let i = 0; i < steps; i++) {
+  const a2 = trail[tokenA][i];
+  const b2 = trail[tokenB][i];
+  minDist = Math.min(minDist, Math.hypot(a2.x - b2.x, a2.z - b2.z));
+}
+// 마지막 좌표 기준 거리도 함께 본다(A가 가만히 있으면 짝지을 표본이 적다).
+const finalDist = Math.hypot(
+  (lastPos(tokenA)?.x ?? 0) - (lastPos(tokenB)?.x ?? 0),
+  (lastPos(tokenA)?.z ?? 0) - (lastPos(tokenB)?.z ?? 0),
+);
+minDist = Math.min(minDist, finalDist);
+console.log(`  (짝지은 표본 ${steps}개, 최종 거리 ${finalDist.toFixed(2)}, 최소 거리 ${minDist.toFixed(2)} / 기준 ${SEPARATION})`);
+// 실제로 붙어 본 적이 없으면 이 테스트는 아무것도 검증하지 않는다.
+// 판정은 **최소 거리**로 한다 — 밀어붙이면 상대를 지나쳐 다시 멀어지므로
+// 최종 거리로는 "붙었는지"를 알 수 없다(실측: 최소 0.80인데 최종 3.82).
+check(minDist < SEPARATION + 0.4, `B가 A에게 실제로 닿았다(최소 거리 ${minDist.toFixed(2)})`);
+// 0.25는 10Hz 표본 사이의 보간·왕복 지연 여유.
+check(minDist > SEPARATION - 0.25, `두 캐릭터가 겹치지 않는다(최소 거리 ${minDist.toFixed(2)})`);
+
 console.log('\n[검증] 위치 동기화 (클릭한 위치로 이동)');
 await focusGame(a.page);
 // 고정 시간만큼 방향키를 누르는 방식은 포커스 타이밍에 따라 이동량이 달라져
@@ -273,6 +345,41 @@ check(minGap > -0.25, `이동 경로가 어떤 바위도 통과하지 않는다(
 // 바위 앞에서 막혀 멈췄으면 이동 거리가 거의 0이 된다.
 check(traveled > 3.0, `바위에 막히지 않고 돌아서 이동했다(거리 ${traveled.toFixed(1)})`);
 
+console.log('\n[검증] 나무를 탭하지 않았으면 채집되지 않는다 (회귀)');
+// 사용자 보고: "나무 근처에 가면 나무가 채집되고 있다".
+// 원인 두 가지 — (1) 나무를 탭한 뒤 방향키로 목표를 취소하면 "도착하면 채집"
+// 의도가 남아 다음 도착 때 실행됨, (2) 탭 판정 반경(1.3)이 넓어 나무 옆 땅을
+// 탭해도 나무를 집음.
+await focusGame(a.page);
+const invBefore = seen.filter((m) => m.t === 'inventory').length;
+
+// (1) 나무를 클릭했다가 방향키로 취소하고, 다른 빈 땅으로 이동해 도착시킨다.
+const treeForCancel = await godotPoint(a.page, 'nearestGatherable');
+await a.page.mouse.click(treeForCancel.x, treeForCancel.y);
+await a.page.waitForTimeout(300);
+await a.page.keyboard.down('ArrowUp');       // 목표 취소
+await a.page.waitForTimeout(700);
+await a.page.keyboard.up('ArrowUp');
+const groundAgain = await godotPoint(a.page, 'groundRight');
+await a.page.mouse.click(groundAgain.x, groundAgain.y);
+await a.page.waitForTimeout(2500);           // 빈 땅에 도착
+const invAfter = seen.filter((m) => m.t === 'inventory').length;
+check(invAfter === invBefore,
+  `취소된 채집 의도가 나중에 실행되지 않는다(inventory 갱신 ${invBefore} → ${invAfter})`);
+
+console.log('\n[검증] 하단 접속자 바');
+// 접속자 바는 캔버스에 그려져 DOM으로 읽을 수 없다 — 게임이 훅으로 알려주는
+// 항목 좌표(rosterEntry1..N)로 "몇 명이 표시되는지"를 판정한다.
+const rosterPoints = await a.page.evaluate(() => {
+  const t2 = window.afTest;
+  if (!t2 || !t2.points) return [];
+  return Object.keys(t2.points).filter((k) => k.startsWith('rosterEntry'));
+});
+console.log(`  (접속자 바 항목 ${rosterPoints.length}개: ${rosterPoints.join(', ')})`);
+// A 화면에는 자기 자신 + B + 옵저버(Obs) = 3명이 보여야 한다.
+check(rosterPoints.length >= 3, `접속한 캐릭터가 하단 바에 모두 표시된다(${rosterPoints.length}명)`);
+await a.page.screenshot({ path: `${OUT}/mp-10-접속자바.png` });
+
 console.log('\n[검증] 채팅');
 await b.page.keyboard.press('KeyT');
 await b.page.waitForTimeout(400);
@@ -282,7 +389,7 @@ const chat = await waitFor((m) => m.t === 'chat' && m.text === 'hello there', '�
 check(!!chat, 'B의 채팅이 서버를 거쳐 전달됨');
 check(!chat || chat.name === 'Bora', '채팅에 보낸 사람 이름이 붙는다');
 await a.page.waitForTimeout(700);
-await a.page.screenshot({ path: `${OUT}/mp-09-A화면에B채팅.png` });
+await a.page.screenshot({ path: `${OUT}/mp-11-A화면에B채팅.png` });
 
 console.log('\n[검증] 감정 표현 이모티콘');
 await focusGame(a.page);
@@ -290,7 +397,7 @@ await a.page.keyboard.press('Digit1');
 const emote = await waitFor((m) => m.t === 'emote' && m.token === tokenA, '이모티콘이 브로드캐스트됨');
 check(!!emote, 'A의 이모티콘이 서버를 거쳐 전달됨');
 await b.page.waitForTimeout(700);
-await b.page.screenshot({ path: `${OUT}/mp-10-B화면에A이모티콘.png` });
+await b.page.screenshot({ path: `${OUT}/mp-12-B화면에A이모티콘.png` });
 
 const errors = [...a.errors, ...b.errors];
 obs.close();

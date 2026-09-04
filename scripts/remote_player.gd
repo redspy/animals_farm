@@ -34,11 +34,19 @@ func setup(player: Dictionary, preset: Dictionary) -> void:
 	extras = AvatarExtras.new()
 	add_child(extras)
 	# AvatarExtras가 _ready 전 호출도 받아 두므로 순서를 신경 쓰지 않아도 된다.
-	extras.set_name_text(String(player.get("name", "")))
+	set_display_name(String(player.get("name", "")))
+
+var _display_name := ""
 
 func set_display_name(text: String) -> void:
+	_display_name = text
 	if extras != null:
 		extras.set_name_text(text)
+
+## 하단 접속자 바가 이름을 읽는다 — 이름표(AvatarExtras)에서 역으로 꺼내면
+## 표시 문자열에 의존하게 되므로 값을 따로 들고 있는다.
+func display_name() -> String:
+	return _display_name
 
 func apply_move(x: float, z: float, dir: String) -> void:
 	_target = Vector3(x, 0.0, z)
