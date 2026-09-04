@@ -42,6 +42,11 @@ func _ready() -> void:
 
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
+	# PRESET_CENTER는 앵커만 화면 중앙에 두고, 크기는 grow 방향으로 자란다.
+	# 기본값(END)이면 중앙에서 **오른쪽/아래로만** 자라 패널이 한쪽으로 치우치고,
+	# 폰에서는 화면 밖으로 나갔다(2026-09-05 실측). 양쪽으로 자라게 한다.
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	panel.custom_minimum_size = Vector2(UiScale.panel_width(PANEL_MIN.x), PANEL_MIN.y)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Palette.color("ui", "select_bg")
@@ -130,18 +135,26 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 		row.add_theme_constant_override("separation", 8)
 		_list.add_child(row)
 
+		var narrow := UiScale.is_narrow()
+		# 폰에서는 줄에 들어갈 폭이 없다 — 버튼 글자와 가격 표기를 함께 줄인다.
+		# 셋 다 그대로 두면 이름 줄이 "나무 x1 (기"처럼 잘려 가격이 안 보인다.
+		var btn_w := UiScale.dim(BTN_WIDTH) if not narrow else BTN_WIDTH
 		var name_label := Label.new()
-		name_label.text = "%s x%d  (개당 %d벨)" % [label_text, count, price]
+		name_label.text = "%s x%d · %d벨" % [label_text, count, price] if narrow \
+			else "%s x%d  (개당 %d벨)" % [label_text, count, price]
 		name_label.custom_minimum_size = Vector2(
-			maxf(UiScale.panel_width(PANEL_MIN.x) - BTN_WIDTH * 2 - 40, 80.0), ROW_HEIGHT)
+			maxf(UiScale.panel_width(PANEL_MIN.x) - btn_w * 2 - 40, 80.0), ROW_HEIGHT)
+		# 글자가 길면 줄을 밀어내 패널이 화면을 넘는다(하한일 뿐이므로) — 자른다.
+		name_label.clip_text = true
 		name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		name_label.add_theme_color_override("font_color", Palette.color("ui", "hud_text"))
 		row.add_child(name_label)
 		_hooks.track("invItem%d" % index, name_label)
 
 		var drop_btn := Button.new()
-		drop_btn.text = "1개 버림"
-		drop_btn.custom_minimum_size = Vector2(BTN_WIDTH, ROW_HEIGHT)
+		drop_btn.text = "버림" if narrow else "1개 버림"
+		drop_btn.custom_minimum_size = Vector2(btn_w, ROW_HEIGHT)
+		drop_btn.clip_text = true
 		drop_btn.focus_mode = Control.FOCUS_NONE
 		drop_btn.pressed.connect(func() -> void: drop_requested.emit(item_id))
 		row.add_child(drop_btn)
@@ -149,7 +162,8 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 
 		var sell_btn := Button.new()
 		sell_btn.text = "판매"
-		sell_btn.custom_minimum_size = Vector2(BTN_WIDTH, ROW_HEIGHT)
+		sell_btn.custom_minimum_size = Vector2(btn_w, ROW_HEIGHT)
+		sell_btn.clip_text = true
 		sell_btn.focus_mode = Control.FOCUS_NONE
 		sell_btn.pressed.connect(func() -> void: sell_requested.emit(item_id))
 		row.add_child(sell_btn)

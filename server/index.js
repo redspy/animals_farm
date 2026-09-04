@@ -173,7 +173,11 @@ const server = useTls
 // WebSocket 중계 (docs/protocol.md)
 // ---------------------------------------------------------------------------
 
-const world = new WorldState();
+// 상태 파일 경로는 테스트가 갈아끼울 수 있게 열어 둔다 — 전송 계층 테스트가
+// 개발용 월드(server/data/world.json)에 테스트 플레이어를 남기면 안 된다.
+const world = new WorldState(
+  process.env.WORLD_STATE_PATH ? { statePath: process.env.WORLD_STATE_PATH } : {}
+);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 /** token -> socket. 같은 토큰으로 다시 들어오면 이전 연결을 끊는다. */
@@ -218,7 +222,16 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     if (!ws.token) return;
-    if (sockets.get(ws.token) === ws) sockets.delete(ws.token);
+    // **이 토큰의 현재 연결이 내가 아니면 아무것도 하지 않는다.**
+    //
+    // 같은 캐릭터로 다시 들어오면 새 소켓이 토큰을 이어받고 옛 소켓은 그 뒤에
+    // 닫힌다(close는 다음 틱에 온다. 우리가 prev.close()를 부르는 경로에서는
+    // **항상** 이 순서다). 예전에는 여기서 소유권을 보지 않고 world.leave를
+    // 불러서, 방금 들어온 **살아 있는 플레이어를 지우고** leave까지 알렸다 —
+    // 재접속한 사람은 "서버 연결됨"인데 남들 화면에 안 보이고 접속자 바에도
+    // 없었다(사용자 보고 "나갔다가 들어왔는데 보이지 않아", 2026-09-05).
+    if (sockets.get(ws.token) !== ws) return;
+    sockets.delete(ws.token);
     const leaving = world.players.get(ws.token);
     world.leave(ws.token);
     broadcast({ t: 'leave', token: ws.token });

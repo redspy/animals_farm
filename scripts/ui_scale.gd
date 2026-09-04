@@ -22,12 +22,20 @@ class_name UiScale
 
 ## 이 아래면 "좁은 화면"(폰). CSS 픽셀 기준이며, 세로/가로 어느 쪽이든
 ## 짧은 변이 이 값보다 작으면 폰으로 본다(가로로 돌린 폰도 높이가 411px이다).
-const NARROW_MIN_SIDE := 520.0
+## 480인 이유: 기본 창이 960x540이라 520으로 두면 데스크톱 창을 조금만 줄이거나
+## 브라우저 툴바가 두꺼운 것만으로 화면 전체가 폰 모드로 넘어간다(여유 20px).
+const NARROW_MIN_SIDE := 480.0
 ## 좁은 화면에서 글자에 곱하는 값. 1.35면 기본 16 → 21px(모바일 본문 크기),
 ## HUD 14 → 18px가 된다. 1.5 이상은 긴 안내문이 화면 폭을 넘쳤다.
 const NARROW_FONT_SCALE := 1.35
 ## 테마 기본 글자 크기. Label/Button이 따로 지정하지 않으면 이 값을 쓴다.
 const BASE_FONT_SIZE := 16
+
+## 캐시. `is_narrow()`/`font()`/`dim()`은 HUD 갱신·접속자 바 재구성 때 수십 번
+## 불리는데, DPR을 매번 재려면 JS eval + getBoundingClientRect(브라우저 레이아웃
+## 강제 플러시)가 따라온다 — 같은 파일의 다른 코드가 "HUD 문자열을 매 프레임
+## 새로 만들지 말라"고 스로틀을 거는 것과 방향이 어긋난다. apply()에서만 갱신한다.
+static var _ratio_cache := 0.0
 
 ## 창 픽셀 크기 ÷ DPR = 사용자가 실제로 체감하는 화면 크기(CSS 픽셀).
 static func css_size() -> Vector2:
@@ -61,6 +69,12 @@ static func panel_width(preferred: float, margin: float = 24.0) -> float:
 ## `devicePixelRatio`를 그대로 믿으면 hidpi 설정이 꺼진 빌드에서 두 번
 ## 보정하게 된다(캔버스가 CSS 픽셀과 1:1인 경우).
 static func pixel_ratio() -> float:
+	if _ratio_cache > 0.05:
+		return _ratio_cache
+	_ratio_cache = _measure_pixel_ratio()
+	return _ratio_cache
+
+static func _measure_pixel_ratio() -> float:
 	if OS.has_feature("web"):
 		var got: Variant = JavaScriptBridge.eval("""
 			(function () {
@@ -83,6 +97,8 @@ static func apply() -> void:
 	var win := _window()
 	if win == null:
 		return
+	# 화면이 바뀌었을 수 있으니 DPR을 다시 잰다(회전·창 크기 변경·확대/축소).
+	_ratio_cache = _measure_pixel_ratio()
 	var px := Vector2(win.size)
 	var base := Vector2(
 		float(ProjectSettings.get_setting("display/window/size/viewport_width", 960)),
@@ -91,14 +107,27 @@ static func apply() -> void:
 	if px.x < 1.0 or px.y < 1.0 or base.x < 1.0 or base.y < 1.0:
 		return
 	# 스트레치(canvas_items + expand)가 이미 적용하는 배율. 짧은 쪽이 기준이다.
+	# 이 식은 expand/keep 계열 전제다 — aspect를 ignore로 바꾸면 조용히 틀어지므로
+	# 설정을 확인해 알려준다(주석만 남기면 다음 사람이 못 본다).
+	var aspect := String(ProjectSettings.get_setting("display/window/stretch/aspect", "expand"))
+	if aspect == "ignore":
+		push_warning("stretch/aspect=ignore에서는 UiScale의 배율 계산이 맞지 않는다")
 	var stretch := minf(px.x / base.x, px.y / base.y)
 	# 목표: stretch * csf == DPR (1 UI 단위 = 1 CSS 픽셀).
 	# max(1.0)인 이유: 데스크톱을 지금보다 작게 만들지 않는다 — 현재 크기에는
 	# 불만이 없었고, 줄이면 멀쩡한 화면이 망가진다.
-	win.content_scale_factor = maxf(1.0, pixel_ratio() / maxf(stretch, 0.001))
+	var target := maxf(1.0, pixel_ratio() / maxf(stretch, 0.001))
+	var wanted_font := font(BASE_FONT_SIZE)
+	# 이미 맞으면 손대지 않는다. content_scale_factor 대입은 값이 같아도 뷰포트를
+	# 다시 계산해서 size_changed를 또 쏘고, 그러면 apply()가 재진입한다(수렴하긴
+	# 하지만 리사이즈마다 계산이 두 배로 돈다).
+	if is_equal_approx(win.content_scale_factor, target) \
+			and ThemeDB.get_default_theme().default_font_size == wanted_font:
+		return
+	win.content_scale_factor = target
 	# 따로 지정하지 않은 모든 Label/Button이 이 값을 쓴다 — 한 곳에서 좁은
 	# 화면 보정을 걸 수 있는 유일한 지점이다.
-	ThemeDB.get_default_theme().default_font_size = font(BASE_FONT_SIZE)
+	ThemeDB.get_default_theme().default_font_size = wanted_font
 
 static func _window() -> Window:
 	var loop := Engine.get_main_loop()

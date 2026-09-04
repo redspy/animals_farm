@@ -39,6 +39,11 @@ const BTN_FONT_SIZE := 18
 const BTN_FONT_WIDTH_RATIO := 2.6
 ## 조이스틱 on/off 버튼 폭. 글자를 키우면 "스틱 OFF"가 잘리므로 같이 넓힌다.
 const JOYSTICK_BTN_WIDTH := 118.0
+## 이모티콘 시트 한 칸의 최대 크기와 하한(px). 실제 크기는 남는 폭에서 역산한다.
+const EMOTE_CELL := Vector2(96.0, 76.0)
+const EMOTE_CELL_MIN := 56.0
+const SHEET_GAP := 10.0
+const SHEET_PADDING := 12.0
 ## 조이스틱을 받는 영역: 화면 왼쪽 절반의 아래쪽. 이 안을 누르면 그 지점이 중심.
 const STICK_AREA_W_RATIO := 0.5
 const STICK_AREA_H_RATIO := 0.55
@@ -260,9 +265,20 @@ func _make_sheet() -> Control:
 func _build_emote_sheet() -> void:
 	_emote_sheet = _make_sheet()
 
+	# 버튼 크기는 **화면에 남는 폭에서 역산한다**. 고정값에 좁은 화면 배율을
+	# 곱했더니 3열이 화면을 넘어(3×130+간격 = 409 > 가용 359) 마지막 열이 화면
+	# 밖으로 밀려 탭이 안 됐다(2026-09-05 리뷰 지적, 폰 411px 기준).
+	var cols := 3
+	var rows := maxi(int(ceil(float(_emotes.size()) / float(cols))), 1)
+	var avail := get_viewport().get_visible_rect().size.x - MARGIN * 2.0 - SHEET_PADDING * 2.0
+	var cell_w := clampf(
+		(avail - float(cols - 1) * SHEET_GAP) / float(cols), EMOTE_CELL_MIN, UiScale.dim(EMOTE_CELL.x))
+	var cell_h := minf(UiScale.dim(EMOTE_CELL.y), cell_w * 0.8)
+	var sheet_h := float(rows) * cell_h + float(rows - 1) * SHEET_GAP + SHEET_PADDING * 2.0
+
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	panel.offset_top = -220.0
+	panel.offset_top = -(MARGIN + sheet_h)
 	panel.offset_bottom = -MARGIN
 	panel.offset_left = MARGIN
 	panel.offset_right = -MARGIN
@@ -270,9 +286,9 @@ func _build_emote_sheet() -> void:
 
 	var grid := GridContainer.new()
 	# 6종이면 3×2. 데이터가 늘면 열 수를 유지하고 행이 늘어난다.
-	grid.columns = 3
-	grid.add_theme_constant_override("h_separation", 10)
-	grid.add_theme_constant_override("v_separation", 10)
+	grid.columns = cols
+	grid.add_theme_constant_override("h_separation", int(SHEET_GAP))
+	grid.add_theme_constant_override("v_separation", int(SHEET_GAP))
 	panel.add_child(grid)
 
 	for e: Variant in _emotes:
@@ -281,7 +297,10 @@ func _build_emote_sheet() -> void:
 		var emote := e as Dictionary
 		var b := Button.new()
 		b.text = "%s\n%s" % [String(emote.get("glyph", "?")), String(emote.get("label", ""))]
-		b.custom_minimum_size = Vector2(UiScale.dim(96.0), UiScale.dim(76.0))
+		b.custom_minimum_size = Vector2(cell_w, cell_h)
+		# 글자가 칸보다 길면 칸을 벌리지 말고 잘라야 한다 — custom_minimum_size는
+		# 하한이라, 이게 없으면 글자 폭이 칸을 밀어내 시트가 화면을 넘는다.
+		b.clip_text = true
 		b.focus_mode = Control.FOCUS_NONE
 		b.pressed.connect(func() -> void:
 			emote_selected.emit(String(emote.get("id", "")))
@@ -296,6 +315,11 @@ func _build_sell_sheet() -> void:
 
 	var panel := PanelContainer.new()
 	panel.set_anchors_preset(Control.PRESET_CENTER)
+	# PRESET_CENTER는 앵커만 화면 중앙에 두고, 크기는 grow 방향으로 자란다.
+	# 기본값(END)이면 중앙에서 **오른쪽/아래로만** 자라 패널이 한쪽으로 치우치고,
+	# 폰에서는 화면 밖으로 나갔다(2026-09-05 실측). 양쪽으로 자라게 한다.
+	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
 	panel.custom_minimum_size = Vector2(UiScale.panel_width(420.0), 190)
 	_sell_sheet.add_child(panel)
 

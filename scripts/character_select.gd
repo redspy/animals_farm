@@ -105,14 +105,23 @@ func _show_slot_list() -> void:
 		var enter := Button.new()
 		enter.custom_minimum_size = Vector2(
 			maxf(_panel_width() - UiScale.dim(104.0) - 16.0 - PORTRAIT.x * 0.7, 120.0), ROW_HEIGHT)
+		# custom_minimum_size는 **하한**이라, 글자가 길면 그 폭이 줄을 밀어내
+		# 패널이 화면을 넘어간다(폰에서 "이름 삭제" 버튼이 화면 밖으로 나갔다,
+		# 2026-09-05 리뷰 지적). 넘칠 땐 벌리지 말고 자른다.
+		enter.clip_text = true
+		enter.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		var narrow := UiScale.is_narrow()
 		if slot.is_empty():
-			enter.text = "%d. 빈 슬롯 — 새 캐릭터 만들기" % (i + 1)
+			# 좁은 화면에서는 짧게 — 긴 문장은 어차피 잘린다.
+			enter.text = "%d. 빈 슬롯" % (i + 1) if narrow else "%d. 빈 슬롯 — 새 캐릭터 만들기" % (i + 1)
 		else:
 			var name_text: String = String(slot.get("name", ""))
 			var preset_label := _preset_label(String(slot.get("preset", "")))
 			if name_text.is_empty():
 				# v1 세이브에서 넘어온 "이름 없는 기존 진행도"도 여기로 온다.
 				enter.text = "%d. (이름 없음) — %s · %d벨" % [i + 1, preset_label, int(slot.get("bells", 0))]
+			elif narrow:
+				enter.text = "%d. %s · %d벨" % [i + 1, name_text, int(slot.get("bells", 0))]
 			else:
 				enter.text = "%d. %s — %s · %d벨" % [i + 1, name_text, preset_label, int(slot.get("bells", 0))]
 		enter.pressed.connect(_on_slot_pressed.bind(i))
@@ -121,6 +130,7 @@ func _show_slot_list() -> void:
 
 		var del := Button.new()
 		del.custom_minimum_size = Vector2(UiScale.dim(104.0), ROW_HEIGHT)
+		del.clip_text = true
 		del.text = "이름 삭제"
 		del.disabled = slot.is_empty()
 		del.pressed.connect(_on_delete_pressed.bind(i))
@@ -206,6 +216,8 @@ func _show_preset_picker() -> void:
 
 		var b := Button.new()
 		b.custom_minimum_size = Vector2(maxf(_panel_width() - PORTRAIT.x - 20.0, 120.0), PORTRAIT.y)
+		b.clip_text = true
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		var gender_text := "여" if String(preset.get("gender", "")) == "female" else "남"
 		b.text = "%s (%s)" % [String(preset.get("label", "")), gender_text]
 		b.pressed.connect(_on_preset_pressed.bind(String(preset.get("id", ""))))

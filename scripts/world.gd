@@ -44,6 +44,14 @@ const CHAT_LOG_LINES := 6
 const CHAT_LOG_LINES_SHORT := 3
 ## HUD 안전 마진(px). 노치·둥근 모서리를 감안해 넉넉히 잡는다.
 const HUD_MARGIN := 18.0
+## 좁은 화면(폰)의 **왼쪽 아래 쌓기**. 아래에서 위로
+## 조이스틱 토글 → 토스트 → 존 라벨 → 접속자 바 → 채팅 로그 순으로 층을 쌓고,
+## 각 층의 높이를 여기서 한 번에 더해 겹침을 없앤다. 예전에는 각 라벨이 제
+## 오프셋을 따로 갖고 있어서 토스트·존 라벨이 조이스틱 토글 뒤에 가려졌다
+## (2026-09-05 리뷰 지적).
+const NARROW_LINE_H := 28.0        # 글자 21px 한 줄이 차지하는 높이
+const NARROW_STACK_GAP := 6.0
+const NARROW_ROSTER_H := 100.0     # 초상화 62 + 이름 28 + 패널 여백
 ## 월드에 놓인 물건을 주울 수 있는 거리(월드 단위).
 const PICKUP_DISTANCE := 1.6
 ## 드랍 아이템 메시 크기.
@@ -369,11 +377,13 @@ func _build_hud() -> void:
 	_bag_label.mouse_filter = Control.MOUSE_FILTER_STOP
 	_bag_label.gui_input.connect(_on_bag_clicked)
 	_hint_label = _stack_label(hud_box, text_color, outline_color)
-	# 안내문은 본문보다 한 단계 작게 — 가장 긴 줄이라 본문 크기로 키우면 폰
-	# 폭을 넘어간다. 자동 줄바꿈은 쓰지 않는다: 폭을 주려면 HUD 스택 전체를
+	# 좁은 화면에서만 안내문을 본문보다 한 단계 작게 한다 — 가장 긴 줄이라 본문
+	# 크기(21px)로 키우면 폰 폭을 넘어간다. 데스크톱은 건드리지 않는다(테마
+	# 기본값 16 유지). 자동 줄바꿈은 쓰지 않는다: 폭을 주려면 HUD 스택 전체를
 	# 넓혀야 하고, 그러면 입력을 받는 가방 줄이 화면 폭을 가로질러 그 위의
 	# 월드 탭을 다 먹는다(_build_hud 주석). 좁은 화면에서는 문장을 줄인다.
-	_hint_label.add_theme_font_size_override("font_size", UiScale.font(12))
+	if _is_narrow_screen():
+		_hint_label.add_theme_font_size_override("font_size", UiScale.font(12))
 
 	_net_label = _make_label(layer, Control.PRESET_TOP_RIGHT, Palette.color("ui", "warn_text"), outline_color)
 	_net_label.offset_right = -HUD_MARGIN
@@ -382,23 +392,38 @@ func _build_hud() -> void:
 	_net_label.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	_net_label.text = "서버 연결 중…"
 
+	# 왼쪽 아래 층 높이를 미리 계산한다(NARROW_* 주석 참고).
+	# 터치 UI가 없으면 조이스틱 토글도 없으므로 그만큼 내려 쓴다. _touch는 이
+	# 함수 끝에서 만들어지므로(아직 null) 만들 때와 **같은 조건**을 본다.
+	var narrow := _is_narrow_screen()
+	var stack := HUD_MARGIN
+	if narrow and DisplayServer.is_touchscreen_available():
+		stack = TouchControls.MARGIN + TouchControls.BTN_SMALL + NARROW_STACK_GAP
+	var toast_bottom := stack
+	stack += NARROW_LINE_H + NARROW_STACK_GAP
+	var zone_bottom := stack
+	stack += NARROW_LINE_H + NARROW_STACK_GAP
+	var roster_bottom := stack
+	stack += NARROW_ROSTER_H + NARROW_STACK_GAP
+	var chat_bottom := stack
+
 	# 좁은 화면(폰 세로)에서는 화면 중앙에 두면 캐릭터를 가린다 — 아래쪽에 붙인다.
-	var chat_preset := Control.PRESET_BOTTOM_LEFT if _is_narrow_screen() else Control.PRESET_CENTER_LEFT
+	var chat_preset := Control.PRESET_BOTTOM_LEFT if narrow else Control.PRESET_CENTER_LEFT
 	_chat_label = _make_label(layer, chat_preset, Palette.color("ui", "chat_text"), outline_color)
 	_chat_label.offset_left = HUD_MARGIN
-	if _is_narrow_screen():
-		_chat_label.offset_bottom = -(HUD_MARGIN + 150.0)
+	if narrow:
+		_chat_label.offset_bottom = -chat_bottom
 		_chat_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	_chat_label.add_theme_constant_override("line_spacing", 2)
 
 	_zone_label = _make_label(layer, Control.PRESET_BOTTOM_LEFT, Palette.color("ui", "zone_text"), outline_color)
 	_zone_label.offset_left = HUD_MARGIN
-	_zone_label.offset_bottom = -(HUD_MARGIN + 46.0)
+	_zone_label.offset_bottom = -(zone_bottom if narrow else HUD_MARGIN + 46.0)
 	_zone_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
 	_toast = _make_label(layer, Control.PRESET_BOTTOM_LEFT, text_color, outline_color)
 	_toast.offset_left = HUD_MARGIN
-	_toast.offset_bottom = -HUD_MARGIN
+	_toast.offset_bottom = -(toast_bottom if narrow else HUD_MARGIN)
 	_toast.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
 	# 하단 접속자 바 — 지금 이 월드에 누가 있는지 한눈에 보여준다.
@@ -410,12 +435,12 @@ func _build_hud() -> void:
 	# 조이스틱 토글이 있어서 중앙에 두면 양쪽과 겹친다. 조이스틱 토글 **위**의
 	# 왼쪽으로 올린다 — 그 위는 채팅 로그가 시작되기 전까지 비어 있다.
 	var roster_panel := PanelContainer.new()
-	if _is_narrow_screen():
+	if narrow:
 		roster_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 		roster_panel.grow_horizontal = Control.GROW_DIRECTION_END
 		roster_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 		roster_panel.offset_left = HUD_MARGIN
-		roster_panel.offset_bottom = -(HUD_MARGIN + TouchControls.BTN_SMALL + 8.0)
+		roster_panel.offset_bottom = -roster_bottom
 	else:
 		roster_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
 		roster_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
@@ -426,7 +451,7 @@ func _build_hud() -> void:
 	roster_style.bg_color = Palette.color("ui", "roster_bg")
 	roster_style.corner_radius_top_left = 8
 	roster_style.corner_radius_top_right = 8
-	if _is_narrow_screen():
+	if narrow:
 		# 화면 하단에 붙어 있지 않으므로 네 모서리를 다 둥글게 한다.
 		roster_style.corner_radius_bottom_left = 8
 		roster_style.corner_radius_bottom_right = 8

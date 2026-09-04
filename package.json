@@ -15,7 +15,7 @@
     "panel": "node scripts/cli-runner.js",
     "review:staged": "node scripts/review.js --staged",
     "test:browser": "node tests/browser-smoke.mjs",
-    "test:server": "node --test tests/server-world.test.mjs",
+    "test:server": "node --test tests/server-world.test.mjs tests/server-reconnect.test.mjs",
     "test": "npm run test:server",
     "test:multiplayer": "node tests/browser-multiplayer.mjs",
     "capture:chat": "node tests/capture-chat-ui.mjs",
