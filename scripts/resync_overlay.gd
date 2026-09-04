@@ -42,8 +42,6 @@ func _ready() -> void:
 	# 폰에서는 화면 밖으로 나갔다(2026-09-05 실측). 양쪽으로 자라게 한다.
 	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
 	box.grow_vertical = Control.GROW_DIRECTION_BOTH
-	box.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	box.grow_vertical = Control.GROW_DIRECTION_BOTH
 	box.add_theme_constant_override("separation", 10)
 	add_child(box)
 

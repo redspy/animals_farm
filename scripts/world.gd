@@ -395,9 +395,13 @@ func _build_hud() -> void:
 	# 왼쪽 아래 층 높이를 미리 계산한다(NARROW_* 주석 참고).
 	# 터치 UI가 없으면 조이스틱 토글도 없으므로 그만큼 내려 쓴다. _touch는 이
 	# 함수 끝에서 만들어지므로(아직 null) 만들 때와 **같은 조건**을 본다.
+	#
+	# 좁은 화면 여부를 함께 보지 않는 이유: 토글은 좁든 넓든 터치 기기면
+	# 만들어진다. narrow까지 AND로 걸면 **터치되는 넓은 화면**(태블릿·터치
+	# 노트북)에서 토스트와 존 라벨이 다시 토글 뒤로 들어간다(리뷰 지적).
 	var narrow := _is_narrow_screen()
 	var stack := HUD_MARGIN
-	if narrow and DisplayServer.is_touchscreen_available():
+	if DisplayServer.is_touchscreen_available():
 		stack = TouchControls.MARGIN + TouchControls.BTN_SMALL + NARROW_STACK_GAP
 	var toast_bottom := stack
 	stack += NARROW_LINE_H + NARROW_STACK_GAP
@@ -418,12 +422,12 @@ func _build_hud() -> void:
 
 	_zone_label = _make_label(layer, Control.PRESET_BOTTOM_LEFT, Palette.color("ui", "zone_text"), outline_color)
 	_zone_label.offset_left = HUD_MARGIN
-	_zone_label.offset_bottom = -(zone_bottom if narrow else HUD_MARGIN + 46.0)
+	_zone_label.offset_bottom = -zone_bottom
 	_zone_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
 	_toast = _make_label(layer, Control.PRESET_BOTTOM_LEFT, text_color, outline_color)
 	_toast.offset_left = HUD_MARGIN
-	_toast.offset_bottom = -(toast_bottom if narrow else HUD_MARGIN)
+	_toast.offset_bottom = -toast_bottom
 	_toast.grow_vertical = Control.GROW_DIRECTION_BEGIN
 
 	# 하단 접속자 바 — 지금 이 월드에 누가 있는지 한눈에 보여준다.

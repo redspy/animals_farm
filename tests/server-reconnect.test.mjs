@@ -44,16 +44,29 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   const statePath = join(mkdtempSync(join(tmpdir(), 'af-reconnect-')), 'world.json');
   const srv = spawn('node', ['server/index.js'], {
     env: { ...process.env, PORT: String(PORT), TLS: 'off', HOST: '127.0.0.1', WORLD_STATE_PATH: statePath },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  // 출력을 버리면 포트 점유(EADDRINUSE)로 서버가 죽었을 때 "메시지를 기다리다
+  // 시간이 초과됨"만 남아 원인을 못 찾는다.
+  let srvLog = '';
+  srv.stdout.on('data', (d) => { srvLog += d.toString(); });
+  srv.stderr.on('data', (d) => { srvLog += d.toString(); });
+  srv.on('exit', (code) => {
+    if (code !== null && code !== 0) console.error(`[테스트 서버 종료 ${code}]\n${srvLog}`);
   });
   t.after(() => srv.kill());
+  // 남이 쓰던 서버에 붙으면 엉뚱한 월드를 검증하게 된다 — 우리가 띄운
+  // 프로세스가 살아 있는지 함께 확인한다.
+  let up = false;
   for (let i = 0; i < 40; i++) {
     try {
       const r = await fetch(`http://127.0.0.1:${PORT}/healthz`);
-      if (r.ok) break;
+      if (r.ok) { up = true; break; }
     } catch { /* 아직 */ }
     await new Promise((r) => setTimeout(r, 100));
   }
+  assert.ok(up, `테스트 서버가 ${PORT} 포트에 뜨지 않았다(포트 점유?)\n${srvLog}`);
+  assert.equal(srv.exitCode, null, `테스트 서버가 죽었다\n${srvLog}`);
 
   const url = `ws://127.0.0.1:${PORT}/ws`;
   // 관찰자 — 남의 화면에서 어떻게 보이는지를 이 소켓으로 판정한다.

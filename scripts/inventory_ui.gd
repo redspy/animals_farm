@@ -123,6 +123,11 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 		return
 	_sell_all_btn.disabled = false
 
+	# 폰에서는 줄에 들어갈 폭이 없다 — 버튼 글자와 가격 표기를 함께 줄인다.
+	# 셋 다 그대로 두면 이름 줄이 "나무 x1 (기"처럼 잘려 가격이 안 보인다.
+	# 버튼 폭은 좁은 화면에서도 키우지 않는다(글자를 줄였으므로 92로 충분하다).
+	var narrow := UiScale.is_narrow()
+	var btn_w := BTN_WIDTH
 	var index := 0
 	for item_id: String in inventory.keys():
 		index += 1
@@ -135,10 +140,6 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 		row.add_theme_constant_override("separation", 8)
 		_list.add_child(row)
 
-		var narrow := UiScale.is_narrow()
-		# 폰에서는 줄에 들어갈 폭이 없다 — 버튼 글자와 가격 표기를 함께 줄인다.
-		# 셋 다 그대로 두면 이름 줄이 "나무 x1 (기"처럼 잘려 가격이 안 보인다.
-		var btn_w := UiScale.dim(BTN_WIDTH) if not narrow else BTN_WIDTH
 		var name_label := Label.new()
 		name_label.text = "%s x%d · %d벨" % [label_text, count, price] if narrow \
 			else "%s x%d  (개당 %d벨)" % [label_text, count, price]
