@@ -15,7 +15,9 @@
     "zone_floor": "#ffe9a83d",
     "drop_item": "#f0e0a0",
     "rock": "#8c8f96",
-    "rock_dark": "#6b6e75"
+    "rock_dark": "#6b6e75",
+    "wall": "#9a9186",
+    "wall_dark": "#7c7469"
   },
   "ui": {
     "hud_text": "#ffffff",

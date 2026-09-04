@@ -141,6 +141,20 @@ test('서버가 바위를 통과하지 못하게 밀어낸다', () => {
   assert.ok(d >= rock.radius, `바위 안에 들어갔다: 거리 ${d.toFixed(2)} < ${rock.radius}`);
 });
 
+test('서버가 석벽(박스 장애물)도 통과하지 못하게 밀어낸다', () => {
+  const w = fresh();
+  const wall = w.obstacles.find((o) => o.shape === 'box');
+  assert.ok(wall, 'data/world.json의 박스 장애물을 서버도 읽는다');
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const p = w.players.get(TOKEN_A);
+  p.x = wall.x;
+  p.z = wall.z - wall.halfZ - 2;
+  const r = w.move(TOKEN_A, { x: wall.x, z: wall.z }, Date.now() + 60_000);
+  const insideX = Math.abs(r.player.x - wall.x) < wall.halfX;
+  const insideZ = Math.abs(r.player.z - wall.z) < wall.halfZ;
+  assert.ok(!(insideX && insideZ), `석벽 안에 들어갔다: (${r.player.x}, ${r.player.z})`);
+});
+
 test('서버가 캐릭터 겹침도 밀어낸다', () => {
   const w = fresh();
   const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;

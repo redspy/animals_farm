@@ -19,6 +19,7 @@ func _initialize() -> void:
 	_test_start_inside_obstacle_does_not_loop()
 	_test_push_out()
 	_test_separate()
+	_test_box_obstacle()
 
 	if _failures > 0:
 		printerr("❌ 경로 계산 테스트 실패 %d건" % _failures)
@@ -36,6 +37,25 @@ func _check(cond: bool, what: String) -> void:
 
 func _rock(x: float, z: float, r: float) -> Dictionary:
 	return {"x": x, "z": z, "radius": r}
+
+func _wall(x: float, z: float, sx: float, sz: float) -> Dictionary:
+	return {"shape": "box", "x": x, "z": z, "size_x": sx, "size_z": sz}
+
+## 경로 전체가 박스를 통과하지 않는지 — 각 구간을 분리축 판정으로 본다.
+func _path_clears_box(from: Vector3, path: Array[Vector3], obstacles: Array) -> bool:
+	var prev := Vector2(from.x, from.z)
+	for p in path:
+		var cur := Vector2(p.x, p.z)
+		for o: Variant in obstacles:
+			var obs := o as Dictionary
+			var center := Vector2(float(obs["x"]), float(obs["z"]))
+			# 0.02는 접선으로 스치는 경우의 부동소수 여유.
+			var half := Vector2(float(obs["size_x"]), float(obs["size_z"])) * 0.5 \
+				+ Vector2(AGENT - 0.02, AGENT - 0.02)
+			if PathPlanner._segment_hits_box(prev, cur, center, half):
+				return false
+		prev = cur
+	return true
 
 ## 경로 전체가 바위를 비켜 가는지 — 각 구간의 최근접 거리를 본다.
 func _path_clears(from: Vector3, path: Array[Vector3], obstacles: Array) -> bool:
@@ -149,6 +169,43 @@ func _test_separate() -> void:
 		Vector3(0.3, 0, 0), Vector3(-0.3, 0, 0), Vector3(0, 0, 0.3), Vector3(0, 0, -0.3),
 	], sep, 1.0)
 	_check(is_finite(crowd.x) and is_finite(crowd.z), "여러 명에 둘러싸여도 유한한 결과")
+
+## 박스(석벽 등) 장애물 — 다각형 장애물 지원의 실체.
+func _test_box_obstacle() -> void:
+	print("[test] 박스 장애물을 모서리로 돌아간다")
+	# (0,0) 중심, 가로로 긴 벽. 아래(-z)에서 위(+z)로 가려면 좌우로 돌아야 한다.
+	var walls := [_wall(0, 0, 8, 1)]
+
+	# 막히지 않는 경로는 그대로.
+	var clear_path := PathPlanner.plan(Vector3(-10, 0, -5), Vector3(-10, 0, 5), walls, AGENT)
+	_check(clear_path.size() == 1, "벽 밖은 직선(경유지 없음)")
+
+	# 정면 통과 시도 → 경유지가 생기고 벽을 통과하지 않는다.
+	var from := Vector3(0, 0, -4)
+	var path := PathPlanner.plan(from, Vector3(0, 0, 4), walls, AGENT)
+	_check(path.size() >= 2, "경유지 %d개 + 목표" % (path.size() - 1))
+	_check(_path_clears_box(from, path, walls), "경로가 벽을 통과하지 않는다")
+	_check(path[path.size() - 1].is_equal_approx(Vector3(0, 0, 4)), "마지막은 목표")
+
+	# 출발점이 한쪽으로 치우쳐 있으면 **가까운 모서리**로 돌아야 한다.
+	var right_path := PathPlanner.plan(Vector3(3, 0, -4), Vector3(3, 0, 4), walls, AGENT)
+	_check(right_path.size() >= 2 and right_path[0].x > 0.0,
+		"오른쪽에서 출발하면 오른쪽 모서리로: x=%.2f" % right_path[0].x)
+	var left_path := PathPlanner.plan(Vector3(-3, 0, -4), Vector3(-3, 0, 4), walls, AGENT)
+	_check(left_path.size() >= 2 and left_path[0].x < 0.0,
+		"왼쪽에서 출발하면 왼쪽 모서리로: x=%.2f" % left_path[0].x)
+
+	# 벽 안으로 밀려 들어간 위치는 가장 가까운 면으로 밀려난다.
+	var pushed := PathPlanner.push_out(Vector3(0, 0, 0.2), walls, AGENT)
+	_check(absf(pushed.z) >= 0.5 + AGENT - 0.01, "벽 안 위치가 면 밖으로 밀려남(z=%.2f)" % pushed.z)
+	var outside := PathPlanner.push_out(Vector3(0, 0, 6), walls, AGENT)
+	_check(outside.is_equal_approx(Vector3(0, 0, 6)), "벽 밖 위치는 그대로")
+
+	# 원과 박스가 섞여 있어도 동작한다.
+	var mixed := [_wall(0, 0, 8, 1), _rock(6, 3, 1.2)]
+	var mixed_path := PathPlanner.plan(Vector3(-2, 0, -4), Vector3(8, 0, 5), mixed, AGENT)
+	_check(_path_clears_box(Vector3(-2, 0, -4), mixed_path, [mixed[0]]), "혼합 배치에서도 벽을 통과하지 않는다")
+	_check(_path_clears(Vector3(-2, 0, -4), mixed_path, [mixed[1]]), "혼합 배치에서도 바위를 통과하지 않는다")
 
 func _test_push_out() -> void:
 	print("[test] 바위 안으로 들어간 위치를 표면 밖으로 되돌린다")

@@ -70,7 +70,15 @@ export class WorldState {
     // 수 있었다(docs/protocol.md §3의 신뢰 경계를 좁히는 작업).
     this.obstacles = (worldCfg.obstacles || [])
       .filter((o) => o && Number.isFinite(Number(o.x)) && Number.isFinite(Number(o.z)))
-      .map((o) => ({ id: String(o.id || ''), x: Number(o.x), z: Number(o.z), radius: Number(o.radius) || 1.0 }));
+      .map((o) => (String(o.shape || 'circle') === 'box'
+        ? {
+          id: String(o.id || ''), shape: 'box', x: Number(o.x), z: Number(o.z),
+          halfX: (Number(o.size_x) || 1) / 2, halfZ: (Number(o.size_z) || 1) / 2,
+        }
+        : {
+          id: String(o.id || ''), shape: 'circle', x: Number(o.x), z: Number(o.z),
+          radius: Number(o.radius) || 1.0,
+        }));
 
     const gatherCfg = readJson(join(dataDir, 'gatherables.json'), { spawns: [] });
     const gatherLimits = (gatherCfg.limits || {}).respawn_sec || [10, 86400];
@@ -138,6 +146,19 @@ export class WorldState {
   pushOutObstacles(pos, agentRadius = 0.35) {
     let { x, z } = pos;
     for (const o of this.obstacles) {
+      if (o.shape === 'box') {
+        // 침투가 가장 적은 축으로 밀어낸다(클라이언트 PathPlanner.push_out과 같은 규칙).
+        const hx = o.halfX + agentRadius;
+        const hz = o.halfZ + agentRadius;
+        const dx = x - o.x;
+        const dz = z - o.z;
+        if (Math.abs(dx) >= hx || Math.abs(dz) >= hz) continue;
+        const penX = hx - Math.abs(dx);
+        const penZ = hz - Math.abs(dz);
+        if (penX <= penZ) x = o.x + (dx >= 0 ? hx : -hx);
+        else z = o.z + (dz >= 0 ? hz : -hz);
+        continue;
+      }
       const r = o.radius + agentRadius;
       const dx = x - o.x;
       const dz = z - o.z;

@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<title>$GODOT_PROJECT_NAME</title>
+		<style>
+html, body, #canvas {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+body {
+	color: white;
+	background-color: black;
+	overflow: hidden;
+	touch-action: none;
+}
+
+#canvas {
+	display: block;
+}
+
+#canvas:focus {
+	outline: none;
+}
+
+#status, #status-splash, #status-progress {
+	position: absolute;
+	left: 0;
+	right: 0;
+}
+
+#status, #status-splash {
+	top: 0;
+	bottom: 0;
+}
+
+#status {
+	background-color: $GODOT_SPLASH_COLOR;
+	display: flex;
+	flex-direction: column;
+	justify-content: center;
+	align-items: center;
+	visibility: hidden;
+}
+
+#status-splash {
+	max-height: 100%;
+	max-width: 100%;
+	margin: auto;
+}
+
+#status-splash.show-image--false {
+	display: none;
+}
+
+#status-splash.fullsize--true {
+	height: 100%;
+	width: 100%;
+	object-fit: contain;
+}
+
+#status-splash.use-filter--false {
+	image-rendering: pixelated;
+}
+
+#status-progress, #status-notice {
+	display: none;
+}
+
+#status-progress {
+	bottom: 10%;
+	width: 50%;
+	margin: 0 auto;
+}
+
+#status-notice {
+	background-color: #5b3943;
+	border-radius: 0.5rem;
+	border: 1px solid #9b3943;
+	color: #e0e0e0;
+	font-family: 'Noto Sans', 'Droid Sans', Arial, sans-serif;
+	line-height: 1.3;
+	margin: 0 2rem;
+	overflow: hidden;
+	padding: 1rem;
+	text-align: center;
+	z-index: 1;
+}
+		</style>
+		$GODOT_HEAD_INCLUDE
+	</head>
+	<body>
+		<canvas id="canvas">
+			Your browser does not support the canvas tag.
+		</canvas>
+
+		<noscript>
+			Your browser does not support JavaScript.
+		</noscript>
+
+		<div id="status">
+			<img id="status-splash" class="$GODOT_SPLASH_CLASSES" src="$GODOT_SPLASH" alt="">
+			<progress id="status-progress"></progress>
+			<div id="status-notice"></div>
+		</div>
+
+		<script src="$GODOT_URL"></script>
+		<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+
+// [animals_farm 수정] 비보안 컨텍스트(http)에서는 AudioWorklet이 아예 없어서
+// (`audioContext.audioWorklet`가 undefined) Godot 오디오 초기화가 예외를 던지고
+// **엔진 시작 자체가 실패**한다(실측: "Cannot read properties of undefined
+// (reading 'addModule')" → 화면이 그대로 멈춤).
+//
+// 그래서 두 가지를 함께 한다:
+//  1) 오디오 드라이버를 Dummy로 요청한다(엔진 인자). **new Engine() 앞에서**
+//     설정해야 반영된다 — 뒤에서 바꿨더니 무시됐다.
+//  2) 그래도 엔진이 audioWorklet에 접근하므로, addModule이 reject하는 스텁을
+//     심어 예외 대신 실패로 흘려보낸다.
+if (!window.isSecureContext) {
+	GODOT_CONFIG['args'] = (GODOT_CONFIG['args'] || []).concat(['--audio-driver', 'Dummy']);
+	try {
+		const Ctx = window.AudioContext || window.webkitAudioContext;
+		if (Ctx && !Ctx.prototype.audioWorklet) {
+			Object.defineProperty(Ctx.prototype, 'audioWorklet', {
+				configurable: true,
+				get() {
+					return { addModule: () => Promise.reject(new Error('insecure context: AudioWorklet unavailable')) };
+				},
+			});
+		}
+	} catch (err) {
+		console.warn('[animals_farm] audioWorklet 스텁 설치 실패:', err);
+	}
+}
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+
+(function () {
+	const statusOverlay = document.getElementById('status');
+	const statusProgress = document.getElementById('status-progress');
+	const statusNotice = document.getElementById('status-notice');
+
+	let initializing = true;
+	let statusMode = '';
+
+	function setStatusMode(mode) {
+		if (statusMode === mode || !initializing) {
+			return;
+		}
+		if (mode === 'hidden') {
+			statusOverlay.remove();
+			initializing = false;
+			return;
+		}
+		statusOverlay.style.visibility = 'visible';
+		statusProgress.style.display = mode === 'progress' ? 'block' : 'none';
+		statusNotice.style.display = mode === 'notice' ? 'block' : 'none';
+		statusMode = mode;
+	}
+
+	function setStatusNotice(text) {
+		while (statusNotice.lastChild) {
+			statusNotice.removeChild(statusNotice.lastChild);
+		}
+		const lines = text.split('\n');
+		lines.forEach((line) => {
+			statusNotice.appendChild(document.createTextNode(line));
+			statusNotice.appendChild(document.createElement('br'));
+		});
+	}
+
+	function displayFailureNotice(err) {
+		console.error(err);
+		if (err instanceof Error) {
+			setStatusNotice(err.message);
+		} else if (typeof err === 'string') {
+			setStatusNotice(err);
+		} else {
+			setStatusNotice('An unknown error occurred.');
+		}
+		setStatusMode('notice');
+		initializing = false;
+	}
+
+	// [animals_farm 수정] Godot 기본 셸은 보안 컨텍스트(HTTPS)가 아니면 실행을
+	// 아예 거부한다. 그런데 이 게임은 nothreads 빌드로 SharedArrayBuffer가
+	// 필요 없고, 실제로 보안 컨텍스트를 요구하는 기능은 오디오(AudioWorklet)
+	// 뿐이다. 사내망/집 와이파이의 http://192.168.x.x 로 폰에서 붙는 경우를
+	// 지원하려고, **보안 컨텍스트 항목만** 경고로 낮춘다.
+	//
+	// 대가: http로 열면 소리가 나지 않을 수 있다(AudioWorklet 사용 불가).
+	// 소리를 쓰기 시작하면 HTTPS가 사실상 필수가 된다 — 그때 이 완화를 거둔다.
+	const allMissing = Engine.getMissingFeatures({
+		threads: GODOT_THREADS_ENABLED,
+	});
+	const insecureOnly = allMissing.filter((m) => m.indexOf('Secure Context') === 0);
+	const missing = allMissing.filter((m) => m.indexOf('Secure Context') !== 0);
+	if (insecureOnly.length > 0) {
+		console.warn('[animals_farm] 보안 컨텍스트가 아닙니다(http). 게임은 실행하지만 소리가 나지 않을 수 있습니다.');
+	}
+
+	if (missing.length !== 0) {
+		if (GODOT_CONFIG['serviceWorker'] && GODOT_CONFIG['ensureCrossOriginIsolationHeaders'] && 'serviceWorker' in navigator) {
+			let serviceWorkerRegistrationPromise;
+			try {
+				serviceWorkerRegistrationPromise = navigator.serviceWorker.getRegistration();
+			} catch (err) {
+				serviceWorkerRegistrationPromise = Promise.reject(new Error('Service worker registration failed.'));
+			}
+			// There's a chance that installing the service worker would fix the issue
+			Promise.race([
+				serviceWorkerRegistrationPromise.then((registration) => {
+					if (registration != null) {
+						return Promise.reject(new Error('Service worker already exists.'));
+					}
+					return registration;
+				}).then(() => engine.installServiceWorker()),
+				// For some reason, `getRegistration()` can stall
+				new Promise((resolve) => {
+					setTimeout(() => resolve(), 2000);
+				}),
+			]).then(() => {
+				// Reload if there was no error.
+				window.location.reload();
+			}).catch((err) => {
+				console.error('Error while registering service worker:', err);
+			});
+		} else {
+			// Display the message as usual
+			const missingMsg = 'Error\nThe following features required to run Godot projects on the Web are missing:\n';
+			displayFailureNotice(missingMsg + missing.join('\n'));
+		}
+	} else {
+		setStatusMode('progress');
+		engine.startGame({
+			'onProgress': function (current, total) {
+				if (current > 0 && total > 0) {
+					statusProgress.value = current;
+					statusProgress.max = total;
+				} else {
+					statusProgress.removeAttribute('value');
+					statusProgress.removeAttribute('max');
+				}
+			},
+		}).then(() => {
+			setStatusMode('hidden');
+		}, displayFailureNotice);
+	}
+}());
+		</script>
+	</body>
+</html>

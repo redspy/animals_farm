@@ -31,3 +31,6 @@ server_error.log
 
 # 서버 런타임 월드 상태(캐릭터 위치/월드 아이템)
 server/data/
+
+# 개발용 TLS 인증서(로컬 전용, 커밋하지 않는다)
+server/certs/

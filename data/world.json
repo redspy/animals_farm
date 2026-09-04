@@ -1,5 +1,5 @@
 {
-  "_comment": "월드맵 설정. 초기 크기는 '한 화면의 9배 면적' = 가로/세로 각 3배다. 한 화면은 직교 카메라 size 9.5(세로) × 16:9 → 약 16.9 x 9.5 월드 단위이므로 3배는 50.7 x 28.5. size_x/size_z만 고치면 맵이 커지고, 서버도 같은 파일을 읽어 경계를 클램프한다(docs/protocol.md §3). obstacles는 통과할 수 없는 바위 조형물이며 원(중심 x/z + radius)으로만 다룬다 — 탭 이동은 이 원을 만나면 짧은 쪽으로 돌아간다(scripts/path_planner.gd). 항목을 추가하면 바위와 충돌·우회가 함께 늘어난다. 스폰(0,0)과 채집물 위에는 두지 말 것.",
+  "_comment": "월드맵 설정. 초기 크기는 '한 화면의 9배 면적' = 가로/세로 각 3배다. 한 화면은 직교 카메라 size 9.5(세로) × 16:9 → 약 16.9 x 9.5 월드 단위이므로 3배는 50.7 x 28.5. size_x/size_z만 고치면 맵이 커지고, 서버도 같은 파일을 읽어 경계를 클램프한다(docs/protocol.md §3). obstacles는 통과할 수 없는 조형물이며 shape로 모양을 정한다 — circle(중심 x/z + radius) 또는 box(중심 x/z + size_x/size_z, 축 정렬) — 탭 이동은 이 원을 만나면 짧은 쪽으로 돌아간다(scripts/path_planner.gd). 항목을 추가하면 바위와 충돌·우회가 함께 늘어난다. 스폰(0,0)과 채집물 위에는 두지 말 것.",
   "schema_version": 1,
   "screen_units": {
     "x": 16.9,
@@ -93,6 +93,24 @@
       "z": 0.5,
       "radius": 1.4,
       "style": "single"
+    },
+    {
+      "id": "wall_west",
+      "shape": "box",
+      "x": -8.0,
+      "z": -3.0,
+      "size_x": 6.0,
+      "size_z": 1.0,
+      "style": "wall"
+    },
+    {
+      "id": "wall_plaza",
+      "shape": "box",
+      "x": 5.0,
+      "z": -12.0,
+      "size_x": 1.0,
+      "size_z": 5.0,
+      "style": "wall"
     }
   ]
 }

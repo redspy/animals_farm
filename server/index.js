@@ -1,7 +1,9 @@
-import { createServer } from 'http';
+import { createServer as createHttpServer } from 'http';
+import { createServer as createHttpsServer } from 'https';
 import { WebSocketServer } from 'ws';
 import { WorldState } from './world.js';
-import { createReadStream, statSync, existsSync } from 'fs';
+import { createReadStream, statSync, existsSync, readFileSync } from 'fs';
+import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'zlib';
 import { extname, join, normalize, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -29,6 +31,41 @@ const ROOT = resolve(join(__dirname, '..', 'build', 'web'));
 const PORT = Number(process.env.PORT || 3001);
 const HOST = process.env.HOST || '0.0.0.0';
 
+// Godot 웹 빌드는 **보안 컨텍스트가 아니면 실행 자체를 거부**한다
+// ("Secure Context - Check web server configuration (use HTTPS)"). localhost는
+// 브라우저가 보안 컨텍스트로 취급하지만, 같은 와이파이의 폰에서 http://192.168.x.x로
+// 붙으면 아니다 — 그래서 개발 중에도 HTTPS가 필요하다(2026-09-04 실기 확인).
+//
+// 인증서가 있으면 https로, 없으면 http로 뜬다. 개발용 인증서는
+// ./scripts/make-dev-cert.sh 로 만든다.
+const TLS_CERT = process.env.TLS_CERT || join(__dirname, 'certs', 'dev-cert.pem');
+const TLS_KEY = process.env.TLS_KEY || join(__dirname, 'certs', 'dev-key.pem');
+// TLS=off 로 강제로 http 기동(비보안 컨텍스트 동작을 검증할 때 쓴다).
+const useTls = process.env.TLS !== 'off' && existsSync(TLS_CERT) && existsSync(TLS_KEY);
+
+// gzip으로 보낼 확장자. wasm이 39MB, pck가 4MB라 무압축으로 보내면 폰에서
+// 최초 로딩이 수십 초로 늘어난다(2026-09-04 사용자 보고). wasm/js는 gzip이
+// 특히 잘 먹는다(실측 4배 이상).
+const COMPRESSIBLE = new Set(['.wasm', '.js', '.html', '.json', '.pck', '.svg', '.txt']);
+/** 압축 결과 캐시: 경로+인코딩 → { mtimeMs, buffer }. 매 요청마다 39MB를 다시
+ *  압축하면 첫 접속자마다 CPU를 태운다. 파일이 바뀌면(mtime) 자동 무효화된다. */
+const compressCache = new Map();
+
+function compressed(path, encoding) {
+  const stat = statSync(path);
+  const key = `${encoding}:${path}`;
+  const hit = compressCache.get(key);
+  if (hit && hit.mtimeMs === stat.mtimeMs) return hit.buffer;
+  const raw = readFileSync(path);
+  // brotli가 gzip보다 20~30% 더 작다(엔진 wasm에서 특히 차이가 크다). 대신
+  // 압축이 느려서 처음 한 번만 하고 캐시한다.
+  const buffer = encoding === 'br'
+    ? brotliCompressSync(raw, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 5 } })
+    : gzipSync(raw, { level: 6 });
+  compressCache.set(key, { mtimeMs: stat.mtimeMs, buffer });
+  return buffer;
+}
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -49,7 +86,7 @@ function send(res, status, body, headers = {}) {
   res.end(body);
 }
 
-const server = createServer((req, res) => {
+const handler = (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   // 배포 검증용 헬스체크 — deploy 스크립트가 이 엔드포인트로 "정말 떴는지"를
@@ -89,19 +126,42 @@ const server = createServer((req, res) => {
 
   const headers = {
     'Content-Type': MIME[extname(target).toLowerCase()] || 'application/octet-stream',
-    'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Embedder-Policy': 'require-corp',
-    'Cross-Origin-Resource-Policy': 'same-origin',
   };
+  // COOP/COEP는 **보안 컨텍스트에서만 의미가 있다.** http로 서빙할 때 보내면
+  // 브라우저가 "untrustworthy origin이라 무시했다"는 오류를 콘솔에 찍는다 —
+  // 실제 동작에는 영향이 없지만, 진짜 오류를 가려 디버깅을 방해한다.
+  if (useTls) {
+    headers['Cross-Origin-Opener-Policy'] = 'same-origin';
+    headers['Cross-Origin-Embedder-Policy'] = 'require-corp';
+    headers['Cross-Origin-Resource-Policy'] = 'same-origin';
+  }
   // 엔진/에셋 파일은 파일명이 바뀌지 않으므로 짧은 캐시만 걸고, index.html은
   // 항상 재검증하게 둬야 배포 직후 구버전이 남지 않는다.
   headers['Cache-Control'] = target.endsWith('index.html')
     ? 'no-cache'
     : 'public, max-age=300';
 
+  const ext = extname(target).toLowerCase();
+  const accept = String(req.headers['accept-encoding'] || '');
+  const encoding = /\bbr\b/.test(accept) ? 'br' : (/\bgzip\b/.test(accept) ? 'gzip' : null);
+  if (encoding && COMPRESSIBLE.has(ext)) {
+    try {
+      const body = compressed(target, encoding);
+      res.writeHead(200, { ...headers, 'Content-Encoding': encoding, 'Content-Length': body.length, Vary: 'Accept-Encoding' });
+      res.end(body);
+      return;
+    } catch (e) {
+      // 압축에 실패하면 원본을 보낸다 — 로딩이 느려질 뿐 동작은 유지된다.
+      console.error('[server] 압축 실패, 원본 전송:', target, e.message);
+    }
+  }
   res.writeHead(200, headers);
   createReadStream(target).pipe(res);
-});
+};
+
+const server = useTls
+  ? createHttpsServer({ cert: readFileSync(TLS_CERT), key: readFileSync(TLS_KEY) }, handler)
+  : createHttpServer(handler);
 
 // ---------------------------------------------------------------------------
 // WebSocket 중계 (docs/protocol.md)
@@ -285,6 +345,14 @@ for (const sig of ['SIGINT', 'SIGTERM']) {
 }
 
 server.listen(PORT, HOST, () => {
-  console.log(`[animals_farm] 서버 기동: http://${HOST}:${PORT}  (root=${ROOT})`);
-  console.log(`[animals_farm] WebSocket: ws://${HOST}:${PORT}/ws  월드 ${world.sizeX} x ${world.sizeZ}`);
+  const scheme = useTls ? 'https' : 'http';
+  const wsScheme = useTls ? 'wss' : 'ws';
+  console.log(`[animals_farm] 서버 기동: ${scheme}://${HOST}:${PORT}  (root=${ROOT})`);
+  console.log(`[animals_farm] WebSocket: ${wsScheme}://${HOST}:${PORT}/ws  월드 ${world.sizeX} x ${world.sizeZ}`);
+  if (!useTls) {
+    // 조용히 http로 뜨면 "폰에서 왜 안 되지"로 시간을 버린다 — 기동 시점에 알린다.
+    console.log('[animals_farm] ⚠️  TLS 인증서가 없어 http로 기동했습니다.');
+    console.log('[animals_farm]    localhost에서는 동작하지만 **폰/다른 기기에서는 Godot이 실행을 거부**합니다');
+    console.log('[animals_farm]    (Secure Context 요구). ./scripts/make-dev-cert.sh 로 인증서를 만드세요.');
+  }
 });

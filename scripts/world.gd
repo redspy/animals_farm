@@ -536,6 +536,7 @@ func _refresh_hud() -> void:
 		_hooks.set_state("bells", int(_slot.get("bells", 0)))
 		_hooks.set_state("bagKinds", inv.size())
 		_hooks.set_state("bagCount", count)
+		_hooks.set_state("invOpen", 1 if (_inventory_ui != null and is_instance_valid(_inventory_ui)) else 0)
 
 ## 하단 접속자 바를 다시 만든다. 접속/퇴장/이름변경 때마다 호출된다.
 ##
@@ -992,9 +993,12 @@ func _on_rename(token: String, new_name: String) -> void:
 		_refresh_roster()
 
 func _on_server_error(code: String, message: String) -> void:
-	# 서버 거절을 조용히 삼키면 "왜 안 되는지" 알 수 없다 — 화면에 띄운다.
+	# 서버 거절을 조용히 삼키면 "왜 안 되는지" 알 수 없다 — 화면에 띄우고,
+	# E2E도 볼 수 있게 상태로 남긴다(캔버스라 토스트를 읽을 수 없다).
 	_show_toast("서버: %s" % message)
 	push_warning("서버 오류(%s): %s" % [code, message])
+	if _hooks != null:
+		_hooks.set_state("lastError", code)
 
 func _try_gather() -> void:
 	var nearest: Gatherable = null
@@ -1223,6 +1227,32 @@ func _publish_test_points() -> void:
 			return Vector2(-1, -1)
 		return _camera.unproject_position(found.position + Vector3(0, 0.9, 0))
 	)
+	_hooks.track_dynamic("beyondNearestWall", func() -> Vector2:
+		# 가장 가까운 **박스** 장애물(석벽) 건너편 지점.
+		var best := INF
+		var found := {}
+		for o: Variant in _obstacles:
+			if typeof(o) != TYPE_DICTIONARY or String((o as Dictionary).get("shape", "circle")) != "box":
+				continue
+			var obs := o as Dictionary
+			var d := _player.position.distance_to(Vector3(float(obs.get("x", 0.0)), 0.0, float(obs.get("z", 0.0))))
+			if d < best:
+				best = d
+				found = obs
+		if found.is_empty():
+			return Vector2(-1, -1)
+		var center := Vector3(float(found["x"]), 0.0, float(found["z"]))
+		var away := center - _player.position
+		away.y = 0.0
+		if away.length() < 0.01:
+			return Vector2(-1, -1)
+		# 진행 방향에서의 벽 두께만큼만 더 간다. 가장 긴 변을 쓰면 얇은 벽인데도
+		# 목표가 멀어져 화면 밖으로 나가고, 그러면 테스트가 클릭할 수 없다.
+		var dir := away.normalized()
+		var depth := absf(dir.x) * float(found.get("size_x", 1.0)) * 0.5 \
+			+ absf(dir.z) * float(found.get("size_z", 1.0)) * 0.5 + 1.3
+		return _camera.unproject_position(center + dir * depth)
+	)
 	_hooks.track_dynamic("beyondNearestRock", func() -> Vector2:
 		var rock := _nearest_rock()
 		if rock.is_empty():
@@ -1236,8 +1266,20 @@ func _publish_test_points() -> void:
 		var beyond := center + away.normalized() * (float(rock["radius"]) + 1.6)
 		return _camera.unproject_position(beyond)
 	)
+	# 플레이어 기준 네 방향의 지면 지점. E2E가 "그 방향으로 조금 이동"을 지시할 수
+	# 있게 한다 — 키보드 이동은 장애물을 우회하지 않아(설계) 바위 앞에서 멈추므로,
+	# 테스트도 탭 이동으로 접근해야 한다(2026-09-04 실측).
 	_hooks.track_dynamic("groundRight", func() -> Vector2:
 		return _camera.unproject_position(_player.position + Vector3(3.0, 0, 0))
+	)
+	_hooks.track_dynamic("groundLeft", func() -> Vector2:
+		return _camera.unproject_position(_player.position + Vector3(-3.0, 0, 0))
+	)
+	_hooks.track_dynamic("groundUp", func() -> Vector2:
+		return _camera.unproject_position(_player.position + Vector3(0, 0, -3.0))
+	)
+	_hooks.track_dynamic("groundDown", func() -> Vector2:
+		return _camera.unproject_position(_player.position + Vector3(0, 0, 3.0))
 	)
 
 func _nearest_rock() -> Dictionary:

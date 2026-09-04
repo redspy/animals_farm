@@ -45,9 +45,34 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
 
 - 현재 export 프리셋은 **nothreads**(`export_presets.cfg`의 `variant/thread_support=false`)다. 스레드 빌드는 `SharedArrayBuffer`를 요구해 **COOP/COEP 헤더 없이는 아예 실행되지 않고**, iOS Safari 등에서 실패율이 높다.
 - 그래도 `server/index.js`는 `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp`를 **미리 보낸다**. 나중에 스레드 빌드로 전환할 때 서버를 다시 건드리지 않기 위함이다. 대신 이 헤더가 켜져 있으면 외부 도메인 리소스(CDN 이미지/폰트/iframe)가 차단되므로, 외부 리소스를 쓰게 되면 그 시점에 재검토해야 한다.
-- WebSocket은 정적 파일과 **같은 포트의 `/ws`** 로 붙는다. 클라이언트는 페이지를 서빙한 origin에서 주소를 유도하므로(`net.gd::default_url`) 별도 설정이 없다 — 다만 https로 서빙하면 `wss://`가 되어야 하고, 리버스 프록시를 쓸 경우 `/ws` 업그레이드를 통과시켜야 한다.
+- WebSocket은 정적 파일과 **같은 포트의 `/ws`** 로 붙는다. 클라이언트는 페이지를 서빙한 origin에서 주소를 유도하므로(`net.gd::default_url`) 별도 설정이 없다 — https면 `wss://`가 되고, 리버스 프록시를 쓸 경우 `/ws` 업그레이드를 통과시켜야 한다.
 - `.wasm`은 `application/wasm`, `.pck`는 `application/octet-stream`으로 서빙한다. MIME이 틀리면 브라우저가 스트리밍 컴파일을 거부해 로딩이 느려지거나 실패한다.
-- `index.html`은 `no-cache`, 나머지 산출물은 `max-age=300`. 배포 직후 구버전 HTML이 캐시에 남는 문제를 막는다.
+
+### 보안 컨텍스트(HTTPS) 요구와 http 지원
+
+Godot 4의 **기본 HTML 셸은 보안 컨텍스트가 아니면 실행을 거부한다** — 폰에서 `http://192.168.x.x`로 붙으면 "Secure Context - Check web server configuration (use HTTPS)"만 뜬다(2026-09-04 실기 확인). `localhost`는 브라우저가 보안 컨텍스트로 취급하므로 PC 테스트에서는 절대 재현되지 않는다.
+
+`web/shell.html`(커스텀 셸)에서 이 제약을 **필요한 만큼만** 풀었다:
+
+- `Secure Context` 항목만 경고로 낮춘다. 다른 누락(WebGL2 등)은 그대로 실패로 둔다.
+- 비보안 컨텍스트에서는 `AudioWorklet`이 아예 없어(`audioContext.audioWorklet === undefined`) Godot 오디오 초기화가 예외를 던지고 **엔진 시작 자체가 멈춘다.** 그래서 (a) `--audio-driver Dummy`를 엔진 인자로 넣고(반드시 `new Engine()` **앞에서** — 뒤에서 바꾸면 무시된다) (b) `addModule`이 reject하는 스텁을 심어 예외 대신 실패로 흘려보낸다.
+- **대가: http로 열면 소리가 나지 않는다.** 사운드를 넣기 시작하면 HTTPS가 사실상 필수가 되므로 그때 이 완화를 거둔다.
+- 서버는 http로 서빙할 때 COOP/COEP를 보내지 않는다 — 브라우저가 "untrustworthy origin이라 무시했다"는 오류로 콘솔을 채워 진짜 오류를 가린다.
+- 개발용 HTTPS가 필요하면 `./scripts/make-dev-cert.sh`로 자체 서명 인증서를 만든다(LAN IP를 SAN에 넣는다 — SAN이 없으면 최신 브라우저가 예외 허용조차 거부한다). `TLS=off`로 강제 http 기동도 된다.
+- 검증: `npm run test:insecure` — **LAN IP로 접속해** 비보안 컨텍스트에서 화면이 그려지는지 본다(localhost로는 재현 불가).
+
+### 첫 로딩 시간 (2026-09-04 실측)
+
+폰에서 첫 로딩이 오래 걸린다는 보고를 받고 전송량을 재보니 **두 가지가 비정상이었다.**
+
+| 항목 | 문제 | 조치 후 |
+|---|---|---|
+| `index.pck` | **28MB** — `node_modules`의 playwright 아이콘·폰트까지 Godot이 리소스로 임포트해 넣고 있었다 | **3MB** (`.gdignore`로 스캔 제외, `npm ci`가 지워도 postinstall이 다시 심는다) |
+| 전송 압축 | 없음 — 39MB wasm을 그대로 보냈다 | brotli/gzip (**wasm 39MB → br 약 7MB, gzip 9MB**), 첫 압축 결과를 mtime 키로 캐시 |
+
+정리하면 **총 전송량 약 71MB → 약 12MB**다. 남은 9MB는 Godot 엔진 wasm 자체이고 이건 정상 범위다(Godot 웹 빌드의 고정 비용). 더 줄이려면 (a) 폰트 서브셋(현재 KR 전체 4.6MB), (b) 엔진 기능 축소 빌드가 필요하다.
+
+- `index.html`은 `no-cache`- `index.html`은 `no-cache`, 나머지 산출물은 `max-age=300`. 배포 직후 구버전 HTML이 캐시에 남는 문제를 막는다.
 
 ## 4. 로컬에서 같은 빌드 재현
 

@@ -13,13 +13,38 @@ const RINGS := 4
 var radius := 1.2
 
 func setup(data: Dictionary) -> void:
-	radius = maxf(float(data.get("radius", 1.2)), 0.3)
 	position = Vector3(float(data.get("x", 0.0)), 0.0, float(data.get("z", 0.0)))
+	if String(data.get("shape", "circle")) == "box":
+		_build_wall(
+			Vector2(float(data.get("size_x", 1.0)), float(data.get("size_z", 1.0)))
+		)
+		return
+	radius = maxf(float(data.get("radius", 1.2)), 0.3)
 	var style := String(data.get("style", "single"))
 	if style == "cluster":
 		_build_cluster()
 	else:
 		_build_single()
+
+## 석벽 — 판정 박스와 같은 크기로 세우고, 위에 얇은 갓돌을 올려 벽처럼 보이게 한다.
+func _build_wall(size: Vector2) -> void:
+	var height := 1.5
+	var body := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(size.x, height, size.y)
+	body.mesh = box
+	body.position = Vector3(0, height * 0.5, 0)
+	body.material_override = _material(Palette.color("world", "wall"))
+	add_child(body)
+
+	var cap := MeshInstance3D.new()
+	var cap_box := BoxMesh.new()
+	# 갓돌은 판정 박스보다 조금 넓게 — 판정이 좁아 보이는 쪽이 안전하다.
+	cap_box.size = Vector3(size.x + 0.18, 0.16, size.y + 0.18)
+	cap.mesh = cap_box
+	cap.position = Vector3(0, height + 0.08, 0)
+	cap.material_override = _material(Palette.color("world", "wall_dark"))
+	add_child(cap)
 
 func _build_single() -> void:
 	# 판정 원(radius)보다 살짝 작게 — 눈에 보이는 것보다 판정이 넓어야
@@ -51,3 +76,15 @@ func _add_stone(offset: Vector3, size: float, color: Color, tilt_deg: float) -> 
 	m.roughness = 1.0
 	mesh.material_override = m
 	add_child(mesh)
+
+## 조형물 공통 재질. 웹(GL Compatibility)에서 가볍게 유지 — 스페큘러를 끄고
+## 확산광만 쓴다.
+##
+## (이끼를 없애면서 파일 끝을 자를 때 이 함수까지 함께 잘려 나가 석벽 추가 시
+## 컴파일이 깨졌다 — 2026-09-04. 함수를 지울 때는 호출부를 함께 확인할 것.)
+func _material(color: Color) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
+	m.roughness = 1.0
+	return m

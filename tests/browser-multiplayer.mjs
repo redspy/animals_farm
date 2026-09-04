@@ -132,15 +132,23 @@ async function newClient(label) {
 async function pickSlotAndName(client, name) {
   const { page } = client;
   await page.locator('canvas').click({ position: { x: 420, y: 182 } });   // 1번 슬롯
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(900);
   await page.locator('canvas').click({ position: { x: 480, y: 182 } });   // 첫 프리셋
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(900);
   await page.locator('canvas').click({ position: { x: 480, y: 218 } });   // 이름 입력창
   await page.waitForTimeout(200);
   await page.keyboard.type(name, { delay: 60 });
   await page.waitForTimeout(200);
   await page.keyboard.press('Enter');
-  await page.waitForTimeout(2500);   // 월드 로딩 + WS 접속
+  await page.waitForTimeout(3200);   // 월드 로딩 + WS 접속
+}
+
+/** 훅이 준 지점이 화면 안인지 — 화면 밖 좌표를 클릭하면 조용히 아무 일도 없다. */
+async function pointOnScreen(page, key) {
+  const pt = await godotPoint(page, key);
+  const vp = page.viewportSize();
+  const inside = pt.x > 6 && pt.y > 6 && pt.x < vp.width - 6 && pt.y < vp.height - 6;
+  return inside ? pt : null;
 }
 
 const focusGame = async (page) => {
@@ -358,6 +366,96 @@ check(minGap > -0.25, `이동 경로가 어떤 바위도 통과하지 않는다(
 // 바위 앞에서 막혀 멈췄으면 이동 거리가 거의 0이 된다.
 check(traveled > 3.0, `바위에 막히지 않고 돌아서 이동했다(거리 ${traveled.toFixed(1)})`);
 
+console.log('\n[검증] 석벽(박스 장애물)도 돌아서 간다');
+// 원(바위)과 달리 박스는 모서리로 돌아야 한다 — 데이터에 shape:"box"로 정의된
+// 장애물이 실제 빌드에서도 통과되지 않는지 본다.
+const walls = (JSON.parse(readFileSync('data/world.json', 'utf-8')).obstacles ?? [])
+  .filter((o) => o.shape === 'box');
+check(walls.length > 0, 'data/world.json에 석벽이 정의돼 있다');
+await focusGame(a.page);
+
+// 카메라가 플레이어를 따라가므로 석벽이 화면에 없으면 건너편 지점을 클릭할 수
+// 없다(실측: 이동 표본 0개로 실패). 먼저 키보드로 석벽 근처까지 걸어간다.
+// 목표 방향으로 **탭 이동**을 반복해 접근한다. 키보드로 접근하면 장애물을
+// 우회하지 않아(수동 이동은 표면 밀림) 바위 앞에서 멈춘다 — 실측에서 A가
+// x=13.75(바위 x=12 옆)에 붙어 더 못 갔다.
+async function walkToPoint(page, token, target, tol = 4.0, maxMs = 25000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < maxMs) {
+    const pos = lastPos(token);
+    if (!pos) { await page.waitForTimeout(200); continue; }
+    const dx = target.x - pos.x;
+    const dz = target.z - pos.z;
+    if (Math.hypot(dx, dz) <= tol) break;
+    const key = Math.abs(dx) > Math.abs(dz)
+      ? (dx > 0 ? 'groundRight' : 'groundLeft')
+      : (dz > 0 ? 'groundDown' : 'groundUp');
+    if (process.env.MP_DEBUG) console.log(`    [walkTo] (${pos.x},${pos.z}) → (${target.x},${target.z}) via ${key}`);
+    const pt = await godotPoint(page, key);
+    await page.mouse.click(pt.x, pt.y);
+    await page.waitForTimeout(1100);
+  }
+  // 카메라가 플레이어를 lerp로 따라가므로, 멈춘 직후의 화면 좌표는 아직
+  // 어긋나 있다 — 안정될 시간을 준다(실측: 같은 검증이 실행마다 통과/실패했다).
+  await page.waitForTimeout(900);
+}
+
+/** 훅 지점을 클릭한다. 화면 밖이면 잠깐 기다려 다시 조회한다(카메라 안정 대기). */
+async function tapWorldPoint(page, key, tries = 4) {
+  for (let i = 0; i < tries; i++) {
+    const pt = await pointOnScreen(page, key);
+    if (pt) {
+      await page.mouse.click(pt.x, pt.y);
+      return true;
+    }
+    await page.waitForTimeout(400);
+  }
+  return false;
+}
+// **가로로 긴 벽**을 고른다. 세로로 긴 벽은 건너편 지점이 화면 세로 시야
+// (직교 size 9.5 → ±4.75)를 넘어가 클릭할 수 없다(실측).
+const nearWall = walls
+  .filter((wl) => wl.size_x >= wl.size_z)
+  .map((wl) => ({ wl, d: Math.hypot(wl.x - (lastPos(tokenA)?.x ?? 0), wl.z - (lastPos(tokenA)?.z ?? 0)) }))
+  .sort((x, y) => x.d - y.d)[0].wl;
+// 벽에 충분히 붙어야 건너편 지점이 화면에 들어온다.
+await walkToPoint(a.page, tokenA, { x: nearWall.x, z: nearWall.z + nearWall.size_z / 2 + 2.0 }, 2.2);
+// 건너편 지점이 화면에 들어올 때까지 조금 더 붙는다 — 접근 위치가 실행마다
+// 조금씩 달라 경계를 넘나들면서 테스트가 취약해졌다(실측: 같은 검증이 실행에
+// 따라 통과/실패).
+let wallClicked = await tapWorldPoint(a.page, 'beyondNearestWall');
+for (let i = 0; i < 2 && !wallClicked; i++) {
+  await walkToPoint(a.page, tokenA, { x: nearWall.x, z: nearWall.z + nearWall.size_z / 2 + 1.2 }, 1.2);
+  wallClicked = await tapWorldPoint(a.page, 'beyondNearestWall');
+}
+check(wallClicked, '석벽 건너편 지점을 화면에서 찾아 클릭했다');
+console.log(`  (석벽 ${nearWall.id} @ ${nearWall.x},${nearWall.z} 근처로 이동: x=${(lastPos(tokenA)?.x ?? 0).toFixed(1)} z=${(lastPos(tokenA)?.z ?? 0).toFixed(1)})`);
+const wallTrackFrom = seen.length;
+let wallStable = 0;
+let wallPrev = lastPos(tokenA) ?? { x: 0, z: 0 };
+for (let i = 0; i < 60 && wallStable < 5; i++) {
+  await a.page.waitForTimeout(250);
+  const now = lastPos(tokenA) ?? wallPrev;
+  wallStable = Math.hypot(now.x - wallPrev.x, now.z - wallPrev.z) < 0.05 ? wallStable + 1 : 0;
+  wallPrev = now;
+}
+await a.page.screenshot({ path: `${OUT}/mp-09-석벽우회.png` });
+const AGENT2 = 0.35;
+let insideWall = 0;
+const wallSamples = seen.slice(wallTrackFrom).filter((m) => m.t === 'move')
+  .flatMap((m) => m.moves || []).filter((v) => v.token === tokenA);
+for (const s of wallSamples) {
+  for (const wl of walls) {
+    // 0.2는 10Hz 표본 사이 보간 여유.
+    const inX = Math.abs(s.x - wl.x) < wl.size_x / 2 + AGENT2 - 0.2;
+    const inZ = Math.abs(s.z - wl.z) < wl.size_z / 2 + AGENT2 - 0.2;
+    if (inX && inZ) insideWall++;
+  }
+}
+console.log(`  (이동 표본 ${wallSamples.length}개, 석벽 내부 표본 ${insideWall}개)`);
+check(wallSamples.length > 3, '석벽 건너편을 클릭하면 이동한다');
+check(insideWall === 0, `이동 경로가 석벽을 통과하지 않는다(내부 표본 ${insideWall}개)`);
+
 console.log('\n[검증] 나무를 탭하지 않았으면 채집되지 않는다 (회귀)');
 // 사용자 보고: "나무 근처에 가면 나무가 채집되고 있다".
 // 원인 두 가지 — (1) 나무를 탭한 뒤 방향키로 목표를 취소하면 "도착하면 채집"
@@ -386,18 +484,50 @@ console.log('\n[검증] 가방 화면에서 골라 판매 (서버 정산)');
 const gameState = async (page) => page.evaluate(() => (window.afTest && window.afTest.state) || {});
 
 await focusGame(a.page);
-const treeForSell = await godotPoint(a.page, 'nearestGatherable');
-await a.page.mouse.click(treeForSell.x, treeForSell.y);
-await a.page.waitForTimeout(4000);           // 접근 + 자동 채집
-const stBefore = await gameState(a.page);
+// 채집물이 화면에 없으면 클릭할 수 없다 — 데이터에 있는 나무 좌표 근처로
+// 먼저 이동한다(앞 단계에서 A가 어디에 있든 이 검증이 성립하도록).
+// 판매를 검증하려면 팔 물건이 있어야 한다 — 준비 단계이므로 될 때까지 몇 번
+// 시도한다(판정 자체는 아래 벨/가방 비교로 한다).
+// 특정 좌표까지 걸어가려 했더니, 중간 이동용 클릭이 **대상 지향 로직**에 걸려
+// 근처 잡초 앞으로 끌려가곤 했다(기능은 의도대로 동작한 것이고 테스트가 그걸
+// 고려하지 않았다). 어느 채집물이든 상관없으니 가장 가까운 것을 바로 탭한다.
+let stBefore = await gameState(a.page);
+for (let i = 0; i < 4 && (stBefore.bagCount ?? 0) === 0; i++) {
+  const tapped = await tapWorldPoint(a.page, 'nearestGatherable');
+  if (!tapped) {
+    // 화면에 채집물이 없으면 한 칸 이동해 시야를 바꾼다.
+    await tapWorldPoint(a.page, i % 2 === 0 ? 'groundDown' : 'groundRight');
+    await a.page.waitForTimeout(1600);
+    continue;
+  }
+  await a.page.waitForTimeout(5000);         // 접근 + 자동 채집
+  stBefore = await gameState(a.page);
+  const pos = lastPos(tokenA);
+  console.log(`  (채집 시도 ${i + 1}: 위치=(${pos?.x ?? '?'},${pos?.z ?? '?'}) 가방=${stBefore.bagCount ?? 0} 마지막오류=${stBefore.lastError ?? '없음'})`);
+}
 check((stBefore.bagCount ?? 0) > 0, `판매 전 가방에 물건이 있다(${stBefore.bagCount ?? 0}개)`);
 
 await a.page.keyboard.press('KeyI');          // 가방 열기
 await a.page.waitForTimeout(700);
 await a.page.screenshot({ path: `${OUT}/mp-10-가방화면.png` });
-await tapGodot(a.page, 'invSell1');           // 첫 항목만 판매
-await a.page.waitForTimeout(1200);
+const stOpen = await gameState(a.page);
+check((stOpen.invOpen ?? 0) === 1, '가방 화면이 열렸다');
+// 가방이 비어 있으면 판매 항목이 없다 — 준비 실패를 예외가 아니라 실패로 남긴다.
+if (process.env.MP_DEBUG) {
+  const dbg = await a.page.evaluate(() => {
+    const s = window.afTest;
+    return { vw: s?.vw, vh: s?.vh, keys: Object.keys(s?.points || {}).filter((k) => k.startsWith('inv')),
+      invSell1: s?.points?.invSell1, invSellAll: s?.points?.invSellAll };
+  });
+  console.log('  [debug] 가방 훅:', JSON.stringify(dbg));
+}
+const sellClicked = (stBefore.bagCount ?? 0) > 0 ? await tapWorldPoint(a.page, 'invSell1') : false;
+check(sellClicked, '가방 목록에서 판매 버튼을 눌렀다');
+await a.page.waitForTimeout(1500);
 const stAfter = await gameState(a.page);
+if ((stAfter.bells ?? 0) === (stBefore.bells ?? 0)) {
+  console.log(`  [debug] 서버 마지막 오류=${stAfter.lastError ?? '(없음)'} invOpen=${stAfter.invOpen}`);
+}
 console.log(`  (벨 ${stBefore.bells ?? 0} → ${stAfter.bells ?? 0}, 가방 ${stBefore.bagCount ?? 0} → ${stAfter.bagCount ?? 0}개)`);
 check((stAfter.bells ?? 0) > (stBefore.bells ?? 0), `판매로 벨이 늘었다(${stBefore.bells ?? 0} → ${stAfter.bells ?? 0})`);
 check((stAfter.bagCount ?? 99) < (stBefore.bagCount ?? 0), '판 물건이 가방에서 빠졌다');

@@ -10,7 +10,7 @@
     "review:code": "node scripts/review.js --last",
     "review:docs": "node scripts/review.js --docs",
     "review:write": "zsh -l -c \"codex exec --sandbox workspace-write '요구사항과 구현 코드의 불일치 분석 및 자동 문서 갱신' < /dev/null\"",
-    "postinstall": "node scripts/install-git-hooks.js",
+    "postinstall": "node scripts/install-git-hooks.js && node scripts/godot-ignore.js",
     "hooks:install": "node scripts/install-git-hooks.js",
     "panel": "node scripts/cli-runner.js",
     "review:staged": "node scripts/review.js --staged",
@@ -19,7 +19,9 @@
     "test": "npm run test:server",
     "test:multiplayer": "node tests/browser-multiplayer.mjs",
     "capture:chat": "node tests/capture-chat-ui.mjs",
-    "test:mobile": "node tests/browser-mobile.mjs"
+    "test:mobile": "node tests/browser-mobile.mjs",
+    "godot:ignore": "node scripts/godot-ignore.js",
+    "test:insecure": "node tests/browser-insecure.mjs"
   },
   "keywords": [],
   "author": "",
