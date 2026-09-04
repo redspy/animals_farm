@@ -41,7 +41,7 @@ func _add_ground_shadow() -> void:
 	shadow.mesh = mesh
 	shadow.position = Vector3(0, 0.03, 0)
 	var m := StandardMaterial3D.new()
-	m.albedo_color = Color(0, 0, 0, 0.28)
+	m.albedo_color = Palette.color("world", "ground_shadow")
 	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	shadow.material_override = m

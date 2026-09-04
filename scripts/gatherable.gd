@@ -44,7 +44,7 @@ func _build_mesh() -> void:
 			trunk_mesh.radial_segments = 8
 			trunk.mesh = trunk_mesh
 			trunk.position = Vector3(0, 0.55, 0)
-			trunk.material_override = _material(Color(0.42, 0.28, 0.18))
+			trunk.material_override = _material(Palette.color("world", "tree_trunk"))
 			add_child(trunk)
 
 			_grown = Node3D.new()
@@ -57,7 +57,7 @@ func _build_mesh() -> void:
 			canopy_mesh.rings = 6
 			canopy.mesh = canopy_mesh
 			canopy.position = Vector3(0, 1.7, 0)
-			canopy.material_override = _material(Color(0.18, 0.52, 0.24))
+			canopy.material_override = _material(Palette.color("world", "tree_canopy"))
 			_grown.add_child(canopy)
 		"shell":
 			_grown = Node3D.new()
@@ -70,12 +70,14 @@ func _build_mesh() -> void:
 			shell_mesh.rings = 4
 			shell.mesh = shell_mesh
 			shell.position = Vector3(0, 0.1, 0)
-			shell.material_override = _material(Color(0.96, 0.87, 0.74))
+			shell.material_override = _material(Palette.color("world", "shell"))
 			_grown.add_child(shell)
 		_:
 			_grown = Node3D.new()
 			add_child(_grown)
 			# 잡초는 얇은 판 3장을 엇갈려 세워 풀 느낌만 낸다(그레이박스).
+			# 잡초 색은 3장이 같으므로 루프 밖에서 한 번만 읽는다.
+			var weed_color := Palette.color("world", "weed")
 			for i in 3:
 				var blade := MeshInstance3D.new()
 				var blade_mesh := BoxMesh.new()
@@ -83,7 +85,7 @@ func _build_mesh() -> void:
 				blade.mesh = blade_mesh
 				blade.position = Vector3(-0.12 + 0.12 * i, 0.21, 0.05 * i)
 				blade.rotation_degrees = Vector3(0, 0, -12 + 12 * i)
-				blade.material_override = _material(Color(0.36, 0.66, 0.30))
+				blade.material_override = _material(weed_color)
 				_grown.add_child(blade)
 
 func _material(color: Color) -> StandardMaterial3D:

@@ -59,6 +59,11 @@ echo "[verify] 세이브 마이그레이션 회귀 테스트..."
 # 건드리는 커밋은 반드시 이걸 통과해야 한다.
 run_godot "세이브 마이그레이션 테스트" --headless --path . --script tests/test_save_migration.gd
 
+echo "[verify] 팔레트 정합성 테스트..."
+# 코드가 참조하는 색 키가 data/palette.json에 실제로 있는지 — 없으면 화면이
+# 조용히 마젠타로 그려진다.
+run_godot "팔레트 테스트" --headless --path . --script tests/test_palette.gd
+
 echo "[verify] 메인 씬 헤드리스 실행(180프레임)..."
 run_godot "메인 씬 기동" --headless --path . --quit-after 180
 

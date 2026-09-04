@@ -81,6 +81,7 @@ npm run test:browser            # build/web를 서버에 올려 Chromium으로 �
 |---|---|
 | 리소스 임포트 / 메인 씬 헤드리스 기동 | ✅ 로컬 실측 통과(Godot 4.7.1 표준) |
 | 세이브 마이그레이션 회귀 테스트 | ✅ 로컬 실측 통과 |
+| 팔레트 정합성 테스트(코드 참조 키 20건 전수) | ✅ 로컬 실측 통과 |
 | 웹 export 산출물(index.html/.wasm/.pck) | ✅ 로컬 실측 생성 |
 | 정적 서버 MIME·COOP/COEP·`/healthz` | ✅ 로컬 실측 통과 |
 | 브라우저 기동·입력·채집·판매 1사이클 | ✅ 로컬 실측 통과(`npm run test:browser`, Chromium) |

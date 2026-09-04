@@ -89,7 +89,7 @@ func _build_environment() -> void:
 	sea_mesh.size = Vector2(_island_size.x * 3.0, _island_size.y * 3.0)
 	sea.mesh = sea_mesh
 	sea.position = Vector3(0, -0.35, 0)
-	sea.material_override = _flat_material(Color(0.13, 0.42, 0.66))
+	sea.material_override = _flat_material(Palette.color("world", "sea"))
 	add_child(sea)
 
 	# 섬: 살짝 두께가 있는 박스로 해서 측면이 보이게 — 완전 평면보다 입체감이 산다.
@@ -98,7 +98,7 @@ func _build_environment() -> void:
 	ground_mesh.size = Vector3(_island_size.x, 0.6, _island_size.y)
 	ground.mesh = ground_mesh
 	ground.position = Vector3(0, -0.3, 0)
-	ground.material_override = _flat_material(Color(0.40, 0.66, 0.32))
+	ground.material_override = _flat_material(Palette.color("world", "island_grass"))
 	add_child(ground)
 
 	# 모래 테두리: 섬보다 살짝 크고 낮은 박스.
@@ -107,7 +107,7 @@ func _build_environment() -> void:
 	sand_mesh.size = Vector3(_island_size.x + 1.6, 0.5, _island_size.y + 1.6)
 	sand.mesh = sand_mesh
 	sand.position = Vector3(0, -0.32, 0)
-	sand.material_override = _flat_material(Color(0.87, 0.79, 0.56))
+	sand.material_override = _flat_material(Palette.color("world", "sand"))
 	add_child(sand)
 
 	var light := DirectionalLight3D.new()
@@ -121,9 +121,9 @@ func _build_environment() -> void:
 	var env := WorldEnvironment.new()
 	var e := Environment.new()
 	e.background_mode = Environment.BG_COLOR
-	e.background_color = Color(0.60, 0.83, 0.94)
+	e.background_color = Palette.color("world", "sky")
 	e.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	e.ambient_light_color = Color(0.72, 0.78, 0.85)
+	e.ambient_light_color = Palette.color("world", "ambient")
 	e.ambient_light_energy = 0.35
 	env.environment = e
 	add_child(env)
@@ -152,18 +152,23 @@ func _build_hud() -> void:
 	var layer := CanvasLayer.new()
 	add_child(layer)
 
+	# 색은 data/palette.json이 단일 출처(Palette). 두 Label이 같은 색을 쓰므로
+	# 프레임마다가 아니라 여기서 한 번만 읽는다.
+	var text_color := Palette.color("ui", "hud_text")
+	var outline_color := Palette.color("ui", "hud_outline")
+
 	_hud = Label.new()
 	_hud.position = Vector2(16, 12)
-	_hud.add_theme_color_override("font_color", Color(1, 1, 1))
-	_hud.add_theme_color_override("font_outline_color", Color(0.08, 0.16, 0.12, 0.9))
+	_hud.add_theme_color_override("font_color", text_color)
+	_hud.add_theme_color_override("font_outline_color", outline_color)
 	_hud.add_theme_constant_override("outline_size", 4)
 	_hud.add_theme_constant_override("line_spacing", 4)
 	layer.add_child(_hud)
 
 	_toast = Label.new()
 	_toast.position = Vector2(16, 470)
-	_toast.add_theme_color_override("font_color", Color(1, 1, 1))
-	_toast.add_theme_color_override("font_outline_color", Color(0.08, 0.16, 0.12, 0.9))
+	_toast.add_theme_color_override("font_color", text_color)
+	_toast.add_theme_color_override("font_outline_color", outline_color)
 	_toast.add_theme_constant_override("outline_size", 4)
 	layer.add_child(_toast)
 

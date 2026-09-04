@@ -56,6 +56,8 @@
 
 ## 3. 밸런스·경제 데이터 규칙
 
+같은 원칙이 색에도 적용된다: 수치는 `data/items.json`·`data/gatherables.json`, 색은 `data/palette.json`이 단일 출처이며 코드는 읽어 쓰기만 한다(`Balance`, `Palette`).
+
 - 수치는 코드에 흩뿌리지 않고 `data/*.json`에만 둔다. 유효범위도 **주석이 아니라 구조화된 필드**로 데이터에 둔다 — `items.json`은 항목별 `price_range`, `gatherables.json`은 최상위 `limits`(예: `respawn_sec: [10, 86400]`)가 단일 출처다. 코드에 범위를 하드코딩하면 이 규칙이 깨진다(2026-09-03 Codex 감사 지적으로 `gatherable.gd`의 하드코딩 범위를 제거).
 - 코드는 데이터를 읽을 때 유효범위로 **항상 클램프하고 항상 경고를 남긴다**. 이 규칙은 `scripts/balance.gd`(`Balance.clamp_value`)가 단독 소유하며 가격·리스폰 양쪽이 같은 코드를 쓴다. 범위가 없거나 `[lo, hi]` 형식이 아니거나 `lo > hi`면 폴백 범위를 적용하고 경고한다 — 폴백은 **출처가 아니라 데이터가 깨졌을 때의 마지막 안전장치**다.
 - `data/items.json`에 없는 아이템은 0벨로 조용히 처리하지 않는다(판매 시 가방에서 사라져 플레이어 손실이 된다) — 판매 대상에서 제외하고 가방에 남기며 경고한다.
@@ -85,13 +87,15 @@
 |---|---|---|
 | 폰트 | Noto Sans KR(OFL) 임베드 — 웹은 시스템 폰트 폴백이 없어 한글이 두부(□)가 된다 | `project.godot`의 `gui/theme/custom_font` |
 | 캐릭터 스프라이트 규격 | 32×40 px, `pixel_size` 0.05 → 월드 1.6×2.0, 원점=발바닥 | `scripts/player_sprite.gd` 상단 const |
-| 캐릭터 팔레트 | 피부/셔츠/바지/신발 + 각 어두운 변형 | `scripts/player_sprite.gd`의 `COLOR_*` const |
+| 화면 색 전체(월드·UI·캐릭터) | 하늘/바다/섬/모래/나무/조개/잡초/그림자, HUD 글자·외곽선, 캐릭터 피부·셔츠·바지·신발·눈 | **`data/palette.json`** — `Palette.color(group, key)`로만 읽는다 |
 | 걷기 애니메이션 원칙 | 4방향 × 6프레임 10FPS, 다리 교차 4~5px, 팔은 반대 위상 3px, 몸 bob 2px(접지 프레임이 최저점) | `scripts/player_sprite.gd` |
+
+색 하나를 바꾸려면 `data/palette.json`만 고치면 된다. `tests/test_palette.gd`가 **`scripts/*.gd`를 스캔해 실제 호출된 `Palette.color(group, key)`를 추출**해 데이터와 대조하므로(키 목록을 테스트에 다시 적지 않는다), 코드가 없는 키를 참조하면 커밋 전에 걸린다. 팔레트에 없는 키를 요청하면 **마젠타(#ff00ff)로 그려지고 경고가 남는다** — 화면에 마젠타가 보이면 키 누락이라는 뜻이므로, 조용히 검은색으로 대체해 눈치채지 못하는 상황을 피한다.
 
 ### 미확정인 것
 
-- **월드/UI 색**: 섬·모래·바다·나무 색과 HUD 색이 `main.gd::_build_environment`, `gatherable.gd::_build_mesh`, `main.gd::_build_hud`에 각각 하드코딩돼 있다. 팔레트를 데이터/테마로 분리하는 것이 다음 단계다 — 지금은 색을 바꾸려면 세 파일을 찾아다녀야 한다.
 - 타일/오브젝트 스케일 규격, 애니메이션 원칙의 나머지(히트스톱 등), 아트 톤&매너.
+- 팔레트는 "현재 색이 무엇인지"의 단일 출처일 뿐, "왜 그 색인지"(톤&매너)는 아직 문서화되지 않았다.
 
 ### `agy` 비주얼 패리티 리뷰의 현재 상태: **부분 활성**
 

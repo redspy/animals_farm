@@ -8,15 +8,15 @@ const PIXEL_SIZE_CONST: float = 0.05
 const WALK_FPS: float = 10.0
 const BOB_OFFSET: int = 2
 
-# 캐릭터 색상
-const COLOR_SKIN: Color = Color(1.0, 0.85, 0.7)
-const COLOR_SKIN_DARK: Color = Color(0.8, 0.65, 0.5)
-const COLOR_SHIRT: Color = Color(0.2, 0.6, 0.8)
-const COLOR_PANTS: Color = Color(0.1, 0.2, 0.4)
-const COLOR_PANTS_DARK: Color = Color(0.05, 0.1, 0.2)
-const COLOR_SHOE: Color = Color(0.15, 0.1, 0.05)
-const COLOR_SHOE_DARK: Color = Color(0.05, 0.0, 0.0)
-const COLOR_EYE: Color = Color(0.0, 0.0, 0.0)
+# 캐릭터 색상 (Palette 캐시)
+var _c_skin: Color
+var _c_skin_dark: Color
+var _c_shirt: Color
+var _c_pants: Color
+var _c_pants_dark: Color
+var _c_shoe: Color
+var _c_shoe_dark: Color
+var _c_eye: Color
 
 # 캐릭터 크기 및 위치 기준점
 const HEAD_CENTER_X: int = 16
@@ -37,6 +37,16 @@ const LEG_BASE_Y: int = 29
 var _current_facing: String = "down"
 
 func _ready() -> void:
+	# 프레임 생성 전 한 번만 팔레트 색상 캐싱
+	_c_skin = Palette.color("character", "skin")
+	_c_skin_dark = Palette.color("character", "skin_dark")
+	_c_shirt = Palette.color("character", "shirt")
+	_c_pants = Palette.color("character", "pants")
+	_c_pants_dark = Palette.color("character", "pants_dark")
+	_c_shoe = Palette.color("character", "shoe")
+	_c_shoe_dark = Palette.color("character", "shoe_dark")
+	_c_eye = Palette.color("character", "eye")
+
 	# 3D 환경에서 2.5D 빌보드 스프라이트로 설정
 	# 카메라 피치에 영향받지 않고 Y축 회전만 카메라를 향하도록 변경 (캐릭터가 뒤로 눕는 현상 방지)
 	billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
@@ -182,24 +192,24 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 		var leg_r_y: int = leg_base_y + leg_r_y_lift
 		
 		# 뒤쪽 팔 (Left)
-		_draw_rect(img, Rect2i(back_arm_x, arm_base_y, 4, 7), COLOR_SKIN_DARK)
+		_draw_rect(img, Rect2i(back_arm_x, arm_base_y, 4, 7), _c_skin_dark)
 		# 뒤쪽 다리 (Left)
-		_draw_rect(img, Rect2i(back_leg_x, leg_l_y, 4, 7), COLOR_PANTS_DARK)
-		_draw_rect(img, Rect2i(back_leg_x, leg_l_y + 7, 5, 3), COLOR_SHOE_DARK)
+		_draw_rect(img, Rect2i(back_leg_x, leg_l_y, 4, 7), _c_pants_dark)
+		_draw_rect(img, Rect2i(back_leg_x, leg_l_y + 7, 5, 3), _c_shoe_dark)
 		
 		# 몸통
-		_draw_rect(img, Rect2i(BODY_RIGHT_X, BODY_Y + bob, BODY_RIGHT_W, BODY_H), COLOR_SHIRT)
+		_draw_rect(img, Rect2i(BODY_RIGHT_X, BODY_Y + bob, BODY_RIGHT_W, BODY_H), _c_shirt)
 		
 		# 머리 (크고 둥글게)
-		_draw_circle(img, Vector2i(HEAD_CENTER_X, HEAD_CENTER_Y + bob), HEAD_RADIUS, COLOR_SKIN)
-		_draw_rect(img, Rect2i(19, HEAD_CENTER_Y - 1 + bob, 2, 3), COLOR_EYE) # 눈
+		_draw_circle(img, Vector2i(HEAD_CENTER_X, HEAD_CENTER_Y + bob), HEAD_RADIUS, _c_skin)
+		_draw_rect(img, Rect2i(19, HEAD_CENTER_Y - 1 + bob, 2, 3), _c_eye) # 눈
 		
 		# 앞쪽 다리 (Right)
-		_draw_rect(img, Rect2i(front_leg_x, leg_r_y, 4, 7), COLOR_PANTS)
-		_draw_rect(img, Rect2i(front_leg_x, leg_r_y + 7, 5, 3), COLOR_SHOE)
+		_draw_rect(img, Rect2i(front_leg_x, leg_r_y, 4, 7), _c_pants)
+		_draw_rect(img, Rect2i(front_leg_x, leg_r_y + 7, 5, 3), _c_shoe)
 		
 		# 앞쪽 팔 (Right)
-		_draw_rect(img, Rect2i(front_arm_x, arm_base_y, 4, 7), COLOR_SKIN)
+		_draw_rect(img, Rect2i(front_arm_x, arm_base_y, 4, 7), _c_skin)
 		
 	else: # Up or Down view
 		var leg_l_x: int = 11 - leg_l_spread
@@ -210,24 +220,24 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 		var leg_r_y: int = leg_base_y + leg_r_y_lift
 		
 		# 다리
-		_draw_rect(img, Rect2i(leg_l_x, leg_l_y, 4, 7), COLOR_PANTS)
-		_draw_rect(img, Rect2i(leg_l_x, leg_l_y + 7, 4, 3), COLOR_SHOE)
-		_draw_rect(img, Rect2i(leg_r_x, leg_r_y, 4, 7), COLOR_PANTS)
-		_draw_rect(img, Rect2i(leg_r_x, leg_r_y + 7, 4, 3), COLOR_SHOE)
+		_draw_rect(img, Rect2i(leg_l_x, leg_l_y, 4, 7), _c_pants)
+		_draw_rect(img, Rect2i(leg_l_x, leg_l_y + 7, 4, 3), _c_shoe)
+		_draw_rect(img, Rect2i(leg_r_x, leg_r_y, 4, 7), _c_pants)
+		_draw_rect(img, Rect2i(leg_r_x, leg_r_y + 7, 4, 3), _c_shoe)
 		
 		# 팔
-		_draw_rect(img, Rect2i(7, arm_l_y, 4, 7), COLOR_SKIN)
-		_draw_rect(img, Rect2i(21, arm_r_y, 4, 7), COLOR_SKIN)
+		_draw_rect(img, Rect2i(7, arm_l_y, 4, 7), _c_skin)
+		_draw_rect(img, Rect2i(21, arm_r_y, 4, 7), _c_skin)
 		
 		# 몸통
-		_draw_rect(img, Rect2i(BODY_X, BODY_Y + bob, BODY_W, BODY_H), COLOR_SHIRT)
+		_draw_rect(img, Rect2i(BODY_X, BODY_Y + bob, BODY_W, BODY_H), _c_shirt)
 		
 		# 머리
-		_draw_circle(img, Vector2i(HEAD_CENTER_X, HEAD_CENTER_Y + bob), HEAD_RADIUS, COLOR_SKIN)
+		_draw_circle(img, Vector2i(HEAD_CENTER_X, HEAD_CENTER_Y + bob), HEAD_RADIUS, _c_skin)
 		
 		if dir.y == 1: # Down view (눈 표시)
-			_draw_rect(img, Rect2i(12, HEAD_CENTER_Y - 1 + bob, 2, 3), COLOR_EYE)
-			_draw_rect(img, Rect2i(18, HEAD_CENTER_Y - 1 + bob, 2, 3), COLOR_EYE)
+			_draw_rect(img, Rect2i(12, HEAD_CENTER_Y - 1 + bob, 2, 3), _c_eye)
+			_draw_rect(img, Rect2i(18, HEAD_CENTER_Y - 1 + bob, 2, 3), _c_eye)
 			
 	# 왼쪽을 볼 경우 전체 이미지를 좌우 반전
 	if flip:

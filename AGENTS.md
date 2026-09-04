@@ -17,11 +17,11 @@
 project.godot        Godot 프로젝트 (GL Compatibility 고정)
 export_presets.cfg   Web export 프리셋 (nothreads)
 scenes/main.tscn     진입 씬 — 나머지 노드는 scripts/main.gd가 코드로 조립
-tests/               헤드리스 테스트 + 픽스처 (세이브 마이그레이션 회귀, 브라우저 스모크)
+tests/               헤드리스 테스트 + 픽스처 (세이브 마이그레이션 회귀, 팔레트 정합성, 브라우저 스모크)
 assets/fonts/        임베드 한글 폰트 (Noto Sans KR, OFL — 웹은 시스템 폰트 폴백이 없음)
-scripts/*.gd         게임 코드 (main / player / player_sprite / gatherable / save_manager / game_clock / balance)
+scripts/*.gd         게임 코드 (main / player / player_sprite / gatherable / save_manager / game_clock / balance / palette)
                      ※ player_sprite.gd는 Gemini CLI(agy)가 구현한 파일 — 걷기 애니메이션 담당
-data/*.json          밸런스·배치 데이터 (유효범위 포함, 코드가 클램프)
+data/*.json          밸런스·배치 데이터(유효범위 포함, 코드가 클램프) + palette.json(화면 색 단일 출처)
 server/index.js      웹 빌드 정적 서버 (의존성 0개, COOP/COEP + wasm MIME + /healthz)
 scripts/*.js         개발 프로세스 툴링 (텔레그램, CLI 러너, 리뷰 게이트)
 deploy.bat           배포 서버에서 실행되는 배포 스크립트
