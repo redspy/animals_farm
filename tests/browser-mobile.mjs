@@ -300,6 +300,32 @@ const afterSubmit = await page.evaluate(() => {
 check(afterSubmit === 'none', '전송 후 입력창이 닫힌다');
 await page.screenshot({ path: `${OUT}/14-채팅-전송후.png` });
 
+// --- 소프트 키보드가 올라올 때 카메라 보정 ---
+console.log('\n[검증] 키보드가 화면을 덮으면 캐릭터가 보이는 영역 중앙으로 올라온다');
+// 실제 소프트 키보드는 에뮬레이션할 수 없다(Playwright에 그 기능이 없다).
+// 그래서 게임이 읽는 값을 강제로 주입해(window.afForceKeyboardCover) 카메라
+// 보정이 실제로 적용되는지 본다 — 폰에서 보정이 안 먹었다는 보고를 받고
+// **검증 경로가 없다는 것**이 문제였다(2026-09-04).
+const playerScreenY = async () => (await godotPoint(page, 'playerScreen')).y;
+const beforeKeyboard = await playerScreenY();
+await page.evaluate(() => { window.afForceKeyboardCover = 0.4; });
+await tapGodot(page, 'chatButton', { touch: true });   // 채팅 열기 → 폴링 시작
+await page.waitForTimeout(1200);
+const afterKeyboard = await playerScreenY();
+const coverState = await page.evaluate(() => (window.afTest && window.afTest.state && window.afTest.state.keyboardCover) ?? null);
+console.log(`  (가림 비율 인식=${coverState}, 캐릭터 화면 Y ${beforeKeyboard.toFixed(0)} → ${afterKeyboard.toFixed(0)})`);
+check(coverState !== null && coverState > 0.1, `게임이 가림 비율을 인식한다(${coverState})`);
+check(afterKeyboard < beforeKeyboard - 20, `캐릭터가 화면에서 위로 올라간다(${beforeKeyboard.toFixed(0)} → ${afterKeyboard.toFixed(0)})`);
+await page.screenshot({ path: `${OUT}/16-키보드-카메라보정.png` });
+
+// 원상 복구: 키보드가 내려가면 보정도 풀려야 한다.
+await page.evaluate(() => { window.afForceKeyboardCover = 0; });
+await page.keyboard.press('Escape');
+await page.waitForTimeout(1500);
+const restored = await playerScreenY();
+check(Math.abs(restored - beforeKeyboard) < 30,
+  `키보드가 내려가면 보정이 풀린다(${restored.toFixed(0)} ≈ ${beforeKeyboard.toFixed(0)})`);
+
 // --- 가로 모드 전환 ---
 console.log('\n[검증] 가로 모드 회전');
 await page.setViewportSize({ width: size.height, height: size.width });

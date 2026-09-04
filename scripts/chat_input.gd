@@ -82,19 +82,40 @@ func _process(delta: float) -> void:
 		return
 	_cover_timer = 0.0
 	var ratio := _read_keyboard_cover()
+	_reposition_for_keyboard()
 	if absf(ratio - _cover_ratio) > 0.02:
 		_cover_ratio = ratio
 		keyboard_cover_changed.emit(ratio)
 
-## visualViewport로 "지금 실제로 보이는 높이"를 읽어 가려진 비율을 구한다.
-## window.innerHeight는 키보드가 올라와도 그대로라 이 용도로 못 쓴다.
+## 소프트 키보드가 **화면 아래를 덮은 비율**을 구한다.
+##
+## 왜 이렇게 복잡한가: 브라우저마다 키보드가 뷰포트를 다르게 바꾼다.
+## - iOS Safari: 레이아웃 뷰포트는 그대로, `visualViewport.height`만 줄어든다.
+## - Chrome Android: 설정(interactive-widget)에 따라 **레이아웃까지 줄어든다** —
+##   그러면 `window.innerHeight`도 함께 줄어 "1 - vv.height/innerHeight"가 0이
+##   되고, 실제로는 가려졌는데 0으로 계산된다(폰에서 보정이 안 먹은 원인).
+##
+## 그래서 기준을 `documentElement.clientHeight`(레이아웃 뷰포트)로 잡고,
+## 스크롤된 만큼(`offsetTop`)까지 함께 고려한다. 두 값이 같이 줄어드는
+## 브라우저에서는 캔버스 자체가 작아지므로 보정이 필요 없고, 그 경우는
+## world.gd가 뷰포트 축소분을 빼서 이중 보정을 막는다.
+##
+## `window.afForceKeyboardCover`가 있으면 그 값을 쓴다 — E2E가 키보드를 띄울
+## 수 없어서(에뮬레이션 불가) 이 경로로 검증한다.
 func _read_keyboard_cover() -> float:
 	var raw: Variant = JavaScriptBridge.eval("""
 		(function(){
+			if (typeof window.afForceKeyboardCover === 'number') {
+				return window.afForceKeyboardCover;
+			}
 			var vv = window.visualViewport;
-			if (!vv || !window.innerHeight) return 0;
-			var hidden = 1 - (vv.height / window.innerHeight);
-			return hidden > 0 ? hidden : 0;
+			if (!vv) return 0;
+			var layout = (document.documentElement && document.documentElement.clientHeight)
+				|| window.innerHeight || 0;
+			if (!layout) return 0;
+			var hidden = layout - (vv.height + vv.offsetTop);
+			var ratio = hidden / layout;
+			return ratio > 0 ? ratio : 0;
 		})();
 	""", true)
 	if raw == null:
@@ -103,6 +124,21 @@ func _read_keyboard_cover() -> float:
 	if ratio < COVER_MIN:
 		return 0.0
 	return clampf(ratio, 0.0, 0.8)
+
+## 입력창이 키보드에 가리지 않게 위로 올린다. position:fixed + bottom만으로는
+## iOS에서 키보드 뒤에 남는다.
+func _reposition_for_keyboard() -> void:
+	JavaScriptBridge.eval("""
+		(function(){
+			var el = document.getElementById('%s');
+			var vv = window.visualViewport;
+			if (!el || !vv) return;
+			var layout = (document.documentElement && document.documentElement.clientHeight)
+				|| window.innerHeight || 0;
+			var hidden = Math.max(0, layout - (vv.height + vv.offsetTop));
+			el.style.bottom = (hidden + 12) + 'px';
+		})();
+	""" % DOM_ID, true)
 
 func close() -> void:
 	if not _open:

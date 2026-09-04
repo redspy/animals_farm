@@ -116,6 +116,10 @@ var _was_moving := false
 ## 화면 아래쪽이 소프트 키보드에 가려진 비율(0~0.8). 폰에서 키보드가 올라오면
 ## 캐릭터가 가려진 영역에 들어가 안 보이므로 카메라를 그만큼 올린다.
 var _keyboard_cover := 0.0
+## 채팅을 열 때의 뷰포트 높이. 브라우저가 키보드에 맞춰 **캔버스까지 줄이는**
+## 경우에는 이미 보이는 영역이 곧 캔버스이므로 추가 보정이 필요 없다 —
+## 그 축소분을 빼서 이중 보정을 막는다.
+var _viewport_h_on_chat_open := 0.0
 ## 서버가 끊긴 동안 채집한 것. 다시 붙으면 서버로 흘려보낸다 — 안 하면 서버의
 ## welcome이 로컬 가방을 덮어써 오프라인 채집이 사라진다(docs/protocol.md §4).
 var _pending_gathers: Dictionary = {}
@@ -756,8 +760,11 @@ func _on_inventory_drop(item_id: String) -> void:
 	_net.send_drop(item_id, _player.position)
 
 func _open_chat_input() -> void:
-	if _chat != null:
-		_chat.open()
+	if _chat == null:
+		return
+	var vp := get_viewport()
+	_viewport_h_on_chat_open = vp.get_visible_rect().size.y if vp != null else 0.0
+	_chat.open()
 
 func _on_chat_submitted(text: String) -> void:
 	if _net == null or not _net.connected:
@@ -1014,7 +1021,26 @@ func _on_rename(token: String, new_name: String) -> void:
 ## 소프트 키보드가 화면을 덮은 만큼 카메라를 올려, 캐릭터가 **보이는 영역의
 ## 중앙**에 오게 한다(사용자 요청).
 func _on_keyboard_cover_changed(ratio: float) -> void:
-	_keyboard_cover = ratio
+	var effective := ratio
+	var vp := get_viewport()
+	if vp != null and _viewport_h_on_chat_open > 1.0:
+		var now_h := vp.get_visible_rect().size.y
+		# 캔버스가 이미 줄어든 비율만큼은 브라우저가 처리한 것이다.
+		var shrunk := clampf(1.0 - now_h / _viewport_h_on_chat_open, 0.0, 0.8)
+		effective = maxf(ratio - shrunk, 0.0)
+	_keyboard_cover = effective
+	if _hooks != null:
+		_hooks.set_state("keyboardCover", snappedf(effective, 0.01))
+	# 폰에서 "보정이 안 먹는다"를 진단할 방법이 없어서 화면에 값을 띄운다.
+	# 0.00이면 브라우저가 가림을 알려주지 않는 것이고, 값이 큰데도 캐릭터가
+	# 그대로면 카메라 쪽 문제다 — 어느 쪽인지 폰만 보고도 알 수 있다.
+	if _net_label != null:
+		if effective > 0.001:
+			_net_label.text = "키보드 가림 %d%% (보정 중)" % int(round(effective * 100.0))
+		elif ratio > 0.001:
+			_net_label.text = "키보드 가림 %d%% (캔버스가 이미 줄어 보정 불필요)" % int(round(ratio * 100.0))
+		elif _net != null and _net.connected:
+			_net_label.text = "서버 연결됨"
 
 ## 조이스틱 on/off는 기기별 취향이라 세이브 전역 설정으로 남긴다.
 func _on_joystick_toggled(enabled: bool) -> void:
@@ -1313,6 +1339,10 @@ func _publish_test_points() -> void:
 	# 플레이어 기준 네 방향의 지면 지점. E2E가 "그 방향으로 조금 이동"을 지시할 수
 	# 있게 한다 — 키보드 이동은 장애물을 우회하지 않아(설계) 바위 앞에서 멈추므로,
 	# 테스트도 탭 이동으로 접근해야 한다(2026-09-04 실측).
+	# 카메라 보정이 실제로 적용됐는지 보려면 캐릭터의 **화면 위치**가 필요하다.
+	_hooks.track_dynamic("playerScreen", func() -> Vector2:
+		return _camera.unproject_position(_player.position + Vector3(0, 1.0, 0))
+	)
 	_hooks.track_dynamic("groundRight", func() -> Vector2:
 		return _camera.unproject_position(_player.position + Vector3(3.0, 0, 0))
 	)
