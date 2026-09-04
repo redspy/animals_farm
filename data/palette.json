@@ -31,9 +31,12 @@
     "move_marker": "#ffffff73",
     "roster_bg": "#12261fb3",
     "roster_me": "#ffe9a8",
-    "bubble_bg": "#ffffffef",
-    "bubble_text": "#1b2b22",
-    "bubble_border": "#00000026"
+    "bubble_bg": "#fffdf7f7",
+    "bubble_text": "#4a3b45",
+    "bubble_border": "#e8a7b8",
+    "emote_glow": "#ffffffcc",
+    "resync_dim": "#0d1a1466",
+    "resync_dim_web": "#0d1a1426"
   },
   "character": {
     "skin": "#ffd9b3",

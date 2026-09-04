@@ -7,46 +7,52 @@ class_name AvatarExtras
 ## 검증할 수 없다(컨셉 요구사항).
 
 const NAME_HEIGHT := 2.35
-const BUBBLE_HEIGHT := 2.95
+const BUBBLE_HEIGHT := 3.05
 const NAME_FONT_SIZE := 28
 const BUBBLE_FONT_SIZE := 30
-## 3D 공간에서의 글자 크기. 0.0035로는 화면에서 6px 정도라 실측으로 읽을 수
-## 없었다(2026-09-04 2탭 스크린샷) — 카메라(직교 size 9.5, 540px)에서 약 16px이
-## 되도록 키운다.
+## 3D 공간에서의 글자 크기. 카메라(직교 size 9.5, 540px)에서 약 16px이 되도록.
 const LABEL_PIXEL_SIZE := 0.010
 const CHAT_SHOW_SEC := 5.0
-const EMOTE_SHOW_SEC := 2.5
 const CHAT_WRAP_WIDTH := 420.0
-## 말풍선 배경 여백(월드 단위). 글자 폭을 재서 이만큼 키운 판을 뒤에 깐다.
-const BUBBLE_PADDING := Vector2(0.22, 0.14)
-## 글자 폭을 재지 못할 때 쓰는 배경 크기(월드 단위).
-const BUBBLE_FALLBACK := Vector2(1.6, 0.5)
+## 말풍선 배경 여백(px). 글자 폭을 재서 이만큼 키운 텍스처를 만든다.
+const BUBBLE_PAD := Vector2(34, 26)
+
+## 감정 표현: 큰 이모지가 **공중으로 떠오르며 사라진다**(사용자 요청).
+const EMOTE_FONT_SIZE := 110
+const EMOTE_PIXEL_SIZE := 0.012
+const EMOTE_START_HEIGHT := 2.5
+const EMOTE_RISE := 1.9
+const EMOTE_DURATION := 1.5
+## 떠오르는 동안의 좌우 흔들림(월드 단위) — 곧게만 올라가면 딱딱하다.
+const EMOTE_SWAY := 0.22
 
 var _name_label: Label3D
 var _bubble: Label3D
-## 말풍선 배경(흰 판) + 아래쪽 꼬리. 말하는 느낌을 주려면 글자만으로는 부족하고,
-## 배경 없이는 밝은 지형 위에서 글자가 잘 안 읽힌다(사용자 요청).
-var _bubble_bg: MeshInstance3D
-var _bubble_tail: MeshInstance3D
+## 말풍선 배경. QuadMesh(각진 판) 대신 **둥근 모서리·테두리·꼬리를 그린 텍스처**를
+## 쓴다(사용자 요청: 더 귀여운 디자인).
+var _bubble_bg: Sprite3D
 var _bubble_timer := 0.0
-## _ready 이전에 set_name_text가 불릴 수 있어(add_child 직후 호출) 값을 들고 있다가
-## 라벨이 만들어질 때 적용한다 — 예전엔 ready 시그널에 연결해서 세팅했는데,
-## 이미 트리에 붙은 노드는 ready가 즉시 지나가 내 이름표만 비어 있었다(실측).
+## _ready 이전에 호출될 수 있어(add_child 직후) 값을 들고 있다가 적용한다.
 var _pending_name := ""
 var _pending_bubble := ""
 var _pending_bubble_sec := 0.0
+var _pending_emote := ""
 
 func _ready() -> void:
 	_name_label = _make_label(NAME_HEIGHT, NAME_FONT_SIZE, Palette.color("ui", "hud_text"))
 	add_child(_name_label)
-	# 배경을 먼저 만들고 글자를 그 앞에 둔다(render_priority로 순서를 고정).
-	_bubble_bg = _make_bubble_quad(Palette.color("ui", "bubble_bg"), 0)
+
+	_bubble_bg = Sprite3D.new()
+	_bubble_bg.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	_bubble_bg.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR
+	_bubble_bg.pixel_size = LABEL_PIXEL_SIZE
+	_bubble_bg.no_depth_test = true
+	_bubble_bg.render_priority = 1
+	_bubble_bg.visible = false
 	add_child(_bubble_bg)
-	_bubble_tail = _make_bubble_quad(Palette.color("ui", "bubble_bg"), 0)
-	add_child(_bubble_tail)
 
 	_bubble = _make_label(BUBBLE_HEIGHT, BUBBLE_FONT_SIZE, Palette.color("ui", "bubble_text"))
-	_bubble.outline_size = 0            # 흰 배경 위에서는 외곽선이 지저분하다
+	_bubble.outline_size = 0            # 밝은 배경 위에서는 외곽선이 지저분하다
 	_bubble.render_priority = 2
 	_bubble.visible = false
 	add_child(_bubble)
@@ -55,6 +61,9 @@ func _ready() -> void:
 	if not _pending_bubble.is_empty():
 		_show_bubble(_pending_bubble, _pending_bubble_sec)
 		_pending_bubble = ""
+	if not _pending_emote.is_empty():
+		show_emote(_pending_emote)
+		_pending_emote = ""
 
 func _make_label(height: float, font_size: int, color: Color) -> Label3D:
 	var l := Label3D.new()
@@ -74,50 +83,24 @@ func _make_label(height: float, font_size: int, color: Color) -> Label3D:
 	l.render_priority = 1
 	return l
 
-## 말풍선 배경으로 쓰는 흰 판. 빌보드를 글자와 같은 방식으로 두어야 같이 돈다.
-func _make_bubble_quad(color: Color, priority: int) -> MeshInstance3D:
-	var mesh := MeshInstance3D.new()
-	var quad := QuadMesh.new()
-	quad.size = BUBBLE_FALLBACK
-	mesh.mesh = quad
-	var m := StandardMaterial3D.new()
-	m.albedo_color = color
-	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
-	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	m.billboard_mode = BaseMaterial3D.BILLBOARD_FIXED_Y
-	# 나무 뒤에 가려 말풍선이 안 보이면 대화가 끊긴 것처럼 느껴진다.
-	m.no_depth_test = true
-	m.cull_mode = BaseMaterial3D.CULL_DISABLED
-	mesh.material_override = m
-	mesh.render_priority = priority
-	mesh.visible = false
-	mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	return mesh
-
-## 글자 크기에 맞춰 배경 판과 꼬리를 배치한다.
+## 글자 크기를 재서 그 크기의 둥근 말풍선 텍스처를 만들어 붙인다.
 func _fit_bubble_background(text: String) -> void:
 	if _bubble_bg == null or _bubble == null:
 		return
-	var size := BUBBLE_FALLBACK
 	var font: Font = _bubble.font if _bubble.font != null else ThemeDB.get_default_theme().default_font
+	var px := Vector2(180, 40)
 	if font != null:
-		# Label3D는 픽셀 크기 × pixel_size로 월드 크기가 정해진다. 줄바꿈을 고려해
-		# 폭은 wrap 한도로 자르고, 높이는 줄 수로 계산한다.
-		var px := font.get_multiline_string_size(
+		px = font.get_multiline_string_size(
 			text, HORIZONTAL_ALIGNMENT_CENTER, CHAT_WRAP_WIDTH, BUBBLE_FONT_SIZE
 		)
-		size = Vector2(
-			minf(px.x, CHAT_WRAP_WIDTH) * LABEL_PIXEL_SIZE,
-			px.y * LABEL_PIXEL_SIZE
-		)
-	size += BUBBLE_PADDING * 2.0
-	(_bubble_bg.mesh as QuadMesh).size = size
-	_bubble_bg.position = Vector3(0, BUBBLE_HEIGHT, -0.01)
-	# 꼬리: 작은 정사각형을 아래로 붙여 말하는 방향을 가리킨다.
-	var tail := size.y * 0.42
-	(_bubble_tail.mesh as QuadMesh).size = Vector2(tail, tail)
-	_bubble_tail.position = Vector3(0, BUBBLE_HEIGHT - size.y * 0.5 - tail * 0.35, -0.011)
-	_bubble_tail.rotation_degrees = Vector3(0, 0, 45)
+	var w := int(round(minf(px.x, CHAT_WRAP_WIDTH) + BUBBLE_PAD.x * 2.0))
+	var h := int(round(px.y + BUBBLE_PAD.y * 2.0)) + BubbleTexture.TAIL_H
+	_bubble_bg.texture = BubbleTexture.get_texture(
+		w, h, Palette.color("ui", "bubble_bg"), Palette.color("ui", "bubble_border")
+	)
+	# 텍스처의 꼬리가 아래를 향하므로, 글자는 몸통 중앙에 오도록 배경을 살짝 내린다.
+	var tail_world := float(BubbleTexture.TAIL_H) * LABEL_PIXEL_SIZE
+	_bubble_bg.position = Vector3(0, BUBBLE_HEIGHT - tail_world * 0.5, -0.01)
 
 func set_name_text(text: String) -> void:
 	_pending_name = text
@@ -127,9 +110,38 @@ func set_name_text(text: String) -> void:
 func show_chat(text: String) -> void:
 	_show_bubble(text, CHAT_SHOW_SEC)
 
+## 감정 표현: 큰 이모지를 만들어 **공중으로 떠오르며 사라지게** 한다.
+## 말풍선을 재사용하지 않는 이유: 채팅 중에 감정을 표현하면 말이 지워지고,
+## 크기도 말풍선에 갇혀 작게 보인다.
 func show_emote(glyph: String) -> void:
-	# 이모티콘은 글리프 하나를 크게 띄운다(data/emotes.json의 glyph).
-	_show_bubble(glyph, EMOTE_SHOW_SEC)
+	if not is_inside_tree():
+		_pending_emote = glyph
+		return
+	var label := Label3D.new()
+	label.text = glyph
+	label.font_size = EMOTE_FONT_SIZE
+	label.pixel_size = EMOTE_PIXEL_SIZE
+	label.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
+	label.no_depth_test = true
+	label.render_priority = 3
+	label.outline_size = 12
+	label.outline_modulate = Palette.color("ui", "emote_glow")
+	label.position = Vector3(0, EMOTE_START_HEIGHT, 0)
+	add_child(label)
+
+	# 떠오르며 커지고 흐려진다. 좌우로 살짝 흔들어 생기를 준다.
+	var sway := EMOTE_SWAY if randf() < 0.5 else -EMOTE_SWAY
+	var tween := create_tween()
+	tween.set_parallel(true)
+	tween.tween_property(label, "position",
+		Vector3(sway, EMOTE_START_HEIGHT + EMOTE_RISE, 0), EMOTE_DURATION) \
+		.set_ease(Tween.EASE_OUT).set_trans(Tween.TRANS_CUBIC)
+	tween.tween_property(label, "scale", Vector3(1.35, 1.35, 1.35), EMOTE_DURATION) \
+		.set_ease(Tween.EASE_OUT)
+	# 마지막 40%에서만 사라지기 시작해, 뜨자마자 흐려지지 않게 한다.
+	tween.tween_property(label, "modulate:a", 0.0, EMOTE_DURATION * 0.4) \
+		.set_delay(EMOTE_DURATION * 0.6)
+	tween.chain().tween_callback(label.queue_free)
 
 func _show_bubble(text: String, seconds: float) -> void:
 	if _bubble == null:
@@ -142,8 +154,6 @@ func _show_bubble(text: String, seconds: float) -> void:
 	_bubble.visible = true
 	if _bubble_bg != null:
 		_bubble_bg.visible = true
-	if _bubble_tail != null:
-		_bubble_tail.visible = true
 	_bubble_timer = seconds
 
 func _process(delta: float) -> void:
@@ -155,5 +165,3 @@ func _process(delta: float) -> void:
 		_bubble.text = ""
 		if _bubble_bg != null:
 			_bubble_bg.visible = false
-		if _bubble_tail != null:
-			_bubble_tail.visible = false

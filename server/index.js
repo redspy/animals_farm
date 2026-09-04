@@ -295,6 +295,25 @@ function handle(ws, msg) {
       broadcast({ t: 'gathered', ...r.gathered, by: ws.token });
       break;
     }
+    case 'resync': {
+      // 다른 창에 갔다 돌아오면 브라우저가 프레임을 멈춰 클라이언트 상태가
+      // 굳는다(내 위치·남의 위치·월드 아이템·채집물 재생 시각 전부). 재연결
+      // 없이 **현재 진실을 다시 받아** 맞추는 경로다.
+      const me = world.players.get(ws.token);
+      if (!me) { sendTo(ws, { t: 'error', code: 'not_joined', message: '먼저 join이 필요합니다' }); break; }
+      sendTo(ws, {
+        t: 'welcome',
+        you: {
+          token: me.token, name: me.name, preset: me.preset,
+          x: me.x, z: me.z, dir: me.dir,
+          inventory: me.inventory, bells: me.bells,
+        },
+        world: { size_x: world.sizeX, size_z: world.sizeZ },
+        resync: true,
+      });
+      sendTo(ws, { t: 'snapshot', ...world.snapshot() });
+      break;
+    }
     case 'sell': {
       const r = world.sell(ws.token, msg.item ?? null);
       if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }

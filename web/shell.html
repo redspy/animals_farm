@@ -127,6 +127,24 @@ body {
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;
 
+// [animals_farm 수정] **실제로 탭/앱을 떠났다 돌아온 경우만** 카운트한다.
+// 게임은 이 카운터가 늘어날 때 서버와 재동기화한다. 창 포커스(blur/focus)로
+// 판단하면 채팅 입력창을 닫는 것만으로도 재동기화가 걸려, 방금 지시한 이동이
+// 서버 위치로 되돌려졌다(2026-09-05 실측).
+(function () {
+	window.afHiddenAt = 0;
+	window.afResumeToken = 0;
+	const MIN_AWAY_MS = 800;   // 짧은 포커스 이동은 무시
+	document.addEventListener('visibilitychange', function () {
+		if (document.hidden) {
+			window.afHiddenAt = Date.now();
+		} else if (window.afHiddenAt && Date.now() - window.afHiddenAt >= MIN_AWAY_MS) {
+			window.afHiddenAt = 0;
+			window.afResumeToken += 1;
+		}
+	});
+})();
+
 // [animals_farm 수정] 입력창에 포커스가 가면 브라우저가 그걸 보이게 하려고
 // 페이지를 스크롤한다. 캔버스가 화면에 고정돼 있어야 HUD가 잘리지 않으므로,
 // 스크롤이 생기면 즉시 되돌린다.

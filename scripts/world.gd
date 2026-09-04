@@ -120,6 +120,22 @@ var _keyboard_cover := 0.0
 ## 경우에는 이미 보이는 영역이 곧 캔버스이므로 추가 보정이 필요 없다 —
 ## 그 축소분을 빼서 이중 보정을 막는다.
 var _viewport_h_on_chat_open := 0.0
+## 창 복귀 후 재동기화 오버레이(살짝 블러 + 진행 표시).
+var _resync: ResyncOverlay
+## 재동기화 중 서버가 알려준 목표 위치. 여기에 닿으면 정상 플레이로 돌아간다.
+var _resync_target: Variant = null
+## 월드 탭이 게임에 도달한 횟수(E2E 진단용).
+var _hooks_tap_count := 0
+## 창을 떠난 시각(ms). 짧은 포커스 이동으로 재동기화가 걸리지 않게 쓰인다.
+var _away_since := 0
+## 이 시간 이상 떠나 있었을 때만 재동기화한다.
+const AWAY_MIN_MS := 800
+## 웹 복귀 감지용 카운터를 확인하는 주기(초).
+const RESUME_POLL_INTERVAL := 0.5
+var _resume_timer := 0.0
+var _resume_token := -1
+## 재동기화에서 "위치가 맞았다"고 볼 거리(월드 단위).
+const RESYNC_TOLERANCE := 0.35
 ## 서버가 끊긴 동안 채집한 것. 다시 붙으면 서버로 흘려보낸다 — 안 하면 서버의
 ## welcome이 로컬 가방을 덮어써 오프라인 채집이 사라진다(docs/protocol.md §4).
 var _pending_gathers: Dictionary = {}
@@ -182,6 +198,8 @@ func _build_world() -> void:
 
 	_build_hud()
 	_build_marker()
+	_resync = ResyncOverlay.new()
+	add_child(_resync)
 	_player.arrived.connect(_on_player_arrived)
 	_player.move_cancelled.connect(_on_move_cancelled)
 	_update_camera(1.0)
@@ -642,6 +660,26 @@ func _show_toast(text: String) -> void:
 	_toast.text = text
 	_toast_timer = 2.5
 
+## 채팅 입력창이 열려 있는 동안의 월드 클릭만 여기서 가로챈다.
+##
+## 왜 _unhandled_input이 아닌가: 웹에서는 채팅 입력이 캔버스 밖 DOM 요소라
+## 포커스가 그쪽에 있고, 그 상태의 클릭은 _unhandled_input까지 오지 않았다
+## (실측: 클릭해도 입력창이 닫히지 않고 이동도 없었다). _input은 UI 처리보다
+## 먼저 받으므로 확실히 잡힌다.
+func _input(event: InputEvent) -> void:
+	if _chat == null or not _chat.is_open():
+		return
+	if not (event is InputEventMouseButton):
+		return
+	var click := event as InputEventMouseButton
+	if not click.pressed or click.button_index != MOUSE_BUTTON_LEFT:
+		return
+	# 월드를 누르면 입력창을 닫고 그 지점으로 이동한다(사용자 요청) —
+	# 채팅을 켜 둔 채 이동하려면 매번 Esc를 눌러야 했다.
+	_chat.close()
+	_on_world_tapped(click.position)
+	get_viewport().set_input_as_handled()
+
 func _unhandled_input(event: InputEvent) -> void:
 	# 채팅 입력 중이거나 시트가 열려 있으면 게임 조작을 받지 않는다 —
 	# 안 그러면 "s"를 치는 순간 물건이 팔리고, 시트 뒤에서 캐릭터가 움직인다.
@@ -650,6 +688,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _touch != null and _touch.is_sheet_open():
 		return
 	if _inventory_ui != null and is_instance_valid(_inventory_ui):
+		return
+	if _resync != null and _resync.is_active():
+		# 동기화가 끝나기 전 조작을 받으면, 맞추던 위치를 다시 어긋내게 된다.
 		return
 
 	# 월드 탭/클릭 → 그 지점으로 이동(대상을 탭하면 다가가서 자동 처리).
@@ -827,10 +868,20 @@ func _on_net_closed(reason: String) -> void:
 	_refresh_roster()
 
 ## 서버가 기억하는 위치·가방이 내 로컬 값보다 우선이다(docs/protocol.md §4).
-func _on_welcome(you: Dictionary, world_cfg: Dictionary) -> void:
+func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -> void:
 	var pos := Vector3(float(you.get("x", _player.position.x)), 0.0, float(you.get("z", _player.position.z)))
-	_player.position = pos
-	_update_camera(1.0)
+	if resync:
+		# 창 복귀 재동기화: 순간이동시키지 않고 **걸어가서** 맞춘다. 갑자기
+		# 텔레포트하면 어디로 왜 옮겨졌는지 알 수 없다. 도착할 때까지 오버레이가
+		# 화면을 살짝 흐리고 조작을 막는다.
+		_resync_target = pos
+		if _resync != null:
+			_resync.set_progress(0.6)
+		_player.cancel_move_to()
+		_player.move_to(pos)
+	else:
+		_player.position = pos
+		_update_camera(1.0)
 	if typeof(you.get("inventory")) == TYPE_DICTIONARY:
 		_slot["inventory"] = you["inventory"]
 	if you.has("bells"):
@@ -848,6 +899,8 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary) -> void:
 
 func _on_snapshot(players: Array, items: Array, gatherables: Array) -> void:
 	_apply_gatherable_states(gatherables)
+	if _resync != null and _resync.is_active():
+		_resync.set_progress(0.85)
 	for p: Variant in players:
 		if typeof(p) == TYPE_DICTIONARY:
 			_on_player_joined(p as Dictionary)
@@ -1018,6 +1071,49 @@ func _on_rename(token: String, new_name: String) -> void:
 
 ## 서버가 모두에게 보내는 알림(입장·퇴장). 클라이언트가 각자 문구를 만들면
 ## 사람마다 다른 문장을 보게 되고, 놓친 이벤트는 아무에게도 안 보인다.
+## 웹: 셸이 세는 "탭을 떠났다 돌아온 횟수"를 폴링한다. 폴링이 싼 이유는
+## 0.5초에 한 번 정수 하나를 읽을 뿐이기 때문이다.
+func _poll_resume(delta: float) -> void:
+	if not OS.has_feature("web"):
+		return
+	_resume_timer += delta
+	if _resume_timer < RESUME_POLL_INTERVAL:
+		return
+	_resume_timer = 0.0
+	var raw: Variant = JavaScriptBridge.eval("window.afResumeToken || 0;", true)
+	if raw == null:
+		return
+	var token := int(raw)
+	if _resume_token < 0:
+		_resume_token = token   # 첫 조회는 기준값만 잡는다
+		return
+	if token > _resume_token:
+		_resume_token = token
+		_start_resync()
+
+## 창 복귀 재동기화 시작. 서버가 없으면(혼자 플레이) 할 일이 없다.
+func _start_resync() -> void:
+	if _net == null or not _net.connected or _resync == null:
+		return
+	if _resync.is_active():
+		return
+	_resync.begin()
+	_resync_target = null
+	_net.send_resync()
+
+## 재동기화가 끝났는지 확인한다 — 서버가 준 위치에 실제로 도달했을 때 끝난다.
+func _update_resync(_delta: float) -> void:
+	if _resync == null or not _resync.is_active():
+		return
+	if _resync_target == null:
+		return
+	var target: Vector3 = _resync_target
+	if _player.position.distance_to(target) <= RESYNC_TOLERANCE or not _player.has_target():
+		# 도착했거나(오차 안) 경로가 끝났으면 정상 플레이로 돌아간다.
+		_resync_target = null
+		_resync.set_progress(1.0)
+		_resync.finish()
+
 ## 소프트 키보드가 화면을 덮은 만큼 카메라를 올려, 캐릭터가 **보이는 영역의
 ## 중앙**에 오게 한다(사용자 요청).
 func _on_keyboard_cover_changed(ratio: float) -> void:
@@ -1095,6 +1191,10 @@ func _screen_to_ground(screen_pos: Vector2) -> Variant:
 	return Plane(Vector3.UP, 0.0).intersects_ray(origin, dir)
 
 func _on_world_tapped(screen_pos: Vector2) -> void:
+	if _hooks != null:
+		# E2E가 "클릭이 게임에 도달했는지"를 확인할 수 있게 횟수를 남긴다.
+		_hooks.set_state("worldTaps", int(_hooks_tap_count + 1))
+		_hooks_tap_count += 1
 	# 조이스틱 영역의 터치는 이동 지시가 아니다 — 그 영역은 조이스틱이 쓴다.
 	if _touch != null and _touch.is_in_stick_area(screen_pos):
 		return
@@ -1406,6 +1506,8 @@ func _on_viewport_resized() -> void:
 
 func _process(delta: float) -> void:
 	_update_camera(CAMERA_FOLLOW_SPEED * delta)
+	_update_resync(delta)
+	_poll_resume(delta)
 
 	if _player != null and _marker != null and _marker.visible and not _player.has_target():
 		# 수동 입력으로 목표가 취소된 경우 — 마커를 남겨두면 유령이 된다.
@@ -1465,3 +1567,14 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		if _player != null:
 			_persist()
+	# 창 포커스로는 재동기화를 걸지 않는다 — 채팅 입력창을 닫는 것만으로도
+	# 포커스 알림이 오고, 그때 재동기화가 돌면 방금 지시한 이동이 서버 위치로
+	# 되돌려진다(실측). 실제 탭 이탈 여부는 웹의 visibilitychange로 판단한다
+	# (_poll_resume, web/shell.html의 afResumeToken).
+	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+		_away_since = Time.get_ticks_msec()
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN and not OS.has_feature("web"):
+		# 데스크톱에는 visibilitychange가 없으므로 떠나 있던 시간으로 판단한다.
+		if _away_since > 0 and Time.get_ticks_msec() - _away_since >= AWAY_MIN_MS:
+			_start_resync()
+		_away_since = 0

@@ -9,7 +9,8 @@ class_name Net
 
 signal opened
 signal closed(reason: String)
-signal welcomed(you: Dictionary, world: Dictionary)
+## resync가 true면 재연결이 아니라 "창 복귀 후 상태 재수신"이다.
+signal welcomed(you: Dictionary, world: Dictionary, resync: bool)
 signal snapshot_received(players: Array, items: Array, gatherables: Array)
 signal player_joined(player: Dictionary)
 signal player_left(token: String)
@@ -128,7 +129,7 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 	var msg := parsed as Dictionary
 	match String(msg.get("t", "")):
 		"welcome":
-			welcomed.emit(msg.get("you", {}), msg.get("world", {}))
+			welcomed.emit(msg.get("you", {}), msg.get("world", {}), bool(msg.get("resync", false)))
 		"snapshot":
 			snapshot_received.emit(msg.get("players", []), msg.get("items", []), msg.get("gatherables", []))
 		"join":
@@ -211,6 +212,10 @@ func send_move(pos: Vector3, dir: String) -> void:
 
 ## 채집물의 인덱스(data/gatherables.json의 순서)를 보낸다. 아이템 종류는 서버가
 ## 데이터에서 읽으므로 클라이언트가 주장하지 않는다.
+## 창 복귀 후 서버 상태를 다시 받는다(재연결 없이).
+func send_resync() -> void:
+	_send({"t": "resync"})
+
 func send_gather(index: int) -> void:
 	_send({"t": "gather", "index": index})
 

@@ -535,6 +535,67 @@ await a.page.screenshot({ path: `${OUT}/mp-11-판매후.png` });
 await tapGodot(a.page, 'invClose');
 await a.page.waitForTimeout(400);
 
+console.log('\n[검증] 채팅 열린 상태에서 맵 클릭 → 닫히며 이동');
+await focusGame(a.page);
+await a.page.keyboard.press('KeyT');
+await a.page.waitForTimeout(600);
+const chatOpen = await a.page.evaluate(() => {
+  const el = document.getElementById('af-chat-input');
+  return el ? window.getComputedStyle(el).display : null;
+});
+check(chatOpen === 'block', '채팅 입력창이 열렸다');
+const beforeChatClick = lastPos(tokenA);
+await tapWorldPoint(a.page, 'groundRight');
+await a.page.waitForTimeout(1600);
+const chatAfter = await a.page.evaluate(() => {
+  const el = document.getElementById('af-chat-input');
+  return el ? window.getComputedStyle(el).display : null;
+});
+const afterChatClick = lastPos(tokenA);
+const movedByClick = Math.hypot(
+  (afterChatClick?.x ?? 0) - (beforeChatClick?.x ?? 0),
+  (afterChatClick?.z ?? 0) - (beforeChatClick?.z ?? 0),
+);
+console.log(`  (입력창 ${chatOpen} → ${chatAfter}, 이동 거리 ${movedByClick.toFixed(2)})`);
+check(chatAfter === 'none', '맵을 클릭하면 채팅 입력창이 닫힌다');
+check(movedByClick > 0.8, `클릭한 지점으로 이동한다(거리 ${movedByClick.toFixed(2)})`);
+
+console.log('\n[검증] 창 복귀 재동기화(블러 + 진행 표시)');
+// 실제 탭 전환은 Playwright로 흉내내기 어렵지만, 브라우저 포커스 이벤트는
+// 보낼 수 있다 — Godot이 그걸 받아 재동기화를 시작하는지 본다.
+// 셸은 "800ms 이상 숨겨졌다 돌아온 경우"만 복귀로 센다 — 짧은 포커스 이동으로
+// 재동기화가 걸리면 방금 지시한 이동이 되돌려진다(실측).
+await a.page.evaluate(() => {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => true });
+  document.dispatchEvent(new Event('visibilitychange'));
+});
+await a.page.waitForTimeout(1100);
+await a.page.evaluate(() => {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: () => false });
+  document.dispatchEvent(new Event('visibilitychange'));
+});
+// 위치가 이미 맞으면 동기화가 곧 끝나 오버레이가 금방 걷힌다(의도된 동작) —
+// 그래서 "지금 흐린가"가 아니라 **한 번이라도 흐려졌는가**를 폴링으로 본다.
+let sawBlur = false;
+for (let i = 0; i < 40 && !sawBlur; i++) {
+  sawBlur = await a.page.evaluate(() => {
+    const c = document.querySelector('canvas');
+    return !!(c && /blur/.test(c.style.filter || ''));
+  });
+  if (sawBlur) await a.page.screenshot({ path: `${OUT}/12-재동기화-오버레이.png` });
+  await a.page.waitForTimeout(50);
+}
+// 재동기화는 welcome(resync)+snapshot을 다시 받는다 — 옵저버에는 오지 않으므로
+// 캔버스 블러가 걸렸는지(웹에서만 가능한 확인)로 판정한다.
+console.log(`  (복귀 직후 블러 감지=${sawBlur})`);
+check(sawBlur, '복귀 직후 화면이 살짝 흐려진다(동기화 중 표시)');
+await a.page.waitForTimeout(3000);   // 위치를 맞추고 오버레이가 걷힐 시간
+const blurCleared = await a.page.evaluate(() => {
+  const c = document.querySelector('canvas');
+  return !c || !c.style.filter || c.style.filter === '';
+});
+check(blurCleared, '동기화가 끝나면 블러가 걷힌다');
+
 console.log('\n[검증] 하단 접속자 바');
 // 접속자 바는 캔버스에 그려져 DOM으로 읽을 수 없다 — 게임이 훅으로 알려주는
 // 항목 좌표(rosterEntry1..N)로 "몇 명이 표시되는지"를 판정한다.
