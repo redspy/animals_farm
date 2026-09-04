@@ -1,4 +1,8 @@
-class_name PlayerSprite
+import os
+
+filepath = "/Users/soul/Source/animals_farm/scripts/player_sprite.gd"
+
+code = """class_name PlayerSprite
 extends AnimatedSprite3D
 
 # --- 상수 ---
@@ -344,3 +348,9 @@ func _draw_rect(img: Image, rect: Rect2i, color: Color) -> void:
 		for x: int in range(rect.position.x, rect.end.x):
 			if x >= 0 and x < SPRITE_WIDTH and y >= 0 and y < SPRITE_HEIGHT:
 				img.set_pixel(x, y, color)
+"""
+
+with open(filepath, "w", encoding="utf-8") as f:
+    f.write(code)
+
+print("Updated script.")

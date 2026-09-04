@@ -28,3 +28,6 @@ export_presets.cfg.local
 # 배포 서버 런타임 로그
 server.log
 server_error.log
+
+# 서버 런타임 월드 상태(캐릭터 위치/월드 아이템)
+server/data/

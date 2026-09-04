@@ -1,0 +1,12 @@
+{
+  "_comment": "감정 표현 이모티콘 화이트리스트. 서버가 이 id 목록으로만 브로드캐스트를 허용한다(임의 문자열 표시 방지, docs/protocol.md §3). key는 숫자키 1~N에 순서대로 매핑된다.",
+  "schema_version": 1,
+  "emotes": [
+    { "id": "happy",    "label": "기쁨",   "glyph": "!" },
+    { "id": "sad",      "label": "슬픔",   "glyph": "T" },
+    { "id": "angry",    "label": "화남",   "glyph": "#" },
+    { "id": "surprise", "label": "놀람",   "glyph": "?" },
+    { "id": "love",     "label": "하트",   "glyph": "*" },
+    { "id": "sleep",    "label": "졸림",   "glyph": "z" }
+  ]
+}

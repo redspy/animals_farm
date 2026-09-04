@@ -1,0 +1,25 @@
+{
+  "_comment": "월드맵 설정. 초기 크기는 '한 화면의 9배 면적' = 가로/세로 각 3배다. 한 화면은 직교 카메라 size 9.5(세로) × 16:9 → 약 16.9 x 9.5 월드 단위이므로 3배는 50.7 x 28.5. size_x/size_z만 고치면 맵이 커지고, 서버도 같은 파일을 읽어 경계를 클램프한다(docs/protocol.md §3).",
+  "schema_version": 1,
+  "screen_units": { "x": 16.9, "z": 9.5 },
+  "screen_multiple": 3,
+  "size_x": 50.7,
+  "size_z": 28.5,
+  "spawn": { "x": 0.0, "z": 0.0 },
+  "zones": [
+    {
+      "id": "plaza",
+      "label": "광장",
+      "x": 0.0, "z": -9.0,
+      "radius": 3.2,
+      "purpose": "모임 — 미니게임 진입 예정(P5)"
+    },
+    {
+      "id": "beach_hut",
+      "label": "해변 오두막",
+      "x": -18.0, "z": 9.0,
+      "radius": 2.6,
+      "purpose": "모임 — 소규모 대화"
+    }
+  ]
+}

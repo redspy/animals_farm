@@ -1,5 +1,5 @@
 {
-  "_comment": "화면 색의 단일 출처. 예전에는 섬/바다/나무 색이 main.gd·gatherable.gd에, HUD 색이 main.gd에, 캐릭터 색이 player_sprite.gd 상단 const에 각각 하드코딩돼 있어서 색 하나를 바꾸려면 세 파일을 찾아다녀야 했다(2026-09-04 정합성 감사 지적). 값은 #rrggbb 또는 #rrggbbaa 문자열이며 Palette.color()가 읽는다. 키가 없으면 마젠타(#ff00ff)로 그려지고 경고가 남으므로, 화면에 마젠타가 보이면 이 파일의 키 누락이다.",
+  "_comment": "화면 색의 단일 출처. 예전에는 섬/바다/나무 색이 main.gd·gatherable.gd에, HUD 색이 main.gd에, 캐릭터 색이 player_sprite.gd 상단 const에 각각 하드코딩돼 있어서 색 하나를 바꾸려면 세 파일을 찾아다녀야 했다(2026-09-04 정합성 감사 지적). 값은 #rrggbb 또는 #rrggbbaa 문자열이며 Palette.color()가 읽는다. 키가 없으면 마젠타(#ff00ff)로 그려지고 경고가 남으므로, 화면에 마젠타가 보이면 이 파일의 키 누락이다. character 그룹의 skin_*/outfit_*/hair* 키는 data/characters.json의 프리셋이 이름으로 참조한다 — 프리셋을 추가하려면 여기에 색을 먼저 넣어야 한다.",
   "schema_version": 1,
   "world": {
     "sky": "#99d4f0",
@@ -11,11 +11,17 @@
     "tree_canopy": "#2e8540",
     "shell": "#f5debd",
     "weed": "#5ca84d",
-    "ground_shadow": "#00000047"
+    "ground_shadow": "#00000047",
+    "zone_floor": "#ffe9a83d",
+    "drop_item": "#f0e0a0"
   },
   "ui": {
     "hud_text": "#ffffff",
-    "hud_outline": "#14291fe6"
+    "hud_outline": "#14291fe6",
+    "select_bg": "#12261fe6",
+    "warn_text": "#ffb4a2",
+    "chat_text": "#ffffff",
+    "zone_text": "#ffe9a8"
   },
   "character": {
     "skin": "#ffd9b3",
@@ -25,6 +31,15 @@
     "pants_dark": "#0d1a33",
     "shoe": "#261a0d",
     "shoe_dark": "#0d0000",
-    "eye": "#000000"
+    "eye": "#000000",
+    "skin_tan": "#d9a878",
+    "skin_pale": "#ffe8d6",
+    "hair": "#3d2b1f",
+    "hair_light": "#8a5a35",
+    "outfit_red": "#d94f4f",
+    "outfit_yellow": "#e8c14a",
+    "outfit_purple": "#9b6bd1",
+    "outfit_blue": "#3399cc",
+    "outfit_green": "#4faa62"
   }
 }

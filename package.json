@@ -14,12 +14,18 @@
     "hooks:install": "node scripts/install-git-hooks.js",
     "panel": "node scripts/cli-runner.js",
     "review:staged": "node scripts/review.js --staged",
-    "test:browser": "node tests/browser-smoke.mjs"
+    "test:browser": "node tests/browser-smoke.mjs",
+    "test:server": "node --test tests/server-world.test.mjs",
+    "test": "npm run test:server",
+    "test:multiplayer": "node tests/browser-multiplayer.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "UNLICENSED",
   "devDependencies": {
     "playwright": "^1.60.0"
+  },
+  "dependencies": {
+    "ws": "^8.21.3"
   }
 }

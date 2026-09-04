@@ -36,7 +36,7 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
 2. **Godot 표준(non-mono) 빌드** 설치 — `D:\tools\godot\4.7.1\Godot_v4.7.1-stable_win64.exe`
    - ⚠️ **mono(.NET) 빌드는 쓸 수 없다**: 웹 export 템플릿이 존재하지 않고, 헤드리스 실행도 .NET 초기화 단계에서 멈춘다(2026-09-03 개발 머신의 4.6.3-mono에서 실측).
 3. **export 템플릿 설치** — 같은 버전(4.7.1)의 `Godot_v4.7.1-stable_export_templates.tpz`를 에디터에서 한 번 임포트하거나 `%APPDATA%\Godot\export_templates\4.7.1.stable\`에 풀어둔다. 템플릿이 없으면 export가 실패한다.
-4. Node.js 20+ 설치(정적 서버 실행용).
+4. Node.js 20+ 설치(서버 실행용). 서버가 WebSocket(`ws`)을 쓰므로 **의존성 설치가 필요하다** — `deploy.bat`이 `npm ci --omit=dev`(실패 시 `npm install --omit=dev`)로 처리한다.
 5. 포트: **3001** (connect_dise가 3000을 쓰므로 충돌을 피한다). 바꾸려면 `GAME_PORT` 환경변수 또는 `deploy.bat` 기본값을 수정.
 
 버전 고정의 단일 출처는 저장소 루트의 **`.godot-version`** 파일이다(`deploy.bat`, `scripts/build-web.sh`, `scripts/verify-project.sh`가 모두 이 파일을 읽는다). 엔진 버전을 올릴 때는 (a) `.godot-version`, (b) 서버의 실제 바이너리·템플릿, (c) `project.godot`의 `config/features`를 함께 올린다.
@@ -45,6 +45,7 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
 
 - 현재 export 프리셋은 **nothreads**(`export_presets.cfg`의 `variant/thread_support=false`)다. 스레드 빌드는 `SharedArrayBuffer`를 요구해 **COOP/COEP 헤더 없이는 아예 실행되지 않고**, iOS Safari 등에서 실패율이 높다.
 - 그래도 `server/index.js`는 `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp`를 **미리 보낸다**. 나중에 스레드 빌드로 전환할 때 서버를 다시 건드리지 않기 위함이다. 대신 이 헤더가 켜져 있으면 외부 도메인 리소스(CDN 이미지/폰트/iframe)가 차단되므로, 외부 리소스를 쓰게 되면 그 시점에 재검토해야 한다.
+- WebSocket은 정적 파일과 **같은 포트의 `/ws`** 로 붙는다. 클라이언트는 페이지를 서빙한 origin에서 주소를 유도하므로(`net.gd::default_url`) 별도 설정이 없다 — 다만 https로 서빙하면 `wss://`가 되어야 하고, 리버스 프록시를 쓸 경우 `/ws` 업그레이드를 통과시켜야 한다.
 - `.wasm`은 `application/wasm`, `.pck`는 `application/octet-stream`으로 서빙한다. MIME이 틀리면 브라우저가 스트리밍 컴파일을 거부해 로딩이 느려지거나 실패한다.
 - `index.html`은 `no-cache`, 나머지 산출물은 `max-age=300`. 배포 직후 구버전 HTML이 캐시에 남는 문제를 막는다.
 
@@ -85,6 +86,9 @@ npm run test:browser            # build/web를 서버에 올려 Chromium으로 �
 | 웹 export 산출물(index.html/.wasm/.pck) | ✅ 로컬 실측 생성 |
 | 정적 서버 MIME·COOP/COEP·`/healthz` | ✅ 로컬 실측 통과 |
 | 브라우저 기동·입력·채집·판매 1사이클 | ✅ 로컬 실측 통과(`npm run test:browser`, Chromium) |
+| 서버 규칙(검증·소유권·레이트 리밋) | ✅ 유닛 테스트 17종 통과(`npm run test:server`) |
+| 2기기 실시간 동기화(위치·채팅·이모티콘·드랍/줍기) | ✅ 로컬 실측 통과(`npm run test:multiplayer`, 2탭 + WS 옵저버) |
+| 실제 다른 기기(공개 주소)에서의 접속 | ⚠️ 미검증 — 포트포워딩/도메인 설정 후 확인 필요 |
 | 걷기 애니메이션 재생 | ✅ 섬 경계에 붙여 이동이 멈춘 상태에서 프레임이 바뀌는지로 판정(`test:browser`) |
 | **배포 서버 파이프라인(deploy.bat 전체)** | ⚠️ **미검증** — Windows 서버에서 첫 배포를 돌려봐야 한다. 서버에 Godot 4.7.1 표준 + export 템플릿 설치가 선행 조건(§2) |
 | 모바일 브라우저 / 터치 조작 | ⚠️ 미검증 — 터치 조작 자체가 미구현 |

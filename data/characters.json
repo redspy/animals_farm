@@ -1,0 +1,11 @@
+{
+  "_comment": "예제 캐릭터 프리셋. 슬롯은 기기별 5칸이고, 여기 항목을 추가하면 선택 화면이 자동으로 늘어난다(코드 수정 없이 확장 — docs/roadmap.md '확장 지점'). body/hair/outfit 색 키는 data/palette.json의 character 그룹 키를 가리킨다.",
+  "schema_version": 1,
+  "presets": [
+    { "id": "f1", "label": "미나", "gender": "female", "hair": "hair_long",  "skin": "skin",       "outfit": "outfit_red" },
+    { "id": "f2", "label": "유리", "gender": "female", "hair": "hair_twin",  "skin": "skin_tan",   "outfit": "outfit_yellow" },
+    { "id": "f3", "label": "하나", "gender": "female", "hair": "hair_bob",   "skin": "skin_pale",  "outfit": "outfit_purple" },
+    { "id": "m1", "label": "준호", "gender": "male",   "hair": "hair_short", "skin": "skin",       "outfit": "outfit_blue" },
+    { "id": "m2", "label": "태식", "gender": "male",   "hair": "hair_cap",   "skin": "skin_tan",   "outfit": "outfit_green" }
+  ]
+}

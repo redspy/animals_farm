@@ -18,14 +18,21 @@ var sprite: PlayerSprite = null
 
 var _half_x := 10.0
 var _half_z := 6.0
+var _preset: Dictionary = {}
 
-func setup(island_size: Vector2) -> void:
-	_half_x = maxf(island_size.x * 0.5 - RADIUS, RADIUS)
-	_half_z = maxf(island_size.y * 0.5 - RADIUS, RADIUS)
+## world_size는 data/world.json의 size_x/size_z, preset은 data/characters.json의
+## 프리셋 한 항목이다(외형만 결정하며 능력 차이는 없다).
+func setup(world_size: Vector2, preset: Dictionary = {}) -> void:
+	_half_x = maxf(world_size.x * 0.5 - RADIUS, RADIUS)
+	_half_z = maxf(world_size.y * 0.5 - RADIUS, RADIUS)
+	_preset = preset
 
 func _ready() -> void:
 	_add_ground_shadow()
 	sprite = PlayerSprite.new()
+	if not _preset.is_empty():
+		# 프레임 생성이 _ready에서 일어나므로 트리에 붙기 전에 프리셋을 준다.
+		sprite.setup(_preset)
 	# PlayerSprite가 offset으로 원점을 발바닥에 맞춰 두므로 지면 높이(y=0)에
 	# 그대로 놓는다 — 예전엔 중앙 기준이라 y를 눈대중으로 띄웠고 발이 떠 보였다.
 	sprite.position = Vector3.ZERO
