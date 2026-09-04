@@ -16,16 +16,26 @@ class_name ChatInput
 
 signal submitted(text: String)
 signal closed
+## 소프트 키보드가 화면 아래를 덮은 비율(0~0.8). 폰에서 키보드가 올라오면
+## 캐릭터가 가려진 영역에 들어가 보이지 않으므로, world가 카메라를 그만큼 올린다.
+signal keyboard_cover_changed(ratio: float)
 
 const MAX_LEN := 200
 ## DOM 입력을 만들 때 쓰는 요소 id. 재접속/재생성 시 중복 생성을 막는 열쇠다.
 const DOM_ID := "af-chat-input"
+## 키보드 높이를 폴링하는 간격(초). 키보드가 올라오는 애니메이션 때문에 즉시
+## 값을 읽으면 0이 나온다.
+const COVER_POLL_INTERVAL := 0.25
+## 이 비율 이상 가려졌을 때만 카메라를 보정한다(작은 변화에 화면이 흔들리지 않게).
+const COVER_MIN := 0.08
 
 var _is_web := false
 var _open := false
 var _line_edit: LineEdit = null
 var _js_submit_cb: JavaScriptObject = null
 var _js_cancel_cb: JavaScriptObject = null
+var _cover_timer := 0.0
+var _cover_ratio := 0.0
 
 func _ready() -> void:
 	_is_web = OS.has_feature("web") and JavaScriptBridge.get_interface("document") != null
@@ -57,6 +67,42 @@ func open() -> void:
 		_line_edit.visible = true
 		_line_edit.text = ""
 		_line_edit.grab_focus()
+
+func _process(delta: float) -> void:
+	if not _is_web:
+		return
+	# 열려 있는 동안에만 폴링한다 — 닫혀 있을 때 매 프레임 JS를 호출할 이유가 없다.
+	if not _open:
+		if _cover_ratio != 0.0:
+			_cover_ratio = 0.0
+			keyboard_cover_changed.emit(0.0)
+		return
+	_cover_timer += delta
+	if _cover_timer < COVER_POLL_INTERVAL:
+		return
+	_cover_timer = 0.0
+	var ratio := _read_keyboard_cover()
+	if absf(ratio - _cover_ratio) > 0.02:
+		_cover_ratio = ratio
+		keyboard_cover_changed.emit(ratio)
+
+## visualViewport로 "지금 실제로 보이는 높이"를 읽어 가려진 비율을 구한다.
+## window.innerHeight는 키보드가 올라와도 그대로라 이 용도로 못 쓴다.
+func _read_keyboard_cover() -> float:
+	var raw: Variant = JavaScriptBridge.eval("""
+		(function(){
+			var vv = window.visualViewport;
+			if (!vv || !window.innerHeight) return 0;
+			var hidden = 1 - (vv.height / window.innerHeight);
+			return hidden > 0 ? hidden : 0;
+		})();
+	""", true)
+	if raw == null:
+		return 0.0
+	var ratio := float(raw)
+	if ratio < COVER_MIN:
+		return 0.0
+	return clampf(ratio, 0.0, 0.8)
 
 func close() -> void:
 	if not _open:

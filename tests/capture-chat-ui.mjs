@@ -18,7 +18,7 @@ const OUT = process.env.SHOT_DIR || 'build/screenshots/chat-ui';
 mkdirSync(OUT, { recursive: true });
 if (existsSync('server/data/world.json')) rmSync('server/data/world.json');
 
-const server = spawn('node', ['server/index.js'], { env: { ...process.env, PORT: String(PORT) }, stdio: 'ignore' });
+const server = spawn('node', ['server/index.js'], { env: { ...process.env, PORT: String(PORT), TLS: 'off' }, stdio: 'ignore' });
 process.on('exit', () => { try { server.kill(); } catch {} });
 for (let i = 0; i < 40; i++) {
   try { if ((await fetch(`http://localhost:${PORT}/healthz`)).ok) break; } catch {}
@@ -77,6 +77,14 @@ await page.screenshot({ path: `${OUT}/3-입력중.png` });
 await page.keyboard.press('Enter');
 await page.waitForTimeout(900);
 await page.screenshot({ path: `${OUT}/4-전송후(말풍선).png` });
+
+// 이모지 이모티콘도 캡쳐(폰트 폴백이 없으면 두부로 보인다).
+// DOM 입력이 닫히면 포커스가 body로 가므로 캔버스를 눌러 포커스를 되돌린다.
+await page.locator('canvas').click({ position: { x: 300, y: 300 } });
+await page.waitForTimeout(400);
+await page.keyboard.press('Digit1');
+await page.waitForTimeout(900);
+await page.screenshot({ path: `${OUT}/4b-이모지.png` });
 
 // Esc 취소 동작도 캡쳐
 await page.keyboard.press('KeyT');

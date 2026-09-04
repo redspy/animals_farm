@@ -111,6 +111,11 @@ var _marker: Node3D
 var _roster_box: HBoxContainer
 var _inventory_ui: InventoryUI
 var _hooks: TestHooks
+## 직전 프레임에 이동 중이었는지 — "멈춘 순간"에 최종 좌표를 확정 전송한다.
+var _was_moving := false
+## 화면 아래쪽이 소프트 키보드에 가려진 비율(0~0.8). 폰에서 키보드가 올라오면
+## 캐릭터가 가려진 영역에 들어가 안 보이므로 카메라를 그만큼 올린다.
+var _keyboard_cover := 0.0
 ## 서버가 끊긴 동안 채집한 것. 다시 붙으면 서버로 흘려보낸다 — 안 하면 서버의
 ## welcome이 로컬 가방을 덮어써 오프라인 채집이 사라진다(docs/protocol.md §4).
 var _pending_gathers: Dictionary = {}
@@ -374,11 +379,12 @@ func _build_hud() -> void:
 	# 하단 접속자 바 — 지금 이 월드에 누가 있는지 한눈에 보여준다.
 	# mouse_filter를 IGNORE로 두는 이유: 바가 화면 하단을 가로지르는데 입력을
 	# 먹으면 그 위를 탭했을 때 이동이 되지 않는다(조이스틱 영역과도 겹친다).
+	# 배경이 화면 가로를 다 덮으면 월드를 가린다 — 내용(초상화들) 크기만큼만
+	# 차지하도록 하단 중앙에 붙인다(사용자 요청).
 	var roster_panel := PanelContainer.new()
-	roster_panel.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
-	roster_panel.offset_left = HUD_MARGIN
-	roster_panel.offset_right = -HUD_MARGIN
-	roster_panel.offset_top = -(ROSTER_PORTRAIT.y + 34.0)
+	roster_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	roster_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+	roster_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
 	roster_panel.offset_bottom = -2.0
 	roster_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var roster_style := StyleBoxFlat.new()
@@ -401,12 +407,16 @@ func _build_hud() -> void:
 	# 채팅 입력은 웹이면 DOM <input>, 아니면 LineEdit — ChatInput이 갈라 준다.
 	_chat = ChatInput.new()
 	_chat.submitted.connect(_on_chat_submitted)
+	_chat.keyboard_cover_changed.connect(_on_keyboard_cover_changed)
 	add_child(_chat)
 
 	if DisplayServer.is_touchscreen_available():
 		# 의심스러우면 띄운다 — 폰에서 안 뜨는 쪽이 치명적이다(회의 §10).
 		_touch = TouchControls.new()
-		_touch.setup(_emotes)
+		# 설정은 세이브에 남긴다(기기별 취향이라 슬롯이 아니라 세이브 전역).
+		var settings: Dictionary = _save.get("settings", {})
+		_touch.setup(_emotes, bool(settings.get("joystick", true)))
+		_touch.joystick_toggled.connect(_on_joystick_toggled)
 		_touch.action_pressed.connect(_try_interact)
 		_touch.chat_pressed.connect(_open_chat_input)
 		_touch.drop_pressed.connect(_drop_one)
@@ -781,6 +791,7 @@ func _start_net() -> void:
 	_net.sold.connect(_on_sold)
 	_net.rename_received.connect(_on_rename)
 	_net.server_error.connect(_on_server_error)
+	_net.system_message.connect(_on_system_message)
 	_net.start(String(_slot.get("token", "")), String(_slot.get("name", "")), String(_slot.get("preset", "")))
 
 func _on_net_opened() -> void:
@@ -847,7 +858,8 @@ func _on_player_joined(player: Dictionary) -> void:
 	remote.setup(player, _presets.get(String(player.get("preset", "")), {}))
 	add_child(remote)
 	_remotes[token] = remote
-	_append_chat("%s 님이 들어왔습니다" % String(player.get("name", "")))
+	# 입장 문구는 서버가 system 메시지로 모두에게 보낸다 — 여기서 또 넣으면
+	# 두 번 표시된다.
 	# 스프라이트 프레임은 _ready에서 만들어지므로 한 프레임 뒤에 초상화를 읽는다.
 	_refresh_roster.call_deferred()
 
@@ -917,14 +929,19 @@ func _on_item_added(item: Dictionary) -> void:
 	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	mesh.material_override = m
 	node.add_child(mesh)
+	# 이름표는 **주울 수 있는 거리에 들어왔을 때만** 보여준다(사용자 요청).
+	# 항상 띄우면 물건이 많을 때 화면이 글자로 덮인다.
 	var tag := Label3D.new()
 	tag.text = _label_of(String(item.get("item", "")))
-	tag.position = Vector3(0, 0.75, 0)
+	tag.position = Vector3(0, 0.85, 0)
 	tag.billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
-	tag.font_size = 24
-	tag.outline_size = 8
-	tag.pixel_size = 0.0035
+	tag.font_size = 30
+	tag.outline_size = 10
+	tag.pixel_size = 0.008
 	tag.no_depth_test = true
+	tag.render_priority = 1
+	tag.visible = false
+	tag.name = "NameTag"
 	node.add_child(tag)
 	add_child(node)
 	_drops[id] = node
@@ -991,6 +1008,28 @@ func _on_rename(token: String, new_name: String) -> void:
 	if _remotes.has(token):
 		(_remotes[token] as RemotePlayer).set_display_name(new_name)
 		_refresh_roster()
+
+## 서버가 모두에게 보내는 알림(입장·퇴장). 클라이언트가 각자 문구를 만들면
+## 사람마다 다른 문장을 보게 되고, 놓친 이벤트는 아무에게도 안 보인다.
+## 소프트 키보드가 화면을 덮은 만큼 카메라를 올려, 캐릭터가 **보이는 영역의
+## 중앙**에 오게 한다(사용자 요청).
+func _on_keyboard_cover_changed(ratio: float) -> void:
+	_keyboard_cover = ratio
+
+## 조이스틱 on/off는 기기별 취향이라 세이브 전역 설정으로 남긴다.
+func _on_joystick_toggled(enabled: bool) -> void:
+	var settings: Dictionary = _save.get("settings", {})
+	settings["joystick"] = enabled
+	_save["settings"] = settings
+	SaveManager.save(_save)
+	if _player != null:
+		_player.joystick_enabled = enabled
+	_show_toast("조이스틱 %s — 이동은 화면 탭으로도 됩니다" % ("켜짐" if enabled else "꺼짐"))
+
+func _on_system_message(text: String, kind: String) -> void:
+	_append_chat(text)
+	if kind == "join" or kind == "leave":
+		_show_toast(text)
 
 func _on_server_error(code: String, message: String) -> void:
 	# 서버 거절을 조용히 삼키면 "왜 안 되는지" 알 수 없다 — 화면에 띄우고,
@@ -1162,6 +1201,11 @@ func _update_camera(weight: float) -> void:
 	# basis.z는 카메라가 바라보는 반대 방향이라, 그만큼 뒤로 물러난 위치가
 	# 플레이어를 화면 중앙에 두는 카메라 위치가 된다.
 	var target := _player.position + _camera.transform.basis.z * CAMERA_DISTANCE
+	if _keyboard_cover > 0.001:
+		# 가려지지 않은 영역의 중앙에 캐릭터가 오도록 카메라를 아래로 내린다
+		# (화면상으로는 캐릭터가 위로 올라온다). 직교 카메라라 화면 이동량은
+		# size × 비율로 바로 계산된다.
+		target += _camera.transform.basis.y * (-_camera.size * _keyboard_cover * 0.5)
 	_camera.position = _camera.position.lerp(target, clampf(weight, 0.0, 1.0))
 
 ## 모임 존 진입/이탈 감지. 지금은 안내만 하고, 미니게임은 P5에서 붙인다
@@ -1307,6 +1351,17 @@ func _nearest_available_gatherable() -> Gatherable:
 			found = g
 	return found
 
+## 주울 수 있는 거리(PICKUP_DISTANCE) 안의 물건에만 이름표를 띄운다.
+func _update_drop_tags() -> void:
+	if _player == null:
+		return
+	for id: String in _drops.keys():
+		var node: Node3D = _drops[id]
+		var tag := node.get_node_or_null("NameTag") as Label3D
+		if tag == null:
+			continue
+		tag.visible = _player.position.distance_to(node.position) <= PICKUP_DISTANCE
+
 ## 슬롯에 현재 상태(위치·벨·가방)를 반영해 저장한다.
 func _persist() -> void:
 	_slot["pos"] = {"x": snappedf(_player.position.x, 0.01), "z": snappedf(_player.position.z, 0.01)}
@@ -1332,6 +1387,8 @@ func _process(delta: float) -> void:
 		for token: String in _remotes.keys():
 			others.append((_remotes[token] as RemotePlayer).position)
 		_player.set_others(others)
+		if _touch != null:
+			_player.joystick_enabled = _touch.joystick_enabled
 
 		# 터치 조이스틱 입력을 플레이어에 넘긴다(키보드와 병행 — player.gd가
 		# 더 큰 쪽을 쓴다). 시트가 열려 있으면 이동을 멈춘다.
@@ -1340,7 +1397,15 @@ func _process(delta: float) -> void:
 			touch_vec = _touch.move_vector
 		_player.set_touch_vector(touch_vec)
 	if _net != null and _player != null and _player.sprite != null:
-		_net.send_move(_player.position, _player.sprite.facing())
+		var facing := _player.sprite.facing()
+		var moving := _player.moved_recently()
+		if moving:
+			_net.send_move(_player.position, facing)
+		elif _was_moving:
+			# 멈춘 순간의 최종 좌표를 확정 전송한다 — 미세 이동의 마지막 조각이
+			# 최소 이동량 미만이라 누락되면 상대 화면에 옛 위치가 남는다.
+			_net.flush_move(_player.position, facing)
+		_was_moving = moving
 
 	if _toast_timer > 0.0:
 		_toast_timer -= delta
@@ -1351,6 +1416,7 @@ func _process(delta: float) -> void:
 	if _zone_timer >= ZONE_CHECK_INTERVAL:
 		_zone_timer = 0.0
 		_check_zone()
+		_update_drop_tags()
 
 	_autosave_timer += delta
 	if _autosave_timer >= AUTOSAVE_INTERVAL_SEC:

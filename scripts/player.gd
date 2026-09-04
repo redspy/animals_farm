@@ -38,6 +38,11 @@ var _preset: Dictionary = {}
 ## 터치 조이스틱 입력(world.gd가 매 프레임 넣어 준다). 키보드와 합산하지 않고
 ## **더 큰 쪽**을 쓴다 — 합산하면 둘을 같이 쓸 때 속도가 두 배가 된다.
 var _touch_vector := Vector2.ZERO
+## 이번 프레임에 실제로 움직였는지. world.gd가 "멈춘 순간"을 잡아 최종 좌표를
+## 확정 전송하는 데 쓴다(미세 이동이 상대 화면에 반영되지 않는 문제).
+var _moved_this_frame := false
+## 조이스틱을 쓸지. 폰에서 사용자가 끌 수 있다(TouchControls 토글).
+var joystick_enabled := true
 
 ## 탭/클릭으로 지정된 경로. 바위를 돌아가느라 경유지가 여러 개일 수 있다
 ## (scripts/path_planner.gd). 화면 좌표로 들고 있으면 카메라가 플레이어를
@@ -110,14 +115,20 @@ func has_target() -> bool:
 func target_position() -> Vector3:
 	return _path[_path.size() - 1] if not _path.is_empty() else position
 
+## 이번 물리 프레임에 위치가 바뀌었는지.
+func moved_recently() -> bool:
+	return _moved_this_frame
+
 func _physics_process(delta: float) -> void:
+	var before := position
 	# 화면 기준 입력 → 월드 XZ. 카메라 yaw가 0이라 화면 위쪽이 -Z와 같다
 	# (카메라를 회전시키면 이 매핑도 함께 고쳐야 한다 — main.gd CAMERA_YAW_DEG).
 	var keys := Vector2(
 		Input.get_axis("ui_left", "ui_right"),
 		Input.get_axis("ui_up", "ui_down")
 	)
-	var dir := keys if keys.length() >= _touch_vector.length() else _touch_vector
+	var touch := _touch_vector if joystick_enabled else Vector2.ZERO
+	var dir := keys if keys.length() >= touch.length() else touch
 
 	# 수동 입력이 들어오면 탭 경로를 버린다 — 손으로 조작하는 중에 캐릭터가
 	# 예전 목표로 끌려가면 조작을 빼앗긴 느낌이 된다.
@@ -148,6 +159,8 @@ func _physics_process(delta: float) -> void:
 	# 캐릭터 겹침은 **가만히 있을 때도** 푼다 — 모두 같은 지점에서 시작하고,
 	# 남이 걸어와 겹치는 경우도 있다. 바위 밀림보다 먼저 풀고 나서 다시 바위
 	# 밖으로 되돌린다(겹침을 피하다 바위 안으로 들어가는 것 방지).
+	_moved_this_frame = not position.is_equal_approx(before)
+
 	var separated := PathPlanner.separate(position, _others, SEPARATION, SEPARATION_SPEED * delta)
 	if separated != position:
 		position = PathPlanner.push_out(separated, _obstacles, RADIUS)

@@ -56,6 +56,7 @@
 | `inventory` | `inventory` | 내 인벤토리 갱신(채집/드랍/줍기 결과) |
 | `sold` | `sold`, `total`, `bells`, `inventory`, `unsold` | 판매 결과. `bells`는 서버가 보관하는 최종 값 |
 | `rename` | `token`, `name` | 이름 변경 브로드캐스트 |
+| `system` | `text`, `kind`, `token` | 서버가 모두에게 보내는 알림(입장·퇴장). 클라이언트가 각자 문구를 만들면 사람마다 다른 문장을 보게 되고, 놓친 이벤트는 아무에게도 안 보인다. 본인의 입장 알림은 본인에게 보내지 않는다 |
 | `error` | `code`, `message` | 거부 사유(레이트 리밋·이름 길이 등) |
 
 ## 3. 서버가 강제하는 것 (검증 규칙)

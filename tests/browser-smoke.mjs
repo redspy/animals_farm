@@ -31,7 +31,7 @@ if (!existsSync(BUILD)) {
 mkdirSync(OUT, { recursive: true });
 
 const server = spawn('node', ['server/index.js'], {
-  env: { ...process.env, PORT: String(PORT) },
+  env: { ...process.env, PORT: String(PORT), TLS: 'off' },
   stdio: 'ignore',
 });
 const stopServer = () => { try { server.kill(); } catch { /* 이미 종료 */ } };

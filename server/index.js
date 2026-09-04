@@ -213,8 +213,12 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     if (!ws.token) return;
     if (sockets.get(ws.token) === ws) sockets.delete(ws.token);
+    const leaving = world.players.get(ws.token);
     world.leave(ws.token);
     broadcast({ t: 'leave', token: ws.token });
+    if (leaving) {
+      broadcast({ t: 'system', text: `${leaving.name} 님이 나갔습니다`, kind: 'leave', token: ws.token });
+    }
   });
 
   ws.on('error', (e) => console.error('[ws] 소켓 오류:', e.message));
@@ -251,6 +255,10 @@ function handle(ws, msg) {
     });
     sendTo(ws, { t: 'snapshot', ...world.snapshot() });
     broadcast({ t: 'join', player: { token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir } }, p.token);
+    // 입퇴장은 **서버가 알린다.** 예전에는 각 클라이언트가 join/leave를 보고
+    // 자기 화면에만 문구를 넣어서, 알림 문구가 클라이언트마다 갈릴 수 있었다.
+    // 본인에게는 보내지 않는다 — 자기 입장 알림은 "서버에 접속했습니다"와 겹친다.
+    broadcast({ t: 'system', text: `${p.name} 님이 들어왔습니다`, kind: 'join', token: p.token }, p.token);
     return;
   }
 

@@ -14,6 +14,9 @@ signal slot_chosen(index: int, slot: Dictionary)
 
 const PANEL_WIDTH := 560.0
 const ROW_HEIGHT := 44.0
+## 프리셋 목록에 보여줄 초상화 크기(px). 외형을 글자로만 고르게 하면 "미나가
+## 어떻게 생겼는지" 알 수 없다(사용자 요청).
+const PORTRAIT := Vector2(46, 56)
 
 var _save: Dictionary = {}
 var _presets: Array = []
@@ -83,8 +86,19 @@ func _show_slot_list() -> void:
 		row.add_theme_constant_override("separation", 8)
 		_root.add_child(row)
 
+		# 이미 만든 캐릭터는 슬롯 줄에도 얼굴을 보여준다.
+		var slot_portrait := TextureRect.new()
+		slot_portrait.custom_minimum_size = Vector2(PORTRAIT.x * 0.7, PORTRAIT.y * 0.7)
+		slot_portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		slot_portrait.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		if not slot.is_empty():
+			var preset_for_slot := _preset_by_id(String(slot.get("preset", "")))
+			if not preset_for_slot.is_empty():
+				slot_portrait.texture = _preset_portrait(preset_for_slot)
+		row.add_child(slot_portrait)
+
 		var enter := Button.new()
-		enter.custom_minimum_size = Vector2(PANEL_WIDTH - 120.0, ROW_HEIGHT)
+		enter.custom_minimum_size = Vector2(PANEL_WIDTH - 120.0 - PORTRAIT.x * 0.7, ROW_HEIGHT)
 		if slot.is_empty():
 			enter.text = "%d. 빈 슬롯 — 새 캐릭터 만들기" % (i + 1)
 		else:
@@ -106,6 +120,12 @@ func _show_slot_list() -> void:
 		del.pressed.connect(_on_delete_pressed.bind(i))
 		row.add_child(del)
 		_mark("delete%d" % (i + 1), del)
+
+func _preset_by_id(preset_id: String) -> Dictionary:
+	for p: Variant in _presets:
+		if typeof(p) == TYPE_DICTIONARY and String((p as Dictionary).get("id", "")) == preset_id:
+			return p as Dictionary
+	return {}
 
 func _preset_label(preset_id: String) -> String:
 	for p: Variant in _presets:
@@ -165,12 +185,25 @@ func _show_preset_picker() -> void:
 			continue
 		var preset := p as Dictionary
 		index += 1
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 10)
+		_root.add_child(row)
+
+		# 초상화: 실제 캐릭터 스프라이트가 런타임에 만든 프레임을 그대로 쓴다 —
+		# 별도 그림을 두면 외형을 고칠 때 두 곳이 어긋난다.
+		var portrait := TextureRect.new()
+		portrait.custom_minimum_size = PORTRAIT
+		portrait.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		portrait.texture_filter = CanvasItem.TEXTURE_FILTER_NEAREST
+		portrait.texture = _preset_portrait(preset)
+		row.add_child(portrait)
+
 		var b := Button.new()
-		b.custom_minimum_size = Vector2(0, ROW_HEIGHT)
+		b.custom_minimum_size = Vector2(PANEL_WIDTH - PORTRAIT.x - 20.0, PORTRAIT.y)
 		var gender_text := "여" if String(preset.get("gender", "")) == "female" else "남"
 		b.text = "%s (%s)" % [String(preset.get("label", "")), gender_text]
 		b.pressed.connect(_on_preset_pressed.bind(String(preset.get("id", ""))))
-		_root.add_child(b)
+		row.add_child(b)
 		# 자식 개수가 아니라 프리셋 순번을 쓴다 — 개수는 화면 전환 잔여 노드에
 		# 오염될 수 있다.
 		_mark("preset%d" % index, b)
@@ -180,6 +213,24 @@ func _show_preset_picker() -> void:
 	back.custom_minimum_size = Vector2(0, ROW_HEIGHT)
 	back.pressed.connect(_show_slot_list)
 	_root.add_child(back)
+
+## 프리셋 초상화. PlayerSprite를 임시로 만들어 idle_down 프레임을 꺼낸다.
+## 트리에 붙이지 않으면 _ready가 돌지 않아 프레임이 없으므로, 잠깐 붙였다가
+## 텍스처만 챙기고 버린다.
+func _preset_portrait(preset: Dictionary) -> Texture2D:
+	var sprite := PlayerSprite.new()
+	sprite.setup(preset)
+	sprite.visible = false
+	add_child(sprite)
+	var tex: Texture2D = null
+	if sprite.sprite_frames != null and sprite.sprite_frames.has_animation("idle_down") \
+			and sprite.sprite_frames.get_frame_count("idle_down") > 0:
+		tex = sprite.sprite_frames.get_frame_texture("idle_down", 0)
+	remove_child(sprite)
+	sprite.queue_free()
+	if tex == null:
+		push_warning("프리셋 %s의 초상화를 만들지 못했다" % String(preset.get("id", "")))
+	return tex
 
 func _on_preset_pressed(preset_id: String) -> void:
 	_pending_preset = preset_id

@@ -16,6 +16,8 @@ var _select: CharacterSelect = null
 var _world: World = null
 
 func _ready() -> void:
+	# 이모지 폴백을 가장 먼저 붙인다 — 이후 만들어지는 모든 라벨에 적용된다.
+	Fonts.install_emoji_fallback()
 	_save = SaveManager.load_save()
 	_presets = DataFiles.load_dict("res://data/characters.json").get("presets", [])
 	_world_cfg = DataFiles.load_dict("res://data/world.json")

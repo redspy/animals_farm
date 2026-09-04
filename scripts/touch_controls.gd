@@ -23,6 +23,8 @@ signal drop_pressed
 signal emote_selected(emote_id: String)
 signal sell_requested          # (남겨둠) 확인 시트에서 전부 판매를 확정한 경우
 signal inventory_pressed       # 가방 화면 열기
+## 조이스틱 사용 여부가 바뀔 때. 세이브에 남겨 다음 접속에도 유지한다.
+signal joystick_toggled(enabled: bool)
 
 ## 터치 타깃 최소 크기. 44는 접근성 하한, 주 액션은 더 크게 잡는다.
 const BTN_MAIN := 72.0
@@ -40,6 +42,10 @@ const STICK_RADIUS := 84.0
 const STICK_DEADZONE := 0.18
 
 var move_vector := Vector2.ZERO   # world/player가 매 프레임 읽는다
+## 조이스틱을 쓸지. 끄면 이동은 탭-투-무브로만 한다 — 엄지로 화면을 가리는 게
+## 싫거나 탭 이동만으로 충분한 사람이 있다(사용자 요청).
+var joystick_enabled := true
+var _joystick_button: Button
 
 var _stick_touch_index := -1
 var _stick_origin := Vector2.ZERO
@@ -50,8 +56,9 @@ var _sell_sheet: Control
 var _emotes: Array = []
 var _hooks: TestHooks
 
-func setup(emotes: Array) -> void:
+func setup(emotes: Array, joystick_on: bool = true) -> void:
 	_emotes = emotes
+	joystick_enabled = joystick_on
 
 func _ready() -> void:
 	_hooks = TestHooks.new()
@@ -82,6 +89,23 @@ func _build_buttons() -> void:
 	# 버튼을 두지 않는 이유는 그대로다(되돌릴 수 없는 동작).
 	_add_button("가방", BTN_MED, Vector2(-(MARGIN + BTN_MAIN + 12.0 + BTN_MED), -(MARGIN + BTN_MED + 12.0 + BTN_MED)),
 		func() -> void: inventory_pressed.emit())
+	# 조이스틱 on/off — 왼쪽 위(조이스틱 영역 밖, 엄지에서 먼 자리)에 둔다.
+	# 자주 누르는 버튼이 아니고, 조이스틱 영역에 두면 조작과 겹친다.
+	_joystick_button = Button.new()
+	_joystick_button.custom_minimum_size = Vector2(118, BTN_SMALL)
+	_joystick_button.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+	_joystick_button.offset_left = MARGIN
+	_joystick_button.offset_bottom = -MARGIN
+	_joystick_button.offset_top = -(MARGIN + BTN_SMALL)
+	_joystick_button.offset_right = MARGIN + 118
+	_joystick_button.focus_mode = Control.FOCUS_NONE
+	_joystick_button.add_theme_font_size_override("font_size", BTN_FONT_SIZE)
+	_joystick_button.clip_text = true
+	_joystick_button.pressed.connect(_toggle_joystick)
+	add_child(_joystick_button)
+	_refresh_joystick_button()
+	if _hooks != null:
+		_hooks.track("joystickToggle", _joystick_button)
 
 ## offset은 우하단 앵커 기준(음수가 왼쪽/위쪽). 앵커를 쓰는 이유: 절대좌표는
 ## 세로 모드나 좁은 화면에서 화면 밖으로 나간다(기존 HUD가 그랬다).
@@ -124,6 +148,17 @@ func _mark(label: String, control: Control) -> void:
 		return
 	_hooks.track(key, control)
 
+func _toggle_joystick() -> void:
+	joystick_enabled = not joystick_enabled
+	if not joystick_enabled:
+		_release_stick()
+	_refresh_joystick_button()
+	joystick_toggled.emit(joystick_enabled)
+
+func _refresh_joystick_button() -> void:
+	if _joystick_button != null:
+		_joystick_button.text = "스틱 ON" if joystick_enabled else "스틱 OFF"
+
 func _build_stick_visual() -> void:
 	_stick_visual = Control.new()
 	_stick_visual.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -142,7 +177,9 @@ func _draw_stick() -> void:
 ## world.gd가 "이 탭이 조이스틱 영역인가"를 묻는다 — 그 영역의 탭은 이동
 ## 지시가 아니라 조이스틱 조작이다.
 func is_in_stick_area(pos: Vector2) -> bool:
-	return _in_stick_area(pos)
+	# 조이스틱을 껐으면 그 영역도 평범한 월드 탭으로 쓸 수 있어야 한다 —
+	# 안 그러면 화면 왼쪽 아래를 눌러도 아무 일도 일어나지 않는다.
+	return joystick_enabled and _in_stick_area(pos)
 
 func _in_stick_area(pos: Vector2) -> bool:
 	var vp := get_viewport().get_visible_rect().size
@@ -153,6 +190,9 @@ func _input(event: InputEvent) -> void:
 	if _emote_sheet != null and _emote_sheet.visible:
 		return
 	if _sell_sheet != null and _sell_sheet.visible:
+		return
+
+	if not joystick_enabled:
 		return
 
 	if event is InputEventScreenTouch:

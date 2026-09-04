@@ -30,7 +30,10 @@
     "stick_knob": "#ffffff8c",
     "move_marker": "#ffffff73",
     "roster_bg": "#12261fb3",
-    "roster_me": "#ffe9a8"
+    "roster_me": "#ffe9a8",
+    "bubble_bg": "#ffffffef",
+    "bubble_text": "#1b2b22",
+    "bubble_border": "#00000026"
   },
   "character": {
     "skin": "#ffd9b3",

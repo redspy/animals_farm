@@ -24,6 +24,8 @@ signal inventory_received(inventory: Dictionary)
 ## 판매 결과(서버가 정산). bells는 서버가 보관하는 최종 값이다.
 signal sold(sold: Dictionary, total: int, bells: int, inventory: Dictionary, unsold: Array)
 signal server_error(code: String, message: String)
+## 서버가 모두에게 알리는 시스템 문구(입장·퇴장 등).
+signal system_message(text: String, kind: String)
 signal rename_received(token: String, name: String)
 
 ## 내 위치는 10Hz로만 보낸다(서버 레이트 리밋과 같은 간격).
@@ -32,7 +34,9 @@ const MOVE_SEND_INTERVAL := 0.1
 ## 브라우저를 태우지 않는다.
 const RECONNECT_BACKOFF := [2.0, 4.0, 8.0, 15.0]
 ## 이만큼 움직이지 않았으면 위치를 보내지 않는다(월드 단위).
-const MOVE_EPSILON := 0.02
+## 0.02는 실측에서 너무 커서, 조금만 움직이거나 방향만 바꾼 것이 상대 화면에
+## 반영되지 않는 경우가 있었다(2026-09-04 사용자 보고).
+const MOVE_EPSILON := 0.008
 
 var connected := false
 
@@ -155,6 +159,8 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			)
 		"rename":
 			rename_received.emit(String(msg.get("token", "")), String(msg.get("name", "")))
+		"system":
+			system_message.emit(String(msg.get("text", "")), String(msg.get("kind", "")))
 		"error":
 			server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")))
 		_:
@@ -164,6 +170,27 @@ func _send(msg: Dictionary) -> void:
 	if _peer.get_ready_state() != WebSocketPeer.STATE_OPEN:
 		return
 	_peer.send_text(JSON.stringify(msg))
+
+## 멈춘 순간의 **최종 좌표를 확정 전송**한다(간격·최소 이동량 무시).
+##
+## 왜 필요한가: 미세하게 움직이다 멈추면 마지막 조각이 MOVE_EPSILON 미만이라
+## 전송되지 않고, 상대 화면에는 옛 위치·방향이 남는다. 이동이 끝나는 시점에
+## 한 번만 보내면 되므로 대역폭 비용도 거의 없다.
+func flush_move(pos: Vector3, dir: String) -> void:
+	if not connected:
+		return
+	var flat := Vector2(pos.x, pos.z)
+	if flat.is_equal_approx(_last_sent) and dir == _last_dir:
+		return
+	_move_timer = 0.0
+	_last_sent = flat
+	_last_dir = dir
+	_send({
+		"t": "move",
+		"x": snappedf(pos.x, 0.01),
+		"z": snappedf(pos.z, 0.01),
+		"dir": dir,
+	})
 
 ## 위치 전송 — 10Hz 간격이고, 실제로 움직였을 때만 보낸다.
 func send_move(pos: Vector3, dir: String) -> void:

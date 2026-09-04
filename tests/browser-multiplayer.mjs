@@ -42,7 +42,7 @@ const check = (cond, what) => {
 };
 
 const server = spawn('node', ['server/index.js'], {
-  env: { ...process.env, PORT: String(PORT) },
+  env: { ...process.env, PORT: String(PORT), TLS: 'off' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
 let serverLog = '';
