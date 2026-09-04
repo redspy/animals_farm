@@ -300,6 +300,22 @@ const afterSubmit = await page.evaluate(() => {
 check(afterSubmit === 'none', '전송 후 입력창이 닫힌다');
 await page.screenshot({ path: `${OUT}/14-채팅-전송후.png` });
 
+// --- 페이지 스크롤 고정 ---
+console.log('\n[검증] 페이지가 스크롤되지 않는다(캔버스 상단이 밀리면 HUD가 잘린다)');
+// 폰 실측: 입력창에 포커스가 가면 브라우저가 페이지를 스크롤해 캔버스 상단이
+// 화면 밖으로 밀렸고, HUD와 진단 표시가 보이지 않았다. 셸에서 화면에 고정하고
+// 스크롤이 생기면 되돌린다.
+const viewportMeta = await page.evaluate(() => {
+  const m = document.querySelector('meta[name="viewport"]');
+  return m ? m.getAttribute('content') : '';
+});
+check(/interactive-widget=resizes-content/.test(viewportMeta),
+  '뷰포트 메타에 interactive-widget=resizes-content가 있다(키보드가 레이아웃을 줄이게)');
+await page.evaluate(() => window.scrollTo(0, 400));
+await page.waitForTimeout(400);
+const scrolled = await page.evaluate(() => window.scrollY);
+check(scrolled === 0, `스크롤이 즉시 되돌아온다(scrollY=${scrolled})`);
+
 // --- 소프트 키보드가 올라올 때 카메라 보정 ---
 console.log('\n[검증] 키보드가 화면을 덮으면 캐릭터가 보이는 영역 중앙으로 올라온다');
 // 실제 소프트 키보드는 에뮬레이션할 수 없다(Playwright에 그 기능이 없다).

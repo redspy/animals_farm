@@ -2,13 +2,29 @@
 <html lang="en">
 	<head>
 		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+		<!-- [animals_farm 수정] interactive-widget=resizes-content:
+		     소프트 키보드가 올라올 때 **레이아웃 뷰포트까지 줄이게** 한다. 이러면
+		     캔버스가 보이는 영역에 맞춰 작아지고, 캐릭터는 줄어든 캔버스 중앙에
+		     그대로 남는다. 기본값(resizes-visual)에서는 캔버스 크기가 그대로여서
+		     아래쪽이 키보드에 가려지고, 브라우저가 입력창을 보이려고 페이지를
+		     스크롤해 **캔버스 상단이 화면 밖으로 밀렸다**(2026-09-05 폰 실측). -->
+		<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0, interactive-widget=resizes-content">
 		<title>$GODOT_PROJECT_NAME</title>
 		<style>
 html, body, #canvas {
 	margin: 0;
 	padding: 0;
 	border: 0;
+}
+
+html, body {
+	/* [animals_farm 수정] 페이지가 스크롤되면 캔버스 상단이 화면 밖으로 밀려
+	   HUD가 사라지고 캐릭터가 위로 치우쳐 보인다(폰 실측). 화면에 고정한다. */
+	position: fixed;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	overscroll-behavior: none;
 }
 
 body {
@@ -110,6 +126,21 @@ body {
 		<script src="$GODOT_URL"></script>
 		<script>
 const GODOT_CONFIG = $GODOT_CONFIG;
+
+// [animals_farm 수정] 입력창에 포커스가 가면 브라우저가 그걸 보이게 하려고
+// 페이지를 스크롤한다. 캔버스가 화면에 고정돼 있어야 HUD가 잘리지 않으므로,
+// 스크롤이 생기면 즉시 되돌린다.
+(function () {
+	const resetScroll = () => {
+		if (window.scrollY !== 0 || window.scrollX !== 0) window.scrollTo(0, 0);
+	};
+	window.addEventListener('scroll', resetScroll, { passive: true });
+	window.addEventListener('focusin', () => setTimeout(resetScroll, 50));
+	if (window.visualViewport) {
+		window.visualViewport.addEventListener('resize', () => setTimeout(resetScroll, 50));
+		window.visualViewport.addEventListener('scroll', resetScroll);
+	}
+})();
 
 // [animals_farm 수정] 비보안 컨텍스트(http)에서는 AudioWorklet이 아예 없어서
 // (`audioContext.audioWorklet`가 undefined) Godot 오디오 초기화가 예외를 던지고
