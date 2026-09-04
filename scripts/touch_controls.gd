@@ -133,6 +133,11 @@ func _draw_stick() -> void:
 	_stick_visual.draw_circle(_stick_origin, STICK_RADIUS, base)
 	_stick_visual.draw_circle(_stick_current, STICK_RADIUS * 0.42, knob)
 
+## world.gd가 "이 탭이 조이스틱 영역인가"를 묻는다 — 그 영역의 탭은 이동
+## 지시가 아니라 조이스틱 조작이다.
+func is_in_stick_area(pos: Vector2) -> bool:
+	return _in_stick_area(pos)
+
 func _in_stick_area(pos: Vector2) -> bool:
 	var vp := get_viewport().get_visible_rect().size
 	return pos.x <= vp.x * STICK_AREA_W_RATIO and pos.y >= vp.y * (1.0 - STICK_AREA_H_RATIO)

@@ -44,6 +44,14 @@ const PICKUP_DISTANCE := 1.6
 ## 드랍 아이템 메시 크기.
 const DROP_MESH_RADIUS := 0.18
 
+## 탭한 지점에서 이 거리 안에 대상이 있으면 "그 대상을 탭했다"로 본다(월드 단위).
+## 손가락은 뭉툭하니 넉넉해야 하지만, 너무 크면 옆 나무를 집는다.
+const TAP_PICK_RADIUS := 1.3
+## 대상에 다가갈 때 얼마나 가까이 설지 — 상호작용 사거리(1.6)보다 조금 안쪽.
+const APPROACH_DISTANCE := 1.1
+## 목표 지점 마커 크기.
+const MARKER_RADIUS := 0.34
+
 var _save: Dictionary = {}
 var _slot_index := -1
 var _slot: Dictionary = {}
@@ -58,6 +66,8 @@ var _current_zone: String = ""
 var _player: Player
 var _gatherables: Array[Gatherable] = []
 var _hud: Label
+var _bag_label: Label
+var _hint_label: Label
 var _toast: Label
 var _zone_label: Label
 var _toast_timer := 0.0
@@ -79,6 +89,10 @@ var _touch: TouchControls
 var _chat_label: Label
 var _net_label: Label
 var _my_extras: AvatarExtras
+## 탭 이동의 "도착하면 무엇을 할지". kind: ""(그냥 이동) | "gather" | "pickup"
+var _tap_intent := {"kind": "", "id": ""}
+var _marker: Node3D
+var _hooks: TestHooks
 ## 서버가 끊긴 동안 채집한 것. 다시 붙으면 서버로 흘려보낸다 — 안 하면 서버의
 ## welcome이 로컬 가방을 덮어써 오프라인 채집이 사라진다(docs/protocol.md §4).
 var _pending_gathers: Dictionary = {}
@@ -136,8 +150,15 @@ func _build_world() -> void:
 	_my_extras.set_name_text(String(_slot.get("name", "")))
 
 	_build_hud()
+	_build_marker()
+	_player.arrived.connect(_on_player_arrived)
 	_update_camera(1.0)
 	get_viewport().size_changed.connect(_on_viewport_resized)
+
+	# E2E 테스트가 월드의 대상(나무 등) 화면 위치를 알 수 있게 공개한다.
+	_hooks = TestHooks.new()
+	add_child(_hooks)
+	_publish_test_points()
 
 func _build_environment() -> void:
 	# 바다: 맵보다 넓은 평면을 살짝 아래에 깔아 섬이 물 위에 뜬 것처럼 보이게 한다.
@@ -233,6 +254,26 @@ func _camera_size_for_screen() -> float:
 	var zoom := clampf(CAMERA_BASE_ASPECT / aspect, 1.0, CAMERA_MAX_ZOOM_OUT)
 	return CAMERA_SIZE * zoom
 
+## 탭한 목표를 바닥에 표시한다 — 마커가 없으면 "눌렀는데 반응이 없다"고 느낀다.
+func _build_marker() -> void:
+	_marker = Node3D.new()
+	_marker.visible = false
+	var mesh := MeshInstance3D.new()
+	var ring := CylinderMesh.new()
+	ring.top_radius = MARKER_RADIUS
+	ring.bottom_radius = MARKER_RADIUS
+	ring.height = 0.04
+	ring.radial_segments = 20
+	mesh.mesh = ring
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Palette.color("ui", "move_marker")
+	m.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	m.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mesh.material_override = m
+	mesh.position = Vector3(0, 0.05, 0)
+	_marker.add_child(mesh)
+	add_child(_marker)
+
 func _flat_material(color: Color) -> StandardMaterial3D:
 	var m := StandardMaterial3D.new()
 	m.albedo_color = color
@@ -254,14 +295,24 @@ func _build_hud() -> void:
 	var text_color := Palette.color("ui", "hud_text")
 	var outline_color := Palette.color("ui", "hud_outline")
 
-	_hud = _make_label(layer, Control.PRESET_TOP_LEFT, text_color, outline_color)
-	_hud.offset_left = HUD_MARGIN
-	_hud.offset_top = HUD_MARGIN
-	_hud.add_theme_constant_override("line_spacing", 4)
-	# 가방 줄을 탭하면 판매 확인 시트를 띄운다 — 판매 버튼을 상시 노출하지
-	# 않는 이유는 되돌릴 수 없는 동작이기 때문이다(회의 결정 ②).
-	_hud.mouse_filter = Control.MOUSE_FILTER_STOP
-	_hud.gui_input.connect(_on_hud_clicked)
+	# HUD를 세 줄로 나눈다: 정보 / 가방(탭 가능) / 조작 안내.
+	# 예전에는 라벨 하나가 세 줄을 다 갖고 MOUSE_FILTER_STOP이라 **좌상단 텍스트
+	# 블록 전체**가 입력을 먹었다. 탭 이동을 붙이면 그 영역의 월드 탭이 판매
+	# 확인으로 새므로, 탭 대상을 가방 줄로 좁힌다.
+	var hud_box := VBoxContainer.new()
+	hud_box.set_anchors_preset(Control.PRESET_TOP_LEFT)
+	hud_box.offset_left = HUD_MARGIN
+	hud_box.offset_top = HUD_MARGIN
+	hud_box.add_theme_constant_override("separation", 2)
+	hud_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.add_child(hud_box)
+
+	_hud = _stack_label(hud_box, text_color, outline_color)
+	_bag_label = _stack_label(hud_box, text_color, outline_color)
+	# 가방 줄만 입력을 받는다 — 탭하면 판매 확인 시트가 뜬다.
+	_bag_label.mouse_filter = Control.MOUSE_FILTER_STOP
+	_bag_label.gui_input.connect(_on_bag_clicked)
+	_hint_label = _stack_label(hud_box, text_color, outline_color)
 
 	_net_label = _make_label(layer, Control.PRESET_TOP_RIGHT, Palette.color("ui", "warn_text"), outline_color)
 	_net_label.offset_right = -HUD_MARGIN
@@ -311,6 +362,16 @@ func _is_narrow_screen() -> bool:
 		return false
 	return vp.get_visible_rect().size.x < NARROW_SCREEN_WIDTH
 
+## HUD 스택 안에 들어가는 한 줄.
+func _stack_label(box: VBoxContainer, color: Color, outline: Color) -> Label:
+	var l := Label.new()
+	l.add_theme_color_override("font_color", color)
+	l.add_theme_color_override("font_outline_color", outline)
+	l.add_theme_constant_override("outline_size", 4)
+	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	box.add_child(l)
+	return l
+
 func _make_label(layer: CanvasLayer, preset: int, color: Color, outline: Color) -> Label:
 	var l := Label.new()
 	l.set_anchors_preset(preset)
@@ -321,9 +382,9 @@ func _make_label(layer: CanvasLayer, preset: int, color: Color, outline: Color) 
 	layer.add_child(l)
 	return l
 
-## 가방 줄(HUD 3번째 줄) 근처를 탭하면 판매 확인을 띄운다. 터치 UI가 없는
-## 환경에서는 기존 S 키가 그대로 즉시 판매한다.
-func _on_hud_clicked(event: InputEvent) -> void:
+## 가방 줄을 탭하면 판매 확인을 띄운다. 터치 UI가 없는 환경에서는 기존 S 키가
+## 그대로 즉시 판매한다.
+func _on_bag_clicked(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
 		return
 	var mb := event as InputEventMouseButton
@@ -408,12 +469,12 @@ func _refresh_hud() -> void:
 	var who := String(_slot.get("name", "(이름 없음)"))
 	# 조작 안내는 실제 조작 수단에 맞춘다 — 폰에서 "[방향키] 이동"은 아무 의미가
 	# 없고, 오히려 터치 UI를 못 찾게 만든다.
-	var hint := "왼쪽 아래를 끌어 이동 · 오른쪽 버튼으로 채집/채팅/감정 · 가방 줄을 탭하면 판매" \
+	var hint := "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 판매" \
 		if _touch != null \
-		else "[방향키] 이동  [Space] 채집/줍기  [S] 판매  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % maxi(_emotes.size(), 1)
-	_hud.text = "%s  |  %s\n벨: %d\n%s\n%s" % [
-		who, GameClock.label(), int(_slot.get("bells", 0)), bag, hint
-	]
+		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기)  [방향키] 이동  [Space] 채집/줍기  [S] 판매  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % maxi(_emotes.size(), 1)
+	_hud.text = "%s  |  %s\n벨: %d" % [who, GameClock.label(), int(_slot.get("bells", 0))]
+	_bag_label.text = bag
+	_hint_label.text = hint
 
 ## 채팅 로그는 최근 CHAT_LOG_LINES줄만 화면에 남긴다 — 더 쌓아두면 화면을
 ## 가리고, 스크롤 가능한 채팅창은 P6(UI 정리)에서 다룬다.
@@ -437,6 +498,14 @@ func _unhandled_input(event: InputEvent) -> void:
 	if _chat != null and _chat.is_open():
 		return
 	if _touch != null and _touch.is_sheet_open():
+		return
+
+	# 월드 탭/클릭 → 그 지점으로 이동(대상을 탭하면 다가가서 자동 처리).
+	# 터치도 기본 설정에서 마우스 이벤트로 에뮬레이트되므로 한 경로로 처리한다.
+	if event is InputEventMouseButton:
+		var mb := event as InputEventMouseButton
+		if mb.pressed and mb.button_index == MOUSE_BUTTON_LEFT:
+			_on_world_tapped(mb.position)
 		return
 
 	if event.is_action_pressed("ui_accept"):
@@ -722,6 +791,118 @@ func _try_gather() -> void:
 		return
 	nearest.gather()
 
+## 화면 좌표를 지면(y=0) 위의 월드 좌표로 바꾼다. 직교 카메라라 광선이
+## 평행하지만 평면 교차는 동일하게 동작한다(헤드리스로 실측 확인).
+func _screen_to_ground(screen_pos: Vector2) -> Variant:
+	if _camera == null:
+		return null
+	var origin := _camera.project_ray_origin(screen_pos)
+	var dir := _camera.project_ray_normal(screen_pos)
+	return Plane(Vector3.UP, 0.0).intersects_ray(origin, dir)
+
+func _on_world_tapped(screen_pos: Vector2) -> void:
+	# 조이스틱 영역의 터치는 이동 지시가 아니다 — 그 영역은 조이스틱이 쓴다.
+	if _touch != null and _touch.is_in_stick_area(screen_pos):
+		return
+	var hit: Variant = _screen_to_ground(screen_pos)
+	if hit == null:
+		return
+	var point: Vector3 = hit
+
+	# 탭한 지점 근처에 대상이 있으면 그 대상을 향한다 — 단순히 좌표로만 가면
+	# "나무 옆 정확한 자리에 서기"를 사람이 해야 하고, 그게 폰에서 가장 번거롭다.
+	var g := _gatherable_near(point)
+	if g != null:
+		_tap_intent = {"kind": "gather", "id": ""}
+		_player.move_to(_approach_point(g.global_position))
+		_show_marker(g.global_position)
+		return
+
+	var drop_id := _drop_near(point)
+	if not drop_id.is_empty():
+		_tap_intent = {"kind": "pickup", "id": drop_id}
+		_player.move_to(_approach_point((_drops[drop_id] as Node3D).position))
+		_show_marker((_drops[drop_id] as Node3D).position)
+		return
+
+	var remote := _remote_near(point)
+	if remote != null:
+		# 다른 캐릭터는 대화 거리까지만 다가간다(겹쳐 서면 서로 가린다).
+		_tap_intent = {"kind": "", "id": ""}
+		_player.move_to(_approach_point(remote.position))
+		_show_marker(remote.position)
+		return
+
+	_tap_intent = {"kind": "", "id": ""}
+	_player.move_to(point)
+	_show_marker(point)
+
+## 대상 앞 APPROACH_DISTANCE 지점 — 대상 위로 겹쳐 서지 않게 한다.
+func _approach_point(target: Vector3) -> Vector3:
+	var from := _player.position
+	var to_target := target - from
+	to_target.y = 0.0
+	if to_target.length() <= APPROACH_DISTANCE:
+		return from   # 이미 사거리 안이면 움직이지 않는다
+	return target - to_target.normalized() * APPROACH_DISTANCE
+
+func _gatherable_near(point: Vector3) -> Gatherable:
+	var best := TAP_PICK_RADIUS
+	var found: Gatherable = null
+	for g in _gatherables:
+		if not g.is_available():
+			continue
+		var d := Vector2(g.position.x, g.position.z).distance_to(Vector2(point.x, point.z))
+		if d <= best:
+			best = d
+			found = g
+	return found
+
+func _drop_near(point: Vector3) -> String:
+	var best := TAP_PICK_RADIUS
+	var found := ""
+	for id: String in _drops.keys():
+		var node: Node3D = _drops[id]
+		var d := Vector2(node.position.x, node.position.z).distance_to(Vector2(point.x, point.z))
+		if d <= best:
+			best = d
+			found = id
+	return found
+
+func _remote_near(point: Vector3) -> RemotePlayer:
+	var best := TAP_PICK_RADIUS
+	var found: RemotePlayer = null
+	for token: String in _remotes.keys():
+		var r := _remotes[token] as RemotePlayer
+		var d := Vector2(r.position.x, r.position.z).distance_to(Vector2(point.x, point.z))
+		if d <= best:
+			best = d
+			found = r
+	return found
+
+func _show_marker(at: Vector3) -> void:
+	if _marker == null:
+		return
+	_marker.position = Vector3(at.x, 0.0, at.z)
+	_marker.visible = true
+
+## 목표에 도착하면 탭할 때 정한 동작을 실행한다. 도중에 대상이 사라졌으면
+## (남이 먼저 주웠거나 채집물이 사라졌으면) 조용히 넘긴다 — 도착 자체는 정상이다.
+func _on_player_arrived() -> void:
+	if _marker != null:
+		_marker.visible = false
+	var kind := String(_tap_intent.get("kind", ""))
+	var id := String(_tap_intent.get("id", ""))
+	_tap_intent = {"kind": "", "id": ""}
+	match kind:
+		"gather":
+			_try_gather()
+		"pickup":
+			if _drops.has(id) and _net != null and _net.connected:
+				_net.send_pickup(id)
+			elif not _drops.has(id):
+				_show_toast("아쉽게도 물건이 사라졌습니다")
+
 ## 카메라를 플레이어 위로 옮긴다. weight=1.0이면 즉시 스냅.
 func _update_camera(weight: float) -> void:
 	if _camera == null or _player == null:
@@ -756,6 +937,47 @@ func _check_zone() -> void:
 		_zone_label.text = "[%s] 모임 장소 — 미니게임 준비 중" % label
 		_show_toast("%s에 들어왔습니다" % label)
 
+## E2E 테스트가 "나무를 탭"할 수 있도록 가까운 채집물의 화면 좌표를 공개한다.
+## 월드 좌표만 알아도 화면 좌표를 계산할 수 없어(카메라가 따라다닌다) 테스트가
+## 대상을 탭할 방법이 없다.
+func _publish_test_points() -> void:
+	if _hooks == null or _camera == null:
+		return
+	_hooks.track_dynamic("nearestGatherable", func() -> Vector2:
+		var g := _nearest_available_gatherable()
+		if g == null:
+			return Vector2(-1, -1)
+		return _camera.unproject_position(g.global_position + Vector3(0, 0.6, 0))
+	)
+	_hooks.track_dynamic("nearestDrop", func() -> Vector2:
+		var best := INF
+		var found: Node3D = null
+		for id: String in _drops.keys():
+			var node: Node3D = _drops[id]
+			var d := _player.position.distance_to(node.position)
+			if d < best:
+				best = d
+				found = node
+		if found == null:
+			return Vector2(-1, -1)
+		return _camera.unproject_position(found.position + Vector3(0, 0.3, 0))
+	)
+	_hooks.track_dynamic("groundRight", func() -> Vector2:
+		return _camera.unproject_position(_player.position + Vector3(3.0, 0, 0))
+	)
+
+func _nearest_available_gatherable() -> Gatherable:
+	var best := INF
+	var found: Gatherable = null
+	for g in _gatherables:
+		if not g.is_available():
+			continue
+		var d := _player.position.distance_to(g.position)
+		if d < best:
+			best = d
+			found = g
+	return found
+
 ## 슬롯에 현재 상태(위치·벨·가방)를 반영해 저장한다.
 func _persist() -> void:
 	_slot["pos"] = {"x": snappedf(_player.position.x, 0.01), "z": snappedf(_player.position.z, 0.01)}
@@ -771,6 +993,9 @@ func _on_viewport_resized() -> void:
 func _process(delta: float) -> void:
 	_update_camera(CAMERA_FOLLOW_SPEED * delta)
 
+	if _player != null and _marker != null and _marker.visible and not _player.has_target():
+		# 수동 입력으로 목표가 취소된 경우 — 마커를 남겨두면 유령이 된다.
+		_marker.visible = false
 	if _player != null:
 		# 터치 조이스틱 입력을 플레이어에 넘긴다(키보드와 병행 — player.gd가
 		# 더 큰 쪽을 쓴다). 시트가 열려 있으면 이동을 멈춘다.

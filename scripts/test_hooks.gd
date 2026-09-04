@@ -24,11 +24,21 @@ class_name TestHooks
 const GLOBAL_NAME := "afTest"
 const PUBLISH_INTERVAL := 0.4
 
+## 인스턴스가 여러 개 있어도 되게 만든 이유: 선택 화면·터치 UI·월드가 각자
+## 알려줄 지점을 갖는다. 처음에는 각 인스턴스가 window.afTest를 통째로
+## 덮어써서 뒤에 게시한 쪽만 남고 조이스틱 지점이 사라졌다(2026-09-04 실측).
+## 그래서 인스턴스별로 **자기 키만 지우고 병합**한다.
+static var _next_id := 0
+
 var _controls: Dictionary = {}   # key -> Control
-var _extra: Dictionary = {}      # key -> Vector2 (컨트롤이 아닌 지점)
+var _extra: Dictionary = {}      # key -> Vector2 (컨트롤이 아닌 고정 지점)
+var _dynamic: Dictionary = {}    # key -> Callable() -> Vector2 (매번 계산)
 var _timer := 0.0
+var _instance_id := ""
 
 func _ready() -> void:
+	_instance_id = "h%d" % _next_id
+	_next_id += 1
 	if not OS.has_feature("web"):
 		# 웹이 아니면 할 일이 없다 — 프레임마다 도는 것도 낭비다.
 		set_process(false)
@@ -41,9 +51,14 @@ func track(key: String, control: Control) -> void:
 func track_point(key: String, point: Vector2) -> void:
 	_extra[key] = point
 
+## 매 게시 때 계산해야 하는 지점(예: 카메라가 움직이는 3D 대상의 화면 좌표).
+func track_dynamic(key: String, fn: Callable) -> void:
+	_dynamic[key] = fn
+
 func clear() -> void:
 	_controls.clear()
 	_extra.clear()
+	_dynamic.clear()
 
 func _process(delta: float) -> void:
 	_timer += delta
@@ -69,5 +84,26 @@ func publish_now() -> void:
 	for key: String in _extra.keys():
 		var p: Vector2 = _extra[key]
 		parts.append('"%s":[%.1f,%.1f]' % [key, p.x, p.y])
-	var json := '{"vw":%.1f,"vh":%.1f,"points":{%s}}' % [size.x, size.y, ", ".join(parts)]
-	JavaScriptBridge.eval("window.%s = %s;" % [GLOBAL_NAME, json], true)
+	for key: String in _dynamic.keys():
+		var fn: Callable = _dynamic[key]
+		var dp: Vector2 = fn.call()
+		parts.append('"%s":[%.1f,%.1f]' % [key, dp.x, dp.y])
+	var json := "{%s}" % ", ".join(parts)
+	var keys: Array[String] = []
+	for key: String in _controls.keys():
+		keys.append('"%s"' % key)
+	for key: String in _extra.keys():
+		keys.append('"%s"' % key)
+	for key: String in _dynamic.keys():
+		keys.append('"%s"' % key)
+	JavaScriptBridge.eval("""
+		(function(){
+			var t = window.%s = window.%s || { points: {}, owners: {} };
+			var mine = t.owners['%s'] || [];
+			mine.forEach(function(k){ delete t.points[k]; });
+			t.owners['%s'] = [%s];
+			var next = %s;
+			for (var k in next) t.points[k] = next[k];
+			t.vw = %.1f; t.vh = %.1f;
+		})();
+	""" % [GLOBAL_NAME, GLOBAL_NAME, _instance_id, _instance_id, ", ".join(keys), json, size.x, size.y], true)

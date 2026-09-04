@@ -23,7 +23,8 @@
     "chat_text": "#ffffff",
     "zone_text": "#ffe9a8",
     "stick_base": "#ffffff26",
-    "stick_knob": "#ffffff8c"
+    "stick_knob": "#ffffff8c",
+    "move_marker": "#ffffff73"
   },
   "character": {
     "skin": "#ffd9b3",

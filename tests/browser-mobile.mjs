@@ -72,7 +72,7 @@ const lastPos = (token) => {
 const waitFor = async (pred, what, timeoutMs = 8000) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const hit = seen.find(pred);
+    const hit = seen.find((m, i) => pred(m, i));
     if (hit) return hit;
     await new Promise((r) => setTimeout(r, 100));
   }
@@ -223,15 +223,51 @@ const added = await waitFor((m) => m.t === 'item_add', '버리기가 서버에 �
 check(!!added, '터치로 채집한 물건을 버리기 버튼으로 놓을 수 있다(= 서버 가방에 들어갔다)');
 await page.screenshot({ path: `${OUT}/8-버리기후.png` });
 
+// --- 탭-투-무브 (클릭한 위치로 이동) ---
+console.log('\n[검증] 탭한 위치로 이동 / 대상 탭 시 자동 처리');
+
+// (1) 빈 땅 탭 → 그 지점으로 걸어간다
+const beforeTap = lastPos(token)?.x ?? 0;
+const groundPt = await godotPoint(page, 'groundRight');
+await page.touchscreen.tap(groundPt.x, groundPt.y);
+await page.waitForTimeout(1800);
+const afterTap = lastPos(token)?.x ?? 0;
+check(afterTap - beforeTap > 1.2, `빈 땅을 탭하면 그 방향으로 이동 (x ${beforeTap.toFixed(2)} → ${afterTap.toFixed(2)})`);
+await page.screenshot({ path: `${OUT}/9-탭이동.png` });
+
+// (2) 채집물 탭 → 다가가서 자동 채집. 채집이 서버 가방에 들어갔는지는
+//     이어지는 버리기(item_add)로 확인한다 — gather는 브로드캐스트되지 않는다.
+const seenBefore = seen.length;
+const treePt = await godotPoint(page, 'nearestGatherable');
+await page.touchscreen.tap(treePt.x, treePt.y);
+await page.waitForTimeout(4000);          // 접근 + 자동 채집
+await page.screenshot({ path: `${OUT}/10-대상탭-자동채집.png` });
+await tapGodot(page, 'dropButton', { touch: true });
+const added2 = await waitFor(
+  (m, i) => i >= seenBefore && m.t === 'item_add',
+  '대상 탭으로 채집한 물건이 서버 가방에 들어감',
+);
+check(!!added2, '나무를 탭하면 다가가서 자동 채집한다(버리기가 성공하는 것으로 확인)');
+
+// (3) 시트가 열린 동안의 탭은 이동으로 새지 않아야 한다
+await tapGodot(page, 'emoteButton', { touch: true });
+await page.waitForTimeout(500);
+const beforeSheetTap = lastPos(token)?.x ?? 0;
+await page.touchscreen.tap(groundPt.x, groundPt.y);   // 시트 위를 탭
+await page.waitForTimeout(1200);
+const afterSheetTap = lastPos(token)?.x ?? 0;
+check(Math.abs(afterSheetTap - beforeSheetTap) < 0.3, '시트가 열린 동안의 탭은 이동으로 새지 않는다');
+
 // --- 이모티콘 하단 시트 ---
 console.log('\n[검증] 이모티콘 하단 시트');
+// (3)에서 시트 위를 탭했으므로 시트는 닫혀 있다(시트 밖/딤 탭 = 닫기가 의도된 동작).
 await tapGodot(page, 'emoteButton', { touch: true });
 await page.waitForTimeout(600);
-await page.screenshot({ path: `${OUT}/9-이모티콘-시트.png` });
+await page.screenshot({ path: `${OUT}/11-이모티콘-시트.png` });
 await tapGodot(page, 'emoteItem1', { touch: true });
 const emote = await waitFor((m) => m.t === 'emote' && m.token === token, '이모티콘이 서버에 반영됨');
 check(!!emote, '이모티콘 시트에서 고르면 다른 기기로 전달된다');
-await page.screenshot({ path: `${OUT}/10-이모티콘-전송후.png` });
+await page.screenshot({ path: `${OUT}/12-이모티콘-전송후.png` });
 
 // --- 채팅 버튼 → DOM input이 실제로 뜨는가 ---
 console.log('\n[검증] 채팅 입력(DOM input 오버레이)');
@@ -246,7 +282,7 @@ const domInput = await page.evaluate(() => {
 check(!!domInput, '채팅 버튼을 누르면 DOM <input>이 만들어진다');
 check(domInput?.display === 'block', 'DOM input이 화면에 표시된다');
 check(domInput?.focused === true, 'DOM input에 포커스가 걸린다(모바일 키보드가 뜨는 조건)');
-await page.screenshot({ path: `${OUT}/11-채팅-DOM입력.png` });
+await page.screenshot({ path: `${OUT}/13-채팅-DOM입력.png` });
 // DOM input이므로 브라우저 네이티브 입력 — 여기서는 ASCII로 전송만 확인한다.
 await page.keyboard.type('touch hello', { delay: 40 });
 await page.keyboard.press('Enter');
@@ -257,13 +293,13 @@ const afterSubmit = await page.evaluate(() => {
   return el ? window.getComputedStyle(el).display : null;
 });
 check(afterSubmit === 'none', '전송 후 입력창이 닫힌다');
-await page.screenshot({ path: `${OUT}/12-채팅-전송후.png` });
+await page.screenshot({ path: `${OUT}/14-채팅-전송후.png` });
 
 // --- 가로 모드 전환 ---
 console.log('\n[검증] 가로 모드 회전');
 await page.setViewportSize({ width: size.height, height: size.width });
 await page.waitForTimeout(1200);
-await page.screenshot({ path: `${OUT}/13-가로모드.png` });
+await page.screenshot({ path: `${OUT}/15-가로모드.png` });
 check(true, '가로 모드로 회전 후에도 렌더 계속(스크린샷으로 잘림 확인)');
 
 obs.close();

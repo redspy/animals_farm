@@ -1,4 +1,5 @@
 import { chromium } from 'playwright';
+import { godotPoint, tapGodot } from './godot-tap.mjs';
 import WebSocket from 'ws';
 import { spawn } from 'child_process';
 import { mkdirSync, existsSync, rmSync } from 'fs';
@@ -119,7 +120,6 @@ async function newClient(label) {
 // 파이프라인(입력→서버→상대 화면)이 도는지를 ASCII로 검증한다.
 async function pickSlotAndName(client, name) {
   const { page } = client;
-  await page.locator('canvas').click({ position: { x: 480, y: 270 } });
   await page.locator('canvas').click({ position: { x: 420, y: 182 } });   // 1번 슬롯
   await page.waitForTimeout(600);
   await page.locator('canvas').click({ position: { x: 480, y: 182 } });   // 첫 프리셋
@@ -133,8 +133,13 @@ async function pickSlotAndName(client, name) {
 }
 
 const focusGame = async (page) => {
-  // 이름 입력창에서 포커스를 빼야 방향키가 게임으로 간다.
-  await page.locator('canvas').click({ position: { x: 480, y: 420 } });
+  // 캔버스에 포커스만 준다. 예전에는 캔버스를 **클릭**했는데, 탭-투-무브가
+  // 생긴 뒤로는 그 클릭이 곧 "그 지점으로 이동" 명령이 되어 이어지는 키보드
+  // 이동 검증이 어긋났다(2026-09-04 실측). 클릭 없이 focus()만 준다.
+  await page.evaluate(() => {
+    const c = document.querySelector('canvas');
+    if (c) { c.setAttribute('tabindex', '0'); c.focus(); }
+  });
   await page.waitForTimeout(150);
 };
 
@@ -157,39 +162,41 @@ const tokenA = joinA?.player?.token;
 const tokenB = joinB?.player?.token;
 check(!!tokenA && !!tokenB && tokenA !== tokenB, '두 클라이언트가 서로 다른 토큰을 쓴다(다른 기기 조건)');
 
-console.log('\n[검증] 위치 동기화');
+console.log('\n[검증] 위치 동기화 (클릭한 위치로 이동)');
 await focusGame(a.page);
-await a.page.keyboard.down('ArrowRight');
-await a.page.waitForTimeout(WALK_MS);
-await a.page.keyboard.up('ArrowRight');
-await a.page.waitForTimeout(500);
+// 고정 시간만큼 방향키를 누르는 방식은 포커스 타이밍에 따라 이동량이 달라져
+// x=2.8에서 임계값(3)을 못 넘긴 적이 있다 — 탭 이동으로 목표를 주고 도착을 본다.
+const groundA = await godotPoint(a.page, 'groundRight');
+await a.page.mouse.click(groundA.x, groundA.y);
+await a.page.waitForTimeout(2000);
 const movedA = await waitFor(
-  (m) => m.t === 'move' && (m.moves || []).some((v) => v.token === tokenA && v.x > 3),
+  (m) => m.t === 'move' && (m.moves || []).some((v) => v.token === tokenA && v.x > 1.5),
   'A의 이동이 서버를 거쳐 브로드캐스트됨',
 );
-check(!!movedA, 'A 이동 동기화(x > 3)');
+check(!!movedA, 'A가 클릭한 지점으로 이동하고 그 위치가 동기화됨');
 await b.page.waitForTimeout(600);
 await b.page.screenshot({ path: `${OUT}/mp-04-B화면에A이동.png` });
 
-console.log('\n[검증] 채집 → 드랍 → 상대가 줍기');
-await a.page.keyboard.press('Space');           // 나무 채집
-await a.page.waitForTimeout(700);
+console.log('\n[검증] 대상 클릭 → 자동 채집 → 드랍 → 상대가 클릭해 줍기');
+// 나무를 클릭하면 사거리까지 걸어가 자동 채집한다 — "정확한 자리에 서기"를
+// 테스트가 흉내낼 필요가 없어져 판정이 안정된다.
+const treeA = await godotPoint(a.page, 'nearestGatherable');
+await a.page.mouse.click(treeA.x, treeA.y);
+await a.page.waitForTimeout(4500);
 await a.page.screenshot({ path: `${OUT}/mp-05-A채집.png` });
 await a.page.keyboard.press('KeyQ');            // 발밑에 놓기
 const added = await waitFor((m) => m.t === 'item_add' && m.item?.item === TREE.item, '드랍이 브로드캐스트됨');
 // 채집이 서버 가방에 반영되지 않으면 드랍은 "가방에 없는 아이템"으로 거부된다 —
 // 이 단계가 통과하는 것 자체가 채집→서버 반영이 됐다는 증거다.
-check(!!added, `채집한 ${TREE.item}을 드랍`);
+check(!!added, `나무 클릭으로 자동 채집한 ${TREE.item}을 드랍`);
 await a.page.screenshot({ path: `${OUT}/mp-06-A드랍.png` });
 
+// B는 놓인 물건을 클릭해 다가가서 줍는다.
 await focusGame(b.page);
-await b.page.keyboard.down('ArrowRight');
-await b.page.waitForTimeout(WALK_MS);
-await b.page.keyboard.up('ArrowRight');
-await b.page.waitForTimeout(400);
-await b.page.keyboard.press('Space');           // 줍기
+const dropB = await godotPoint(b.page, 'nearestDrop');
+await b.page.mouse.click(dropB.x, dropB.y);
 const removed = await waitFor((m) => m.t === 'item_remove' && m.by === tokenB, '줍기가 브로드캐스트됨');
-check(!!removed, 'B가 A의 물건을 주웠다(서버가 소유권을 옮김)');
+check(!!removed, 'B가 물건을 클릭해 다가가서 주웠다(서버가 소유권을 옮김)');
 check(!removed || removed.id === added?.item?.id, '주운 물건이 A가 놓은 그 물건이다');
 await b.page.screenshot({ path: `${OUT}/mp-07-B줍기.png` });
 
