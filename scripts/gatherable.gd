@@ -13,6 +13,10 @@ const INTERACT_DISTANCE := 1.6
 var item_id: String = "wood"
 var kind: String = "tree"
 var respawn_sec: float = 30.0
+## data/gatherables.json에서의 순서. 서버가 채집물을 식별하는 열쇠다
+## (docs/protocol.md의 gather) — 서버와 클라이언트가 같은 데이터를 같은 순서로
+## 읽는다는 전제이며, 다르면 엉뚱한 나무가 캐진다.
+var index := -1
 
 var _available := true
 var _timer := 0.0
@@ -20,7 +24,8 @@ var _grown: Node3D = null    # 채집 가능할 때 보이는 부분(나무 몸�
 
 ## limits는 data/gatherables.json의 "limits"를 그대로 받는다 — 유효범위를
 ## 코드에 하드코딩하면 데이터 파일이 단일 출처라는 규칙이 깨진다.
-func setup(spawn: Dictionary, limits: Dictionary = {}) -> void:
+func setup(spawn: Dictionary, limits: Dictionary = {}, spawn_index: int = -1) -> void:
+	index = spawn_index
 	kind = String(spawn.get("kind", "tree"))
 	item_id = String(spawn.get("item", "wood"))
 	respawn_sec = Balance.clamp_value(
@@ -116,6 +121,15 @@ func gather() -> bool:
 		_grown.visible = false
 	gathered.emit(item_id)
 	return true
+
+## 서버가 알려준 재생 시각까지 감춘다. 서버에 붙어 있는 동안에는 로컬 타이머가
+## 아니라 이 값이 진실이다 — 두 시계가 다르면 어떤 사람에게는 있고 어떤 사람에게는
+## 없는 나무가 생긴다.
+func hide_until(seconds_from_now: float) -> void:
+	_available = false
+	_timer = maxf(seconds_from_now, 0.0)
+	if _grown != null:
+		_grown.visible = false
 
 ## 하루가 지나면 전부 되살아난다(GameClock.days_since 기반, main.gd에서 호출).
 func force_respawn() -> void:

@@ -21,7 +21,8 @@ signal action_pressed          # 채집/줍기 (기존 Space)
 signal chat_pressed
 signal drop_pressed
 signal emote_selected(emote_id: String)
-signal sell_requested          # 가방 줄 탭 → 확인 시트에서 확정
+signal sell_requested          # (남겨둠) 확인 시트에서 전부 판매를 확정한 경우
+signal inventory_pressed       # 가방 화면 열기
 
 ## 터치 타깃 최소 크기. 44는 접근성 하한, 주 액션은 더 크게 잡는다.
 const BTN_MAIN := 72.0
@@ -77,6 +78,10 @@ func _build_buttons() -> void:
 		func() -> void: _toggle_emote_sheet(true))
 	_add_button("버림", BTN_SMALL, Vector2(-(MARGIN + BTN_MED), -(MARGIN + BTN_MAIN + 12.0 + BTN_MED + 12.0 + BTN_SMALL)),
 		func() -> void: drop_pressed.emit())
+	# 가방 버튼 — 무엇을 팔지/버릴지 고르는 화면을 연다. 상시 노출되는 판매
+	# 버튼을 두지 않는 이유는 그대로다(되돌릴 수 없는 동작).
+	_add_button("가방", BTN_MED, Vector2(-(MARGIN + BTN_MAIN + 12.0 + BTN_MED), -(MARGIN + BTN_MED + 12.0 + BTN_MED)),
+		func() -> void: inventory_pressed.emit())
 
 ## offset은 우하단 앵커 기준(음수가 왼쪽/위쪽). 앵커를 쓰는 이유: 절대좌표는
 ## 세로 모드나 좁은 화면에서 화면 밖으로 나간다(기존 HUD가 그랬다).
@@ -110,6 +115,7 @@ const TEST_KEYS := {
 	"채팅": "chatButton",
 	"감정": "emoteButton",
 	"버림": "dropButton",
+	"가방": "bagButton",
 }
 
 func _mark(label: String, control: Control) -> void:

@@ -74,14 +74,84 @@ test('화이트리스트에 없는 이모티콘은 거부', () => {
   assert.ok(w.emote(TOKEN_A, 'happy', 4_001_000).emote);
 });
 
-test('채집은 서버 가방에 반영되고 레이트 리밋이 걸린다', () => {
+// 채집물 하나를 골라 그 앞에 캐릭터를 세운다.
+function standAt(w, token, g) {
+  const p = w.players.get(token);
+  p.x = g.x;
+  p.z = g.z;
+  return p;
+}
+
+test('채집은 서버가 사거리·재생 상태를 검증한다', () => {
   const w = fresh();
   w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
-  const t0 = 5_000_000;
-  assert.equal(w.gather(TOKEN_A, 'wood', t0).inventory.wood, 1);
-  assert.equal(w.gather(TOKEN_A, 'wood', t0 + 50).error.code, 'rate_limited');
-  assert.equal(w.gather(TOKEN_A, 'wood', t0 + 300).inventory.wood, 2);
-  assert.equal(w.gather(TOKEN_A, '없는아이템', t0 + 800).error.code, 'bad_item');
+  const g = w.gatherables[0];
+  assert.ok(g, 'data/gatherables.json을 서버도 읽는다');
+
+  // 멀리 있으면 거부 — 예전에는 아무 데서나 "캤다"고 주장할 수 있었다.
+  const p = w.players.get(TOKEN_A);
+  p.x = g.x + 50;
+  p.z = g.z;
+  assert.equal(w.gather(TOKEN_A, g.index, 5_000_000).error.code, 'too_far');
+
+  standAt(w, TOKEN_A, g);
+  const ok = w.gather(TOKEN_A, g.index, 5_100_000);
+  assert.equal(ok.inventory[g.item], 1, '아이템 종류는 데이터에서 읽는다');
+  assert.equal(ok.gathered.index, g.index);
+
+  // 재생 전에는 다시 캘 수 없다(레이트 리밋을 지나되 재생 시간 안인 시점).
+  assert.equal(w.gather(TOKEN_A, g.index, 5_100_000 + 1000).error.code, 'not_grown');
+  // 재생 시간이 지나면 다시 캘 수 있다.
+  assert.ok(w.gather(TOKEN_A, g.index, 5_100_000 + g.respawnSec * 1000 + 10).inventory[g.item] === 2);
+});
+
+test('없는 채집물 인덱스와 연타는 거부된다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  assert.equal(w.gather(TOKEN_A, 9999, 5_500_000).error.code, 'bad_gatherable');
+  const g = w.gatherables[1];
+  standAt(w, TOKEN_A, g);
+  assert.ok(w.gather(TOKEN_A, g.index, 5_600_000).inventory);
+  const g2 = w.gatherables[2];
+  standAt(w, TOKEN_A, g2);
+  assert.equal(w.gather(TOKEN_A, g2.index, 5_600_050).error.code, 'rate_limited');
+});
+
+test('캔 채집물은 스냅샷에 "아직 못 캠"으로 실린다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const g = w.gatherables[3];
+  standAt(w, TOKEN_A, g);
+  w.gather(TOKEN_A, g.index, 6_500_000);
+  const states = w.gatherableStates(6_500_100);
+  assert.ok(states.some((s) => s.index === g.index), '새로 들어온 사람 화면에서도 감춰야 한다');
+});
+
+test('서버가 바위를 통과하지 못하게 밀어낸다', () => {
+  const w = fresh();
+  assert.ok(w.obstacles.length > 0, 'data/world.json의 바위를 서버도 읽는다');
+  const rock = w.obstacles[0];
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const p = w.players.get(TOKEN_A);
+  p.x = rock.x - rock.radius - 2;
+  p.z = rock.z;
+  // 바위 중심으로 순간이동을 시도해도(속도 상한과 별개로) 표면 밖으로 밀린다.
+  const r = w.move(TOKEN_A, { x: rock.x, z: rock.z }, Date.now() + 60_000);
+  const d = Math.hypot(r.player.x - rock.x, r.player.z - rock.z);
+  assert.ok(d >= rock.radius, `바위 안에 들어갔다: 거리 ${d.toFixed(2)} < ${rock.radius}`);
+});
+
+test('서버가 캐릭터 겹침도 밀어낸다', () => {
+  const w = fresh();
+  const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  const b = w.join({ token: TOKEN_B, name: '나', preset: 'm1' }).player;
+  a.x = 0; a.z = 0;
+  b.x = 3; b.z = 0;
+  // B가 A 위로 파고들려 해도 최소 간격이 유지된다(움직인 쪽이 밀린다).
+  const r = w.move(TOKEN_B, { x: 0, z: 0 }, Date.now() + 60_000);
+  const d = Math.hypot(r.player.x - a.x, r.player.z - a.z);
+  assert.ok(d >= 0.79, `캐릭터가 겹쳤다: 거리 ${d.toFixed(2)}`);
+  assert.equal(a.x, 0, '가만히 있는 쪽은 밀리지 않는다');
 });
 
 test('채집 → 드랍 → 다른 사람 줍기까지 서버 가방으로 이어진다', () => {
@@ -90,7 +160,9 @@ test('채집 → 드랍 → 다른 사람 줍기까지 서버 가방으로 이�
   w.join({ token: TOKEN_B, name: '나', preset: 'm1' });
   // 예전에는 채집이 클라이언트에만 반영돼 서버 가방이 비어 드랍이 항상
   // 거부됐다(2026-09-04 2탭 실측). 이 테스트가 그 회귀를 막는다.
-  w.gather(TOKEN_A, 'wood', 6_000_000);
+  const g = w.gatherables.find((x) => x.item === 'wood');
+  standAt(w, TOKEN_A, g);
+  w.gather(TOKEN_A, g.index, 6_000_000);
   const dropped = w.drop(TOKEN_A, 'wood', 2, 2);
   assert.ok(dropped.item, '채집한 물건은 드랍할 수 있어야 함');
   assert.equal(w.pickup(TOKEN_B, dropped.item.id).inventory.wood, 1);
@@ -127,6 +199,77 @@ test('같은 아이템을 두 명이 동시에 주우면 한 명만 성공한다
 
   assert.ok(w.pickup(TOKEN_B, dropped.item.id).item, '먼저 요청한 쪽은 성공');
   assert.equal(w.pickup(TOKEN_A, dropped.item.id).error.code, 'gone', '두 번째는 거부');
+});
+
+test('판매는 서버가 정산하고 가방을 비운다', () => {
+  const w = fresh();
+  const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  a.inventory.wood = 2;    // 개당 60
+  a.inventory.shell = 1;   // 개당 180
+  const r = w.sell(TOKEN_A, null, 7_000_000);
+  assert.equal(r.total, 2 * 60 + 180, '금액은 data/items.json 가격으로 계산');
+  assert.equal(r.bells, 300);
+  assert.deepEqual(r.inventory, {}, '판 물건은 서버 가방에서도 사라진다');
+  assert.equal(a.bells, 300, '벨은 서버 레코드에 남는다');
+});
+
+test('아이템을 지정해 그 종류만 팔 수 있다', () => {
+  const w = fresh();
+  const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  a.inventory.wood = 1;
+  a.inventory.shell = 2;
+  const r = w.sell(TOKEN_A, 'shell', 7_100_000);
+  assert.equal(r.total, 360);
+  assert.equal(r.inventory.wood, 1, '지정하지 않은 아이템은 남는다');
+  assert.ok(!('shell' in r.inventory));
+});
+
+// 이 테스트가 막는 회귀: 예전에는 판매가 클라이언트에만 반영돼 서버 가방이
+// 그대로였고, 재접속 시 welcome이 서버 가방으로 덮어써 판 물건이 되살아났다.
+// 벨은 이미 받은 상태라 이 과정을 반복하면 무한히 불릴 수 있었다.
+test('판매 후 재접속해도 판 물건이 되살아나지 않는다', () => {
+  const w = fresh();
+  const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  a.inventory.fruit = 3;
+  const r = w.sell(TOKEN_A, null, 7_200_000);
+  assert.equal(r.total, 300);
+  w.leave(TOKEN_A);
+
+  const again = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  assert.deepEqual(again.inventory, {}, '가방이 비어 있어야 한다');
+  assert.equal(again.bells, 300, '벨은 유지된다(기기를 바꿔도 같은 값)');
+});
+
+test('빈 가방 판매와 연타는 거부된다', () => {
+  const w = fresh();
+  const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  assert.equal(w.sell(TOKEN_A, null, 7_300_000).error.code, 'empty_bag');
+  a.inventory.weed = 1;
+  assert.ok(w.sell(TOKEN_A, null, 7_310_000).total > 0);
+  a.inventory.weed = 1;
+  assert.equal(w.sell(TOKEN_A, null, 7_310_100).error.code, 'rate_limited');
+});
+
+test('가격을 모르는 아이템은 팔리지 않고 가방에 남는다', () => {
+  const w = fresh();
+  const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  a.inventory.wood = 1;
+  a.inventory['정체불명'] = 5;   // data/items.json에 없는 아이템
+  const r = w.sell(TOKEN_A, null, 7_400_000);
+  assert.equal(r.total, 60);
+  assert.deepEqual(r.unsold, ['정체불명']);
+  assert.equal(r.inventory['정체불명'], 5, '가격 미상 아이템은 남는다(손실 방지)');
+});
+
+test('가격이 유효범위를 벗어나면 클램프된 값으로 정산된다', () => {
+  const w = fresh();
+  // items.json의 weed는 [1, 100] 범위 — 범위 밖 가격을 넣어 클램프를 확인한다.
+  w.itemDefs = { odd: { label: '이상', sell_price: 99999, price_range: [1, 100] } };
+  w.itemIds = new Set(['odd']);
+  const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  a.inventory.odd = 2;
+  const r = w.sell(TOKEN_A, null, 7_500_000);
+  assert.equal(r.total, 200, '100(상한)×2로 정산');
 });
 
 test('월드 아이템 총량 상한', () => {

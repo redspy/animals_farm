@@ -185,12 +185,25 @@ const overlapFrom = seen.length;
 // (-1,-1)이라 클릭이 무의미하므로, **관측 좌표를 보며 방향키로 접근**한다
 // (처음엔 훅 클릭만 써서 최소 거리가 13.9로 나왔다 — 애초에 못 만난 것이다).
 async function walkTowardA(maxMs = 12000) {
+  // 아직 한 번도 움직이지 않은 클라이언트는 move 브로드캐스트가 없어 좌표를
+  // 알 수 없다 — 그 상태로 루프를 돌면 즉시 빠져나가 접근을 안 한다(실측:
+  // 최소 거리 4.96으로 실패). 먼저 살짝 움직여 좌표를 알린다.
+  for (const page of [b.page, a.page]) {
+    await page.keyboard.down('ArrowUp');
+    await page.waitForTimeout(250);
+    await page.keyboard.up('ArrowUp');
+  }
+  await b.page.waitForTimeout(400);
+
   const t0 = Date.now();
   let held = null;
   while (Date.now() - t0 < maxMs) {
     const pa = lastPos(tokenA);
     const pb = lastPos(tokenB);
-    if (!pa || !pb) break;
+    if (!pa || !pb) {
+      await b.page.waitForTimeout(150);
+      continue;
+    }
     const dx = pa.x - pb.x;
     const dz = pa.z - pb.z;
     if (Math.hypot(dx, dz) < 0.9) break;   // 겹침 한계(0.8)에 닿음
@@ -367,6 +380,31 @@ const invAfter = seen.filter((m) => m.t === 'inventory').length;
 check(invAfter === invBefore,
   `취소된 채집 의도가 나중에 실행되지 않는다(inventory 갱신 ${invBefore} → ${invAfter})`);
 
+console.log('\n[검증] 가방 화면에서 골라 판매 (서버 정산)');
+// 판매 결과(`sold`)는 **본인에게만** 가므로 WS 옵저버로는 볼 수 없다(설계상 맞다).
+// 게임이 훅으로 공개하는 상태(벨·가방)를 읽어 판정한다.
+const gameState = async (page) => page.evaluate(() => (window.afTest && window.afTest.state) || {});
+
+await focusGame(a.page);
+const treeForSell = await godotPoint(a.page, 'nearestGatherable');
+await a.page.mouse.click(treeForSell.x, treeForSell.y);
+await a.page.waitForTimeout(4000);           // 접근 + 자동 채집
+const stBefore = await gameState(a.page);
+check((stBefore.bagCount ?? 0) > 0, `판매 전 가방에 물건이 있다(${stBefore.bagCount ?? 0}개)`);
+
+await a.page.keyboard.press('KeyI');          // 가방 열기
+await a.page.waitForTimeout(700);
+await a.page.screenshot({ path: `${OUT}/mp-10-가방화면.png` });
+await tapGodot(a.page, 'invSell1');           // 첫 항목만 판매
+await a.page.waitForTimeout(1200);
+const stAfter = await gameState(a.page);
+console.log(`  (벨 ${stBefore.bells ?? 0} → ${stAfter.bells ?? 0}, 가방 ${stBefore.bagCount ?? 0} → ${stAfter.bagCount ?? 0}개)`);
+check((stAfter.bells ?? 0) > (stBefore.bells ?? 0), `판매로 벨이 늘었다(${stBefore.bells ?? 0} → ${stAfter.bells ?? 0})`);
+check((stAfter.bagCount ?? 99) < (stBefore.bagCount ?? 0), '판 물건이 가방에서 빠졌다');
+await a.page.screenshot({ path: `${OUT}/mp-11-판매후.png` });
+await tapGodot(a.page, 'invClose');
+await a.page.waitForTimeout(400);
+
 console.log('\n[검증] 하단 접속자 바');
 // 접속자 바는 캔버스에 그려져 DOM으로 읽을 수 없다 — 게임이 훅으로 알려주는
 // 항목 좌표(rosterEntry1..N)로 "몇 명이 표시되는지"를 판정한다.
@@ -378,7 +416,7 @@ const rosterPoints = await a.page.evaluate(() => {
 console.log(`  (접속자 바 항목 ${rosterPoints.length}개: ${rosterPoints.join(', ')})`);
 // A 화면에는 자기 자신 + B + 옵저버(Obs) = 3명이 보여야 한다.
 check(rosterPoints.length >= 3, `접속한 캐릭터가 하단 바에 모두 표시된다(${rosterPoints.length}명)`);
-await a.page.screenshot({ path: `${OUT}/mp-10-접속자바.png` });
+await a.page.screenshot({ path: `${OUT}/mp-12-접속자바.png` });
 
 console.log('\n[검증] 채팅');
 await b.page.keyboard.press('KeyT');
@@ -389,7 +427,7 @@ const chat = await waitFor((m) => m.t === 'chat' && m.text === 'hello there', '�
 check(!!chat, 'B의 채팅이 서버를 거쳐 전달됨');
 check(!chat || chat.name === 'Bora', '채팅에 보낸 사람 이름이 붙는다');
 await a.page.waitForTimeout(700);
-await a.page.screenshot({ path: `${OUT}/mp-11-A화면에B채팅.png` });
+await a.page.screenshot({ path: `${OUT}/mp-13-A화면에B채팅.png` });
 
 console.log('\n[검증] 감정 표현 이모티콘');
 await focusGame(a.page);
@@ -397,7 +435,7 @@ await a.page.keyboard.press('Digit1');
 const emote = await waitFor((m) => m.t === 'emote' && m.token === tokenA, '이모티콘이 브로드캐스트됨');
 check(!!emote, 'A의 이모티콘이 서버를 거쳐 전달됨');
 await b.page.waitForTimeout(700);
-await b.page.screenshot({ path: `${OUT}/mp-12-B화면에A이모티콘.png` });
+await b.page.screenshot({ path: `${OUT}/mp-14-B화면에A이모티콘.png` });
 
 const errors = [...a.errors, ...b.errors];
 obs.close();

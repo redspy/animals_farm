@@ -33,6 +33,9 @@ static var _next_id := 0
 var _controls: Dictionary = {}   # key -> Control
 var _extra: Dictionary = {}      # key -> Vector2 (컨트롤이 아닌 고정 지점)
 var _dynamic: Dictionary = {}    # key -> Callable() -> Vector2 (매번 계산)
+## 좌표가 아닌 게임 상태(벨·가방 개수 등). 판매처럼 **본인에게만 오는 결과**는
+## 옵저버(WS)로 볼 수 없어서, E2E가 확인할 방법이 이것뿐이다.
+var _state: Dictionary = {}
 var _timer := 0.0
 var _instance_id := ""
 
@@ -54,6 +57,10 @@ func track_point(key: String, point: Vector2) -> void:
 ## 매 게시 때 계산해야 하는 지점(예: 카메라가 움직이는 3D 대상의 화면 좌표).
 func track_dynamic(key: String, fn: Callable) -> void:
 	_dynamic[key] = fn
+
+## 숫자/문자열 상태를 공개한다. 값이 바뀔 때만 호출하면 된다.
+func set_state(key: String, value: Variant) -> void:
+	_state[key] = value
 
 ## 등록을 하나만 취소한다(목록이 줄어드는 UI: 접속자 바 등).
 func untrack(key: String) -> void:
@@ -110,6 +117,19 @@ func publish_now() -> void:
 			t.owners['%s'] = [%s];
 			var next = %s;
 			for (var k in next) t.points[k] = next[k];
+			t.state = t.state || {};
+			var st = %s;
+			for (var k2 in st) t.state[k2] = st[k2];
 			t.vw = %.1f; t.vh = %.1f;
 		})();
-	""" % [GLOBAL_NAME, GLOBAL_NAME, _instance_id, _instance_id, ", ".join(keys), json, size.x, size.y], true)
+	""" % [GLOBAL_NAME, GLOBAL_NAME, _instance_id, _instance_id, ", ".join(keys), json, _state_json(), size.x, size.y], true)
+
+func _state_json() -> String:
+	var parts: Array[String] = []
+	for key: String in _state.keys():
+		var v: Variant = _state[key]
+		if typeof(v) == TYPE_STRING:
+			parts.append('"%s":"%s"' % [key, String(v).replace('"', "")])
+		else:
+			parts.append('"%s":%s' % [key, str(v)])
+	return "{%s}" % ", ".join(parts)

@@ -182,7 +182,11 @@ function handle(ws, msg) {
 
     sendTo(ws, {
       t: 'welcome',
-      you: { token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir, inventory: p.inventory },
+      you: {
+        token: p.token, name: p.name, preset: p.preset,
+        x: p.x, z: p.z, dir: p.dir,
+        inventory: p.inventory, bells: p.bells,
+      },
       world: { size_x: world.sizeX, size_z: world.sizeZ },
     });
     sendTo(ws, { t: 'snapshot', ...world.snapshot() });
@@ -215,9 +219,18 @@ function handle(ws, msg) {
       break;
     }
     case 'gather': {
-      const r = world.gather(ws.token, msg.item);
+      // 아이템 종류는 클라이언트 주장이 아니라 데이터에서 읽는다 — index만 받는다.
+      const r = world.gather(ws.token, msg.index);
       if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
       sendTo(ws, { t: 'inventory', inventory: r.inventory });
+      // 캔 채집물은 모두에게 숨겨야 한다(누가 캤는지도 함께).
+      broadcast({ t: 'gathered', ...r.gathered, by: ws.token });
+      break;
+    }
+    case 'sell': {
+      const r = world.sell(ws.token, msg.item ?? null);
+      if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      sendTo(ws, { t: 'sold', sold: r.sold, total: r.total, bells: r.bells, inventory: r.inventory, unsold: r.unsold });
       break;
     }
     case 'drop': {

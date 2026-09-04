@@ -109,6 +109,7 @@ var _tap_gatherable: Gatherable = null
 var _marker: Node3D
 ## 하단 접속자 바(내 캐릭터 + 접속 중인 다른 캐릭터의 초상화·이름).
 var _roster_box: HBoxContainer
+var _inventory_ui: InventoryUI
 var _hooks: TestHooks
 ## 서버가 끊긴 동안 채집한 것. 다시 붙으면 서버로 흘려보낸다 — 안 하면 서버의
 ## welcome이 로컬 가방을 덮어써 오프라인 채집이 사라진다(docs/protocol.md §4).
@@ -145,11 +146,13 @@ func _build_world() -> void:
 
 	var spawn_data := DataFiles.load_dict("res://data/gatherables.json")
 	var limits: Dictionary = spawn_data.get("limits", {})
+	var spawn_index := -1
 	for spawn: Variant in spawn_data.get("spawns", []):
+		spawn_index += 1
 		if typeof(spawn) != TYPE_DICTIONARY:
 			continue
 		var g := Gatherable.new()
-		g.setup(spawn as Dictionary, limits)
+		g.setup(spawn as Dictionary, limits, spawn_index)
 		g.gathered.connect(_on_gathered)
 		add_child(g)
 		_gatherables.append(g)
@@ -407,8 +410,11 @@ func _build_hud() -> void:
 		_touch.action_pressed.connect(_try_interact)
 		_touch.chat_pressed.connect(_open_chat_input)
 		_touch.drop_pressed.connect(_drop_one)
+		_touch.inventory_pressed.connect(_open_inventory)
 		_touch.emote_selected.connect(_send_emote)
-		_touch.sell_requested.connect(_sell_all)
+		# 터치 UI의 판매 확인 시트는 가방 화면으로 대체됐다 — 무엇을 파는지
+		# 고르지 못하는 "전부 판매"만 있는 것이 위험했다.
+		_touch.sell_requested.connect(func() -> void: _sell(""))
 		add_child(_touch)
 
 func _is_narrow_screen() -> bool:
@@ -445,8 +451,7 @@ func _on_bag_clicked(event: InputEvent) -> void:
 	var mb := event as InputEventMouseButton
 	if not mb.pressed or mb.button_index != MOUSE_BUTTON_LEFT:
 		return
-	if _touch != null:
-		_touch.show_sell_confirm()
+	_open_inventory()
 
 ## 마지막 접속 이후 하루 이상 지났으면 채집물 전체를 되살린다.
 func _apply_daily_respawn() -> void:
@@ -457,50 +462,41 @@ func _apply_daily_respawn() -> void:
 		g.force_respawn()
 	_show_toast("%d일이 지났습니다 — 섬이 새로 자랐어요" % days)
 
+## 채집물이 "캐졌다"고 알릴 때. 서버에 붙어 있으면 **서버가 판정**하므로
+## 여기서 가방을 건드리지 않는다 — 서버가 거부하면(사거리·재생 시간) 화면과
+## 실제가 갈리기 때문이다. 오프라인일 때만 로컬에 반영한다.
 func _on_gathered(item_id: String) -> void:
-	# 가방의 단일 출처는 서버다(드랍/줍기가 서버 권위이므로 채집도 같은 곳에
-	# 반영해야 한다). 화면 반응성을 위해 로컬에도 즉시 더하고, 서버 응답이
-	# 오면 그 값으로 맞춘다.
+	if _net != null and _net.connected:
+		return
 	var inv: Dictionary = _slot.get("inventory", {})
 	inv[item_id] = int(inv.get(item_id, 0)) + 1
 	_slot["inventory"] = inv
-	_show_toast("%s 채집!" % _label_of(item_id))
+	_show_toast("%s 채집! (오프라인)" % _label_of(item_id))
 	_refresh_hud()
-	if _net != null and _net.connected:
-		_net.send_gather(item_id)
-	else:
-		_pending_gathers[item_id] = int(_pending_gathers.get(item_id, 0)) + 1
+	_pending_gathers[item_id] = int(_pending_gathers.get(item_id, 0)) + 1
 
-func _sell_all() -> void:
+## 판매 요청. **정산은 서버가 한다**(docs/protocol.md) — 예전에는 클라이언트가
+## 자기 슬롯에서만 팔아서 서버 가방은 그대로였고, 재접속하면 판 물건이
+## 되살아나면서 벨은 남는 무한 획득 경로가 있었다(2026-09-04 발견).
+##
+## item_id가 비면 전부 판매.
+func _sell(item_id: String = "") -> void:
+	if _net == null or not _net.connected:
+		# 오프라인 판매를 허용하면 서버와 다시 갈린다 — 드랍/줍기와 같은 이유로 막는다.
+		_show_toast("서버에 연결돼 있지 않아 판매할 수 없습니다")
+		return
 	var inv: Dictionary = _slot.get("inventory", {})
 	if inv.is_empty():
 		_show_toast("팔 물건이 없습니다")
 		return
-	var total := 0
-	var unsold := {}
-	for item_id: String in inv.keys():
-		var price := _price_of(item_id)
-		if price < 0:
-			# 가격을 모르는 아이템은 팔지 않고 가방에 남긴다(손실 방지).
-			unsold[item_id] = inv[item_id]
-			continue
-		total += int(inv[item_id]) * price
-	_slot["bells"] = int(_slot.get("bells", 0)) + total
-	_slot["inventory"] = unsold
-	if unsold.is_empty():
-		_show_toast("%d벨에 판매했습니다" % total)
-	else:
-		_show_toast("%d벨에 판매했습니다 (가격 미상 %d종은 남겨둠)" % [total, unsold.size()])
-	_refresh_hud()
-	_persist()
+	_net.send_sell(item_id)
 
 func _label_of(item_id: String) -> String:
 	var meta: Dictionary = _items.get(item_id, {})
 	return String(meta.get("label", item_id))
 
-## 가격은 data/items.json이 유일한 출처이며, 유효범위(price_range)를 벗어난
-## 값은 데이터 오타로 보고 클램프한다. 클램프/경고 규칙은 Balance가 소유해
-## 채집물 쪽과 동일하게 동작한다.
+## 화면 표시용 가격(가방 목록의 "개당 N벨"). **정산은 서버가 자기 값으로**
+## 하므로 이 값은 안내일 뿐이다 — 서버도 같은 data/items.json을 읽으니 값은 같다.
 func _price_of(item_id: String) -> int:
 	if not _items.has(item_id):
 		# 알 수 없는 아이템을 0벨로 조용히 처리하면 판매 시 가방에서 사라져
@@ -524,12 +520,22 @@ func _refresh_hud() -> void:
 	var who := String(_slot.get("name", "(이름 없음)"))
 	# 조작 안내는 실제 조작 수단에 맞춘다 — 폰에서 "[방향키] 이동"은 아무 의미가
 	# 없고, 오히려 터치 UI를 못 찾게 만든다.
-	var hint := "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 판매" \
+	var hint := "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 가방" \
 		if _touch != null \
-		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기)  [방향키] 이동  [Space] 채집/줍기  [S] 판매  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % maxi(_emotes.size(), 1)
+		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기)  [방향키] 이동  [Space] 채집/줍기  [I] 가방  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % maxi(_emotes.size(), 1)
 	_hud.text = "%s  |  %s\n벨: %d" % [who, GameClock.label(), int(_slot.get("bells", 0))]
 	_bag_label.text = bag
 	_hint_label.text = hint
+
+	# E2E가 확인할 수 있게 상태를 공개한다 — 판매 결과처럼 본인에게만 오는
+	# 값은 WS 옵저버로 볼 수 없다(scripts/test_hooks.gd).
+	if _hooks != null:
+		var count := 0
+		for item_id: String in inv.keys():
+			count += int(inv[item_id])
+		_hooks.set_state("bells", int(_slot.get("bells", 0)))
+		_hooks.set_state("bagKinds", inv.size())
+		_hooks.set_state("bagCount", count)
 
 ## 하단 접속자 바를 다시 만든다. 접속/퇴장/이름변경 때마다 호출된다.
 ##
@@ -628,6 +634,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if _touch != null and _touch.is_sheet_open():
 		return
+	if _inventory_ui != null and is_instance_valid(_inventory_ui):
+		return
 
 	# 월드 탭/클릭 → 그 지점으로 이동(대상을 탭하면 다가가서 자동 처리).
 	# 터치도 기본 설정에서 마우스 이벤트로 에뮬레이트되므로 한 경로로 처리한다.
@@ -643,8 +651,10 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not (event is InputEventKey) or not event.pressed or event.echo:
 		return
 	match (event as InputEventKey).keycode:
-		KEY_S:
-			_sell_all()
+		KEY_S, KEY_I:
+			# 즉시 전부 판매하던 단축키를 **가방 화면 열기**로 바꿨다. 판매는
+			# 되돌릴 수 없는데 키 한 번에 전량이 팔리는 건 위험하다.
+			_open_inventory()
 		KEY_T:
 			_open_chat_input()
 		KEY_Q:
@@ -710,6 +720,30 @@ func _drop_one() -> void:
 	# 서버가 거절했을 때 화면과 실제가 갈린다.
 	_net.send_drop(item_id, _player.position)
 
+## 가방 화면을 연다. 이미 열려 있으면 무시.
+func _open_inventory() -> void:
+	if _inventory_ui != null and is_instance_valid(_inventory_ui):
+		return
+	_inventory_ui = InventoryUI.new()
+	_inventory_ui.setup(_items)
+	_inventory_ui.drop_requested.connect(_on_inventory_drop)
+	_inventory_ui.sell_requested.connect(func(item_id: String) -> void: _sell(item_id))
+	_inventory_ui.sell_all_requested.connect(func() -> void: _sell(""))
+	_inventory_ui.closed.connect(func() -> void: _inventory_ui = null)
+	add_child(_inventory_ui)
+	# 자식이 _ready를 지난 뒤에 내용을 채운다.
+	_refresh_inventory_ui.call_deferred()
+
+func _refresh_inventory_ui() -> void:
+	if _inventory_ui != null and is_instance_valid(_inventory_ui):
+		_inventory_ui.refresh(_slot.get("inventory", {}), int(_slot.get("bells", 0)))
+
+func _on_inventory_drop(item_id: String) -> void:
+	if _net == null or not _net.connected:
+		_show_toast("서버에 연결돼 있지 않아 물건을 놓을 수 없습니다")
+		return
+	_net.send_drop(item_id, _player.position)
+
 func _open_chat_input() -> void:
 	if _chat != null:
 		_chat.open()
@@ -741,18 +775,24 @@ func _start_net() -> void:
 	_net.emote_received.connect(_on_emote)
 	_net.item_added.connect(_on_item_added)
 	_net.item_removed.connect(_on_item_removed)
+	_net.gathered.connect(_on_server_gathered)
 	_net.inventory_received.connect(_on_inventory)
+	_net.sold.connect(_on_sold)
 	_net.rename_received.connect(_on_rename)
 	_net.server_error.connect(_on_server_error)
 	_net.start(String(_slot.get("token", "")), String(_slot.get("name", "")), String(_slot.get("preset", "")))
 
 func _on_net_opened() -> void:
 	_net_label.text = "서버 연결됨"
-	# 오프라인 동안 채집한 것을 흘려보낸다(순서는 중요하지 않다).
-	for item_id: String in _pending_gathers.keys():
-		for _i in int(_pending_gathers[item_id]):
-			_net.send_gather(item_id)
-	_pending_gathers.clear()
+	# 오프라인 채집은 서버로 보낼 수 없다: 서버 채집은 "어느 채집물을 캤는지"를
+	# 검증하는 구조로 바뀌었고(사거리·재생 시간), 뒤늦게 보내면 그 검증이
+	# 무의미해진다. 그래서 버리되 **조용히 버리지 않고** 알린다.
+	if not _pending_gathers.is_empty():
+		var count := 0
+		for item_id: String in _pending_gathers.keys():
+			count += int(_pending_gathers[item_id])
+		_show_toast("오프라인에서 캔 %d개는 서버 기록으로 대체됩니다" % count)
+		_pending_gathers.clear()
 
 func _on_net_closed(reason: String) -> void:
 	_net_label.text = "서버 끊김 — 혼자 플레이 (재연결 시도 중)"
@@ -774,7 +814,11 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary) -> void:
 	_update_camera(1.0)
 	if typeof(you.get("inventory")) == TYPE_DICTIONARY:
 		_slot["inventory"] = you["inventory"]
-		_refresh_hud()
+	if you.has("bells"):
+		# 벨의 단일 출처는 서버다. 기기를 바꿔도 같은 값이 보인다.
+		_slot["bells"] = int(you["bells"])
+	_refresh_hud()
+	_refresh_inventory_ui()
 	var sx := float(world_cfg.get("size_x", _world_size.x))
 	var sz := float(world_cfg.get("size_z", _world_size.y))
 	if not is_equal_approx(sx, _world_size.x) or not is_equal_approx(sz, _world_size.y):
@@ -783,7 +827,8 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary) -> void:
 		push_warning("서버 월드 크기(%.1f x %.1f)가 클라이언트(%.1f x %.1f)와 다르다" % [sx, sz, _world_size.x, _world_size.y])
 	_append_chat("서버에 접속했습니다")
 
-func _on_snapshot(players: Array, items: Array) -> void:
+func _on_snapshot(players: Array, items: Array, gatherables: Array) -> void:
+	_apply_gatherable_states(gatherables)
 	for p: Variant in players:
 		if typeof(p) == TYPE_DICTIONARY:
 			_on_player_joined(p as Dictionary)
@@ -894,10 +939,51 @@ func _on_item_removed(id: String, by: String) -> void:
 	if by == String(_slot.get("token", "")):
 		_show_toast("%s 줍기!" % _label_of(item_id))
 
+## 서버가 "이 채집물이 캐졌다"고 알려주면 모두의 화면에서 감춘다.
+## availableAt은 서버 시계의 밀리초라 그대로 쓸 수 없어 남은 시간으로 바꿔 쓴다.
+func _on_server_gathered(index: int, item: String, available_at: float, by: String) -> void:
+	for g in _gatherables:
+		if g.index != index:
+			continue
+		var remain := maxf((available_at - Time.get_unix_time_from_system() * 1000.0) / 1000.0, 0.0)
+		if remain <= 0.0:
+			remain = g.respawn_sec
+		g.hide_until(remain)
+		break
+	if by == String(_slot.get("token", "")):
+		_show_toast("%s 채집!" % _label_of(item))
+
+## 스냅샷의 채집물 상태 — 이미 캔 나무를 새로 들어온 화면에서도 감춘다.
+func _apply_gatherable_states(states: Array) -> void:
+	for s: Variant in states:
+		if typeof(s) != TYPE_DICTIONARY:
+			continue
+		var state := s as Dictionary
+		var index := int(state.get("index", -1))
+		var remain := maxf((float(state.get("availableAt", 0.0)) - Time.get_unix_time_from_system() * 1000.0) / 1000.0, 0.0)
+		for g in _gatherables:
+			if g.index == index:
+				g.hide_until(remain)
+				break
+
 func _on_inventory(inventory: Dictionary) -> void:
 	# 가방의 최종 판정은 서버다(중복 획득 방지, docs/protocol.md §3).
 	_slot["inventory"] = inventory
 	_refresh_hud()
+	_refresh_inventory_ui()
+	_persist()
+
+## 판매 결과. 벨도 서버 값으로 맞춘다 — 클라이언트가 따로 더하면 두 값이 갈린다.
+func _on_sold(sold: Dictionary, total: int, bells: int, inventory: Dictionary, unsold: Array) -> void:
+	_slot["inventory"] = inventory
+	_slot["bells"] = bells
+	var kinds := sold.size()
+	if unsold.is_empty():
+		_show_toast("%d벨에 판매했습니다 (%d종)" % [total, kinds])
+	else:
+		_show_toast("%d벨에 판매했습니다 (가격 미상 %d종은 남겨둠)" % [total, unsold.size()])
+	_refresh_hud()
+	_refresh_inventory_ui()
 	_persist()
 
 func _on_rename(token: String, new_name: String) -> void:
@@ -923,7 +1009,12 @@ func _try_gather() -> void:
 	if nearest == null:
 		_show_toast("주변에 채집할 것이 없습니다")
 		return
-	nearest.gather()
+	if _net != null and _net.connected:
+		# 서버가 사거리·재생 상태를 검증하고, 성공하면 gathered 브로드캐스트로
+		# 모두의 화면에서 감춘다. 여기서 미리 감추면 거부됐을 때 어긋난다.
+		_net.send_gather(nearest.index)
+	else:
+		nearest.gather()
 
 ## 화면 좌표를 지면(y=0) 위의 월드 좌표로 바꾼다. 직교 카메라라 광선이
 ## 평행하지만 평면 교차는 동일하게 동작한다(헤드리스로 실측 확인).
@@ -1042,7 +1133,10 @@ func _on_player_arrived() -> void:
 			# 탭한 그 대상만 캔다. "근처에서 아무거나"로 두면 지나가다 옆 나무를
 			# 캐게 된다.
 			if target != null and is_instance_valid(target) and target.can_interact(_player.position):
-				target.gather()
+				if _net != null and _net.connected:
+					_net.send_gather(target.index)
+				else:
+					target.gather()
 			elif target != null:
 				_show_toast("조금 더 가까이 가야 합니다")
 		"pickup":

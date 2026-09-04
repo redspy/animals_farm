@@ -10,7 +10,7 @@ class_name Net
 signal opened
 signal closed(reason: String)
 signal welcomed(you: Dictionary, world: Dictionary)
-signal snapshot_received(players: Array, items: Array)
+signal snapshot_received(players: Array, items: Array, gatherables: Array)
 signal player_joined(player: Dictionary)
 signal player_left(token: String)
 signal moves_received(moves: Array)
@@ -18,7 +18,11 @@ signal chat_received(msg: Dictionary)
 signal emote_received(msg: Dictionary)
 signal item_added(item: Dictionary)
 signal item_removed(id: String, by: String)
+## 누군가 채집물을 캤다 — 모두의 화면에서 그 채집물을 숨겨야 한다.
+signal gathered(index: int, item: String, available_at: float, by: String)
 signal inventory_received(inventory: Dictionary)
+## 판매 결과(서버가 정산). bells는 서버가 보관하는 최종 값이다.
+signal sold(sold: Dictionary, total: int, bells: int, inventory: Dictionary, unsold: Array)
 signal server_error(code: String, message: String)
 signal rename_received(token: String, name: String)
 
@@ -122,7 +126,7 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 		"welcome":
 			welcomed.emit(msg.get("you", {}), msg.get("world", {}))
 		"snapshot":
-			snapshot_received.emit(msg.get("players", []), msg.get("items", []))
+			snapshot_received.emit(msg.get("players", []), msg.get("items", []), msg.get("gatherables", []))
 		"join":
 			player_joined.emit(msg.get("player", {}))
 		"leave":
@@ -137,8 +141,18 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			item_added.emit(msg.get("item", {}))
 		"item_remove":
 			item_removed.emit(String(msg.get("id", "")), String(msg.get("by", "")))
+		"gathered":
+			gathered.emit(
+				int(msg.get("index", -1)), String(msg.get("item", "")),
+				float(msg.get("availableAt", 0.0)), String(msg.get("by", ""))
+			)
 		"inventory":
 			inventory_received.emit(msg.get("inventory", {}))
+		"sold":
+			sold.emit(
+				msg.get("sold", {}), int(msg.get("total", 0)), int(msg.get("bells", 0)),
+				msg.get("inventory", {}), msg.get("unsold", [])
+			)
 		"rename":
 			rename_received.emit(String(msg.get("token", "")), String(msg.get("name", "")))
 		"error":
@@ -168,8 +182,17 @@ func send_move(pos: Vector3, dir: String) -> void:
 		"dir": dir,
 	})
 
-func send_gather(item_id: String) -> void:
-	_send({"t": "gather", "item": item_id})
+## 채집물의 인덱스(data/gatherables.json의 순서)를 보낸다. 아이템 종류는 서버가
+## 데이터에서 읽으므로 클라이언트가 주장하지 않는다.
+func send_gather(index: int) -> void:
+	_send({"t": "gather", "index": index})
+
+## item_id가 비어 있으면 팔 수 있는 것 전부.
+func send_sell(item_id: String = "") -> void:
+	var msg := {"t": "sell"}
+	if not item_id.is_empty():
+		msg["item"] = item_id
+	_send(msg)
 
 func send_chat(text: String) -> void:
 	_send({"t": "chat", "text": text})
