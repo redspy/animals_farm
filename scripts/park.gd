@@ -292,7 +292,9 @@ func _build_carousel() -> void:
 	# 서는 자리(slot_inset)와 같은 반지름에 둔다 — 상수로 두면 slot_inset을
 	# 바꿀 때 타는 사람이 손잡이에서 떨어져 선다.
 	var bar := _flat_material(Palette.color("world", "carousel_bar"))
-	var grip_r := r - float(_carousel.get("slot_inset", 0.35))
+	# 라이더가 서는 반지름보다 **살짝 바깥**에 둔다 — 같은 점에 두면 기둥이
+	# 캐릭터를 관통해 "앞의 바를 잡은" 모양이 되지 않는다(리뷰 지적).
+	var grip_r := r - float(_carousel.get("slot_inset", 0.35)) + 0.05
 	for slot in carousel_slots():
 		var th := TAU * float(slot) / float(carousel_slots())
 		var at := Vector3(cos(th) * grip_r, 0.0, sin(th) * grip_r)

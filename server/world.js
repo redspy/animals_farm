@@ -183,14 +183,39 @@ export class WorldState {
       carousel: Math.floor(Number(this.park.carousel?.slots)),
       seesaw: 2,
     };
-    for (const [id, count] of Object.entries(geomSeats)) {
-      if (!this.activities.has(id) || !Number.isFinite(count) || count < 1) continue;
+    for (const [id, raw] of Object.entries(geomSeats)) {
+      if (!this.activities.has(id)) continue;
       const a = this.activities.get(id);
+      // 값이 이상하면 **건너뛰지 않고 정규화한다.** 건너뛰면 activities.json
+      // 값이 남아, 이 가드가 막으려던 "없는 자리 배정"이 그대로 생긴다
+      // (slots: 0이면 네 명이 같은 좌표에 앉았다 — 리뷰 지적).
+      // 상한 99인 이유: trick 형식이 두 자리 정수까지만 받는다.
+      const count = Number.isFinite(raw) ? Math.max(1, Math.min(99, raw)) : a.seats;
       if (a.seats !== count) {
-        console.warn(`[animals_farm] ${id}의 좌석 수가 어긋납니다(activities.json ${a.seats} / world.json ${count}) — world.json을 따릅니다`);
+        console.warn(`[animals_farm] ${id}의 좌석 수가 어긋나거나 범위를 벗어났습니다(activities.json ${a.seats} / world.json ${raw}) — ${count}으로 맞춥니다`);
       }
       a.seats = count;
     }
+    // 좌석 좌표를 **기동 시 한 번 확인한다.** 섬 밖이나 NaN이면 서버는
+    // 클램프해 저장을 보호하지만, 클라이언트는 클램프하지 않아 타는 사람 화면과
+    // 남들 화면이 다른 자리에 보인다("허공에 앉는" 증상이 형태만 바뀐다).
+    // 값을 고쳐야 하는 문제이므로 조용히 넘기지 않는다(리뷰 지적).
+    for (const [id, seats] of [['swing', geomSeats.swing], ['carousel', geomSeats.carousel], ['seesaw', 2]]) {
+      const count = this.activities.has(id) ? this.activities.get(id).seats : seats;
+      for (let i = 0; i < count; i += 1) {
+        const at = this.seatPosition(id, i);
+        if (!at) continue;
+        // this.sizeX/sizeZ는 아래에서 대입되므로(생성자 순서) 여기서 쓰면
+        // undefined와 비교해 **전부 "섬 밖"으로 보고된다**(실측). 위에서 이미
+        // 읽어 둔 지역 변수를 쓴다.
+        const inside = Number.isFinite(at.x) && Number.isFinite(at.z)
+          && Math.abs(at.x) <= islandX / 2 && Math.abs(at.z) <= islandZ / 2;
+        if (!inside) {
+          console.warn(`[animals_farm] ${id} ${i}번 좌석이 섬 밖이거나 좌표가 잘못됐습니다(${at.x}, ${at.z}) — data/world.json의 park를 확인하세요`);
+        }
+      }
+    }
+
     // 시소 기울기는 **서버가 소유한다**(축구공과 같은 이유: 각자 계산하면
     // 기기마다 다르게 기울어 누가 위에 있는지가 갈린다).
     // 뺑뺑이는 각도를 서버가 적분해 방송한다 — 밀 때마다 속도가 바뀌므로

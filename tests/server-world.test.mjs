@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { WorldState, LIMITS } from '../server/world.js';
 
 // 서버 규칙(docs/protocol.md §3) 테스트. 전송(WebSocket)과 분리돼 있어 소켓
@@ -864,12 +865,15 @@ test('trick만 바꿔도 앵커가 흐르지 않는다', () => {
 });
 
 
-test('시소 push는 물리 상한으로 잘린다', () => {
-  const w = fresh();
-  const limit = w.parkCfg.seesawMaxAngle * Math.sqrt(w.parkCfg.seesawGravity);
-  assert.ok(w.parkCfg.seesawPush <= limit + 1e-9,
-    `push(${w.parkCfg.seesawPush})가 물리 상한(${limit.toFixed(3)})을 넘는다 — 한 번 밀 때마다 판이 끝까지 꺾인다`);
-  // 한 번 밀어서 최대 각도에 닿지 않는지는 위의 시소 테스트가 확인한다.
+test('시소 push 데이터가 물리 상한 안에 있다', () => {
+  // **원본 데이터를 본다.** 로드된 값(parkCfg)은 이미 잘려 있어서 무엇을 넣어도
+  // 통과한다 — 그러면 막으려던 회귀(데이터를 2.2로 되돌려 판이 매번 끝까지
+  // 꺾이는 것)를 못 잡는다(리뷰 지적).
+  const raw = JSON.parse(readFileSync('data/activities.json', 'utf-8')).park;
+  const limit = Number(raw.seesaw_max_angle) * Math.sqrt(Number(raw.seesaw_gravity));
+  assert.ok(Number(raw.seesaw_push) <= limit + 1e-9,
+    `data/activities.json의 seesaw_push(${raw.seesaw_push})가 물리 상한(${limit.toFixed(3)})을 넘는다`
+    + ' — 진폭 = push/√gravity ≤ max_angle이어야 한 번 밀 때 판이 끝까지 꺾이지 않는다');
 });
 
 test('좌석 개수는 world.json의 park를 따른다', () => {
