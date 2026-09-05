@@ -262,11 +262,13 @@ func carousel_slots() -> int:
 func carousel_slot_position(slot: int) -> Vector3:
 	var center := carousel_center()
 	var th := TAU * float(slot) / float(carousel_slots())
-	# 테두리에서 안쪽으로 들어와 서는 거리 — **서버도 같은 값으로 좌석을 계산**
-	# 하므로(좌석 고정) 데이터에서 읽어야 한다. 여기만 상수로 두면 값을 바꿀 때
-	# 앉은 자리가 어긋난다.
-	var r := carousel_radius() - float(_carousel.get("slot_inset", 0.35))
+	var r := carousel_radius() - _slot_inset()
 	return center + Vector3(cos(th) * r, 0.0, sin(th) * r)
+
+## 테두리에서 안쪽으로 들어와 서는 거리 — **서버도 같은 값으로 좌석을 계산**
+## 하므로(좌석 고정) 데이터에서 읽어야 한다. 기본값 리터럴도 한 곳에만 둔다.
+func _slot_inset() -> float:
+	return float(_carousel.get("slot_inset", 0.75))
 
 func _build_carousel() -> void:
 	if _carousel.is_empty():
@@ -292,9 +294,9 @@ func _build_carousel() -> void:
 	# 서는 자리(slot_inset)와 같은 반지름에 둔다 — 상수로 두면 slot_inset을
 	# 바꿀 때 타는 사람이 손잡이에서 떨어져 선다.
 	var bar := _flat_material(Palette.color("world", "carousel_bar"))
-	# 라이더가 서는 반지름보다 **살짝 바깥**에 둔다 — 같은 점에 두면 기둥이
-	# 캐릭터를 관통해 "앞의 바를 잡은" 모양이 되지 않는다(리뷰 지적).
-	var grip_r := r - float(_carousel.get("slot_inset", 0.35)) + 0.05
+	# 라이더가 서는 반지름보다 **캐릭터 반지름만큼** 바깥에 둔다(grip_offset).
+	# 0.05만 띄우면 캐릭터 반지름(0.35) 안이라 기둥이 몸을 관통한다(리뷰 지적).
+	var grip_r := r - _slot_inset() + float(_carousel.get("grip_offset", 0.4))
 	for slot in carousel_slots():
 		var th := TAU * float(slot) / float(carousel_slots())
 		var at := Vector3(cos(th) * grip_r, 0.0, sin(th) * grip_r)

@@ -190,32 +190,16 @@ export class WorldState {
       // 값이 남아, 이 가드가 막으려던 "없는 자리 배정"이 그대로 생긴다
       // (slots: 0이면 네 명이 같은 좌표에 앉았다 — 리뷰 지적).
       // 상한 99인 이유: trick 형식이 두 자리 정수까지만 받는다.
-      const count = Number.isFinite(raw) ? Math.max(1, Math.min(99, raw)) : a.seats;
+      // 폴백은 **seatPosition이 쓰는 기본값**이어야 한다. activities.json 값으로
+      // 두면 좌표 계산(기본값 4/2)과 갈려서, 서버는 서로 다른 자리로 배정하는데
+      // 좌표가 같아진다(seat 4 ≡ seat 0) — 이 가드가 막으려던 상태다(리뷰 지적).
+      const geomDefault = { swing: 2, carousel: 4, seesaw: 2 }[id] ?? a.seats;
+      const count = Number.isFinite(raw) ? Math.max(1, Math.min(99, raw)) : geomDefault;
       if (a.seats !== count) {
         console.warn(`[animals_farm] ${id}의 좌석 수가 어긋나거나 범위를 벗어났습니다(activities.json ${a.seats} / world.json ${raw}) — ${count}으로 맞춥니다`);
       }
       a.seats = count;
     }
-    // 좌석 좌표를 **기동 시 한 번 확인한다.** 섬 밖이나 NaN이면 서버는
-    // 클램프해 저장을 보호하지만, 클라이언트는 클램프하지 않아 타는 사람 화면과
-    // 남들 화면이 다른 자리에 보인다("허공에 앉는" 증상이 형태만 바뀐다).
-    // 값을 고쳐야 하는 문제이므로 조용히 넘기지 않는다(리뷰 지적).
-    for (const [id, seats] of [['swing', geomSeats.swing], ['carousel', geomSeats.carousel], ['seesaw', 2]]) {
-      const count = this.activities.has(id) ? this.activities.get(id).seats : seats;
-      for (let i = 0; i < count; i += 1) {
-        const at = this.seatPosition(id, i);
-        if (!at) continue;
-        // this.sizeX/sizeZ는 아래에서 대입되므로(생성자 순서) 여기서 쓰면
-        // undefined와 비교해 **전부 "섬 밖"으로 보고된다**(실측). 위에서 이미
-        // 읽어 둔 지역 변수를 쓴다.
-        const inside = Number.isFinite(at.x) && Number.isFinite(at.z)
-          && Math.abs(at.x) <= islandX / 2 && Math.abs(at.z) <= islandZ / 2;
-        if (!inside) {
-          console.warn(`[animals_farm] ${id} ${i}번 좌석이 섬 밖이거나 좌표가 잘못됐습니다(${at.x}, ${at.z}) — data/world.json의 park를 확인하세요`);
-        }
-      }
-    }
-
     // 시소 기울기는 **서버가 소유한다**(축구공과 같은 이유: 각자 계산하면
     // 기기마다 다르게 기울어 누가 위에 있는지가 갈린다).
     // 뺑뺑이는 각도를 서버가 적분해 방송한다 — 밀 때마다 속도가 바뀌므로
@@ -254,8 +238,10 @@ export class WorldState {
       vz: 0,
     };
     this.score = { left: 0, right: 0 };
-    this.sizeX = Number(worldCfg.size_x) || 50.7;
-    this.sizeZ = Number(worldCfg.size_z) || 28.5;
+    // islandX/islandZ와 같은 값이다 — 두 번 계산하면 위쪽 검사에서 한쪽만
+    // 갱신돼 어긋난다(생성자 순서 함정).
+    this.sizeX = islandX;
+    this.sizeZ = islandZ;
     this.spawn = worldCfg.spawn || { x: 0, z: 0 };
 
     // 바위(통과 불가)와 채집물을 서버도 읽는다. 예전에는 둘 다 클라이언트만
@@ -308,6 +294,39 @@ export class WorldState {
     // 허용하면 유닛 테스트가 실행 중인 서버의 런타임 상태를 물려받는다.
     // 실제로 브라우저 테스트가 남긴 월드 아이템 2개 때문에 "드랍 후 아이템 1개"
     // 단정이 3으로 깨졌다(2026-09-04 실측).
+    // 좌석 좌표를 **기동 시 한 번 확인한다.** 섬 밖이나 NaN이면 서버는
+    // 클램프해 저장을 보호하지만, 클라이언트는 클램프하지 않아 타는 사람 화면과
+    // 남들 화면이 다른 자리에 보인다("허공에 앉는" 증상이 형태만 바뀐다).
+    // 값을 고쳐야 하는 문제이므로 조용히 넘기지 않는다(리뷰 지적).
+    // geomSeats를 손으로 다시 적지 않는다 — 기구가 늘면 한쪽에만 추가돼 검사가
+    // 조용히 빠진다(리뷰 지적).
+    for (const [id] of Object.entries(geomSeats)) {
+      const count = this.activities.has(id) ? this.activities.get(id).seats : 2;
+      for (let i = 0; i < count; i += 1) {
+        const at = this.seatPosition(id, i);
+        if (!at) continue;
+        // 경계는 **클라이언트와 같은 기준**이어야 한다: 클라이언트는
+        // size/2 - RADIUS(0.35)로 클램프하므로, 그 사이에 좌석이 있으면 타는
+        // 사람 화면만 안으로 밀려 그려진다 — 이 검사가 잡겠다던 증상이다.
+        // (이 블록은 생성자 **끝**에 있다 — 위쪽에 두면 this.obstacles와
+        //  this.sizeX가 아직 없어서 터진다. 실측으로 배웠다.)
+        const half = LIMITS.SEPARATION / 2 + 0.35;   // = 에이전트 반지름 여유
+        const inside = Number.isFinite(at.x) && Number.isFinite(at.z)
+          && Math.abs(at.x) <= this.sizeX / 2 - 0.35 && Math.abs(at.z) <= this.sizeZ / 2 - 0.35;
+        if (!inside) {
+          console.warn(`[animals_farm] ${id} ${i}번 좌석이 섬 밖이거나 좌표가 잘못됐습니다(${at.x}, ${at.z}) — data/world.json의 park를 확인하세요`);
+          continue;
+        }
+        // 좌석이 바위와 겹치면 클라이언트는 밀려나고 서버 앵커는 좌석에 남아
+        // 화면이 갈린다. half는 밀림 계산과 같은 여유를 쓴다.
+        const pushed = this.pushOutObstacles({ x: at.x, z: at.z }, half);
+        if (Math.abs(pushed.x - at.x) > 0.001 || Math.abs(pushed.z - at.z) > 0.001) {
+          console.warn(`[animals_farm] ${id} ${i}번 좌석이 장애물과 겹칩니다(${at.x}, ${at.z}) — data/world.json의 park나 obstacles를 확인하세요`);
+        }
+      }
+    }
+
+
     if (this.persistEnabled) this._loadState();
   }
 

@@ -142,22 +142,31 @@ const walkTo = async (axis, target, timeoutMs = 90000) => {
 };
 
 /** 월드 좌표를 화면 좌표로 바꿔 클릭한다.
- *  훅이 주는 playerScreen과 groundRight/Down(각 +3유닛)으로 축척을 역산한다 —
- *  직교 카메라라 화면 x는 월드 x, 화면 y는 월드 z에 비례한다. */
+ *
+ *  훅의 groundLeft/Right/Up/Down(플레이어 기준 각 ±3유닛, **모두 지면**)으로
+ *  축척과 원점을 역산한다. 직교 카메라 + yaw 0이라 화면 x는 월드 x에, 화면 y는
+ *  월드 z에 정확히 비례한다.
+ *
+ *  playerScreen은 쓰지 않는다 — 그 훅은 캐릭터 **1유닛 위**를 투영하므로
+ *  z 축척 계산에 섞으면 어긋난다(실측: 목표에서 1.6유닛 벗어나 시소 좌석을
+ *  놓쳤다). */
 async function clickWorld(x, z) {
   const pt = await page.evaluate(([wx, wz]) => {
     const t = window.afTest;
     const c = document.querySelector('canvas');
     const r = c.getBoundingClientRect();
-    const ps = t.points.playerScreen;
+    const gl = t.points.groundLeft;
     const gr = t.points.groundRight;
+    const gu = t.points.groundUp;
     const gd = t.points.groundDown;
     const px = Number(t.state.x);
     const pz = Number(t.state.z);
-    const sxPerX = (gr[0] - ps[0]) / 3.0;
-    const syPerZ = (gd[1] - ps[1]) / 3.0;
-    const vx = ps[0] + (wx - px) * sxPerX;
-    const vy = ps[1] + (wz - pz) * syPerZ;
+    const originX = (gl[0] + gr[0]) / 2;
+    const originY = (gu[1] + gd[1]) / 2;
+    const sxPerX = (gr[0] - gl[0]) / 6.0;
+    const syPerZ = (gd[1] - gu[1]) / 6.0;
+    const vx = originX + (wx - px) * sxPerX;
+    const vy = originY + (wz - pz) * syPerZ;
     return { x: r.left + (vx / t.vw) * r.width, y: r.top + (vy / t.vh) * r.height };
   }, [x, z]);
   await page.mouse.click(pt.x, pt.y);
@@ -222,7 +231,9 @@ check(off.act === '', '내리기 버튼으로 내려온다');
 
 // --- 뺑뺑이: 슬롯에 타고 밀면 돈다 ---
 console.log('\n[검증] 뺑뺑이');
-const slotZ = park.carousel.z - (park.carousel.radius - 0.35);
+// slot_inset을 데이터에서 읽는다 — 여기에 상수를 박아 두면 값을 바꿀 때
+// 테스트가 기구 바깥을 탭한다(실측: 0.35 → 0.75로 바꾸자 탑승이 안 됐다).
+const slotZ = park.carousel.z - (park.carousel.radius - park.carousel.slot_inset);
 const onCarousel = await ride(park.carousel.x, slotZ);
 check(onCarousel.act === 'carousel', `뺑뺑이에 탔다 (act=${onCarousel.act}, 자리 ${onCarousel.trick})`);
 seen.length = 0;
@@ -236,7 +247,10 @@ await waitState((s) => s.act === '');
 // --- 시소: 앉고 밀면 기운다 ---
 console.log('\n[검증] 시소');
 const seesawSeat = { x: park.seesaw.x - park.seesaw.arm, z: park.seesaw.z };
+const beforeSeesaw = await state();
+console.log(`  (시소로 이동 전 위치 (${beforeSeesaw.x},${beforeSeesaw.z}), 목표 좌석 (${seesawSeat.x},${seesawSeat.z}))`);
 const onSeesaw = await ride(seesawSeat.x, seesawSeat.z);
+console.log(`  (탑승 시도 후 (${onSeesaw.x},${onSeesaw.z}) act=${onSeesaw.act} 분기=${await page.evaluate(() => window.afTest?.state?.tapBranch)})`);
 check(onSeesaw.act === 'seesaw', `시소에 앉았다 (act=${onSeesaw.act}, 자리 ${onSeesaw.trick})`);
 seen.length = 0;
 await page.keyboard.press('Space');

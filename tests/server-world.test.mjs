@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { WorldState, LIMITS } from '../server/world.js';
 
 // 서버 규칙(docs/protocol.md §3) 테스트. 전송(WebSocket)과 분리돼 있어 소켓
@@ -870,6 +872,11 @@ test('시소 push 데이터가 물리 상한 안에 있다', () => {
   // 통과한다 — 그러면 막으려던 회귀(데이터를 2.2로 되돌려 판이 매번 끝까지
   // 꺾이는 것)를 못 잡는다(리뷰 지적).
   const raw = JSON.parse(readFileSync('data/activities.json', 'utf-8')).park;
+  const nums = [raw.seesaw_push, raw.seesaw_max_angle, raw.seesaw_gravity].map(Number);
+  if (!nums.every(Number.isFinite)) {
+    // 키가 없으면 런타임이 폴백(0.6/0.42/2.6)으로 정상 동작한다 — 실패가 아니다.
+    return;
+  }
   const limit = Number(raw.seesaw_max_angle) * Math.sqrt(Number(raw.seesaw_gravity));
   assert.ok(Number(raw.seesaw_push) <= limit + 1e-9,
     `data/activities.json의 seesaw_push(${raw.seesaw_push})가 물리 상한(${limit.toFixed(3)})을 넘는다`
@@ -882,4 +889,21 @@ test('좌석 개수는 world.json의 park를 따른다', () => {
   // 기구 밖을 가리킨다 — 단일 출처를 world.json으로 못 박았다.
   assert.equal(w.activities.get('swing').seats, Math.floor(Number(w.park.swing.seats)));
   assert.equal(w.activities.get('carousel').seats, Math.floor(Number(w.park.carousel.slots)));
+});
+
+
+test('시소 push가 데이터에서 과하면 로드할 때 잘린다', () => {
+  // 데이터 린트(위 테스트)와 별개로 **클램프 코드 자체**를 확인한다.
+  const dir = mkdtempSync(join(tmpdir(), 'af-seesaw-'));
+  const src = JSON.parse(readFileSync('data/activities.json', 'utf-8'));
+  src.park.seesaw_push = 2.2;   // 판이 매번 끝까지 꺾이던 값
+  writeFileSync(join(dir, 'activities.json'), JSON.stringify(src));
+  // 나머지 데이터 파일은 원본을 복사한다(로더가 같은 디렉터리에서 읽는다).
+  for (const name of ['world.json', 'items.json', 'gatherables.json', 'emotes.json', 'characters.json', 'palette.json']) {
+    try { writeFileSync(join(dir, name), readFileSync(join('data', name))); } catch { /* 없는 파일은 건너뜀 */ }
+  }
+  const w = new WorldState({ dataDir: dir, persist: false });
+  const limit = w.parkCfg.seesawMaxAngle * Math.sqrt(w.parkCfg.seesawGravity);
+  assert.ok(Math.abs(w.parkCfg.seesawPush - limit) < 1e-9,
+    `과한 push가 상한으로 잘리지 않았다 (${w.parkCfg.seesawPush} vs ${limit})`);
 });
