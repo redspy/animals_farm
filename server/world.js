@@ -152,6 +152,7 @@ export class WorldState {
       // 폴백도 **고친 값**이어야 한다 — 2.2는 최대 각도를 훨씬 넘겨 판이 끝까지
       // 꺾이던 값이라, 데이터가 범위를 벗어나면 예전 동작으로 되돌아갔다.
       seesawPush: num(pk.seesaw_push, 0.6, 0.1, 20, 'park.seesaw_push'),
+      // 아래에서 물리 상한(진폭 = push/√gravity ≤ max_angle)과 맞는지 확인한다.
       seesawDamping: num(pk.seesaw_damping, 0.55, 0.01, 0.999, 'park.seesaw_damping'),
       seesawMaxAngle: num(pk.seesaw_max_angle, 0.42, 0.05, 1.4, 'park.seesaw_max_angle'),
       seesawPushInterval: num(pk.seesaw_push_min_interval_ms, 400, 0, 5000, 'park.seesaw_push_min_interval_ms'),
@@ -165,6 +166,12 @@ export class WorldState {
           .map((v, i) => num(v, 0.3, 0.05, 1.4, `park.swing_amp_steps[${i}]`))
         : [0.28, 0.55, 0.85],
     };
+    // **값끼리의 정합성**을 확인한다. 개별 범위만 보면 "2.2"가 통과해서 판이
+    // 밀 때마다 끝까지 꺾이는 예전 동작으로 조용히 돌아간다(리뷰 지적).
+    const pushLimit = this.parkCfg.seesawMaxAngle * Math.sqrt(this.parkCfg.seesawGravity);
+    if (this.parkCfg.seesawPush > pushLimit) {
+      console.warn(`[animals_farm] park.seesaw_push(${this.parkCfg.seesawPush})가 물리 상한 ${pushLimit.toFixed(2)}을 넘습니다 — 한 번 밀 때마다 판이 최대 각도에 부딪힙니다(진폭 = push/√gravity ≤ max_angle)`);
+    }
     this.park = worldCfg.park || {};
     // 시소 기울기는 **서버가 소유한다**(축구공과 같은 이유: 각자 계산하면
     // 기기마다 다르게 기울어 누가 위에 있는지가 갈린다).
@@ -481,6 +488,41 @@ export class WorldState {
     return { player: p, dismounted };
   }
 
+  /**
+   * 놀이기구 좌석의 **월드 좌표**. 클라이언트(scripts/park.gd)와 같은 계산이며,
+   * 값은 data/world.json의 park가 단일 출처다.
+   *
+   * 왜 서버가 이걸 알아야 하나: 좌석 고정(rideAnchor)을 "요청 당시 위치"로 잡으면
+   * **서버가 자리를 재배정할 때 어긋난다** — 그네 0번을 탭했는데 1번이 배정되면
+   * 클라이언트는 1번 좌석으로 옮겨 앉지만 서버는 0번 자리에 묶어 둬서, 내 화면엔
+   * 그네에 앉아 있고 남들 화면엔 두 그네 사이 허공에 낀 채로 보인다.
+   * 좌석 좌표에서 유도하면 멱등해져서 trick이 바뀔 때마다 앵커가 흐르는 문제도
+   * 없어진다(리뷰 지적).
+   */
+  seatPosition(id, seat) {
+    const pk = this.park || {};
+    if (id === 'swing' && pk.swing) {
+      const s = pk.swing;
+      const count = Math.max(Number(s.seats) || 2, 1);
+      const gap = Number(s.seat_gap) || 1.6;
+      const offset = (seat - (count - 1) / 2) * gap;
+      return { x: Number(s.x) || 0, z: (Number(s.z) || 0) + offset };
+    }
+    if (id === 'carousel' && pk.carousel) {
+      const c = pk.carousel;
+      const slots = Math.max(Number(c.slots) || 4, 1);
+      const r = (Number(c.radius) || 2) - (Number(c.slot_inset) || 0.35);
+      const th = (Math.PI * 2 * seat) / slots;
+      return { x: (Number(c.x) || 0) + Math.cos(th) * r, z: (Number(c.z) || 0) + Math.sin(th) * r };
+    }
+    if (id === 'seesaw' && pk.seesaw) {
+      const s = pk.seesaw;
+      const arm = Number(s.arm) || 1.6;
+      return { x: (Number(s.x) || 0) + (seat === 0 ? -arm : arm), z: Number(s.z) || 0 };
+    }
+    return null;
+  }
+
   /** 활동별 이동 속도 상한(초당 유닛). 지터 여유는 걷기와 같은 비율로 준다. */
   speedCapOf(p) {
     const act = this.activities.get(p.activity || '');
@@ -606,8 +648,14 @@ export class WorldState {
     // 이 대입은 **검증을 모두 통과한 뒤**에 해야 한다. 예전에는 좌석 배정
     // 단계에서 먼저 박아서, 스로틀·존 검사로 거부된 요청도 앵커를 남겼다 —
     // 타고 있지도 않은데 그 지점 0.6유닛 밖으로 영구히 못 나갔다(리뷰 지적).
+    // 앵커는 **좌석 좌표**에서 유도한다(요청 당시 위치가 아니다 — seatPosition 주석).
     const seated = act && act.seats > 0;
-    p.rideAnchor = seated ? { x: p.x, z: p.z } : null;
+    if (seated) {
+      const seatNo = Number.parseInt(String(wanted).split(':')[0], 10) || 0;
+      p.rideAnchor = this.seatPosition(id, seatNo) || { x: p.x, z: p.z };
+    } else {
+      p.rideAnchor = null;
+    }
     // 축구하는 사람이 생기면 공을 내보내고, 아무도 없으면 치운다.
     const changed = this.refreshBall();
     this._markDirty();

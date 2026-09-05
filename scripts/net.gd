@@ -146,9 +146,10 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			var park_snap: Variant = msg.get("park", null)
 			if typeof(park_snap) == TYPE_DICTIONARY:
 				park_state.emit(park_snap)
+			# **null도 의미가 있다**("아무도 축구를 하지 않는다") — 버리면 창 복귀
+			# 재동기화 때 그 사이 축구가 끝났는데도 골대·공이 남는다(리뷰 지적).
 			var ball_snap: Variant = msg.get("ball", null)
-			if typeof(ball_snap) == TYPE_DICTIONARY:
-				ball_received.emit(ball_snap)
+			ball_received.emit(ball_snap if typeof(ball_snap) == TYPE_DICTIONARY else {})
 		"join":
 			player_joined.emit(msg.get("player", {}))
 		"leave":

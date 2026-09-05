@@ -1122,7 +1122,10 @@ func _refresh_riders() -> void:
 	if _park == null:
 		return
 	if _park_ride_kinds.has(_activity):
-		_riders.append({"node": _player, "kind": _activity, "seat": _ride_seat, "amp": _ride_amp})
+		_riders.append({
+			"node": _player, "kind": _activity, "seat": _ride_seat, "amp": _ride_amp,
+			"targets": _offset_targets(_player),
+		})
 	for token: String in _remotes.keys():
 		var remote: RemotePlayer = _remotes[token]
 		if remote == null or not is_instance_valid(remote):
@@ -1137,12 +1140,35 @@ func _refresh_riders() -> void:
 			seat = int(parts[0])
 		if parts.size() > 1 and parts[1].is_valid_int():
 			amp = int(parts[1])
-		_riders.append({"node": remote, "kind": kind, "seat": seat, "amp": amp})
+		_riders.append({
+			"node": remote, "kind": kind, "seat": seat, "amp": amp,
+			"targets": _offset_targets(remote),
+		})
 
 ## 놀이기구를 타는 동안 보이는 위치를 옮긴다(논리 위치는 좌석/경로에 있다).
 func _update_rider_visuals() -> void:
 	for r: Dictionary in _riders:
-		_apply_rider_offset(r["node"], String(r["kind"]), int(r["seat"]), int(r["amp"]))
+		var node: Node3D = r["node"]
+		if node == null or not is_instance_valid(node):
+			continue
+		var offset := _park.rider_offset(
+			String(r["kind"]), int(r["seat"]), node.position, int(r["amp"]))
+		# 대상 노드는 목록을 만들 때 한 번만 찾는다 — 매 프레임 get_children()을
+		# 부르면 프레임마다 배열이 새로 생긴다.
+		for target: Variant in r["targets"]:
+			if target != null and is_instance_valid(target):
+				(target as Node3D).position = offset
+
+## 오프셋을 적용할 자식 노드(스프라이트와 이름표) — 스프라이트만 올리면
+## 이름표가 발밑에 남는다.
+func _offset_targets(node: Node3D) -> Array:
+	var out: Array = []
+	if node == null or not is_instance_valid(node):
+		return out
+	for child: Node in node.get_children():
+		if child is PlayerSprite or child is AvatarExtras:
+			out.append(child)
+	return out
 
 func _apply_rider_offset(node: Node3D, kind: String, seat: int, amp: int) -> void:
 	if node == null or not is_instance_valid(node):
@@ -1551,6 +1577,11 @@ func _on_player_joined(player: Dictionary) -> void:
 	# 두 번 표시된다.
 	# 스프라이트 프레임은 _ready에서 만들어지므로 한 프레임 뒤에 초상화를 읽는다.
 	_refresh_roster.call_deferred()
+	# **이미 놀이기구를 타고 있던 사람**을 놓치지 않으려면 여기서도 목록을
+	# 갱신해야 한다 — 그 사람은 activity 메시지가 다시 오지 않으므로, 스냅샷의
+	# 각도는 맞췄는데 그 각도로 그릴 대상이 비어 있게 된다(리뷰 지적).
+	# 자식 노드(스프라이트)는 _ready 뒤에 생기므로 한 프레임 미룬다.
+	_refresh_riders.call_deferred()
 
 func _on_player_left(token: String) -> void:
 	if not _remotes.has(token):
@@ -1558,6 +1589,8 @@ func _on_player_left(token: String) -> void:
 	(_remotes[token] as Node).queue_free()
 	_remotes.erase(token)
 	_refresh_roster()
+	# 나간 사람이 목록에 남으면 죽은 참조를 매 프레임 순회한다.
+	_refresh_riders()
 
 func _on_moves(moves: Array) -> void:
 	for m: Variant in moves:

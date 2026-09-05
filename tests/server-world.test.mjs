@@ -714,10 +714,18 @@ test('놀이기구에 앉으면 그 자리를 벗어날 수 없다', () => {
   const w = fresh();
   const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
   intoPark(w, TOKEN_A);
-  w.activity(TOKEN_A, 'carousel', '0');
-  const seat = { x: p.x, z: p.z };
+  // 클라이언트는 좌석까지 **걸어간 뒤** 탄다 — 같은 상황을 만든다.
+  const seat0 = w.seatPosition('carousel', 0);
+  p.x = seat0.x;
+  p.z = seat0.z;
+  const r = w.activity(TOKEN_A, 'carousel', '0');
+  // 기준은 **좌석 좌표**다(요청 당시 위치가 아니다) — 서버가 자리를 재배정할 수
+  // 있으므로 앵커를 좌석에서 유도한다.
+  const seatNo = Number.parseInt(r.activity.trick, 10);
+  const seat = w.seatPosition('carousel', seatNo);
+  assert.deepEqual(p.rideAnchor, seat, '앵커는 좌석 좌표여야 한다');
   let now = Date.now();
-  for (let i = 0; i < 20; i += 1) {
+  for (let i = 0; i < 30; i += 1) {
     now += 120;
     w.move(TOKEN_A, { x: seat.x + 5, z: seat.z + 5 }, now);
   }
@@ -813,4 +821,38 @@ test('미끄럼틀은 trick이 빈 문자열로 정규화된다', () => {
   // 좌석이 없는 기구라 자리 번호가 의미 없다 — 클라이언트가 "0"을 보내도
   // ''로 되돌려 주면 클라이언트가 그 불일치를 탑승 재시작으로 오해한다.
   assert.equal(w.activity(TOKEN_A, 'slide', '').activity.trick, '');
+});
+
+
+test('자리를 재배정받으면 앵커도 그 자리로 옮겨진다', () => {
+  const w = fresh();
+  const tokens = [TOKEN_A, TOKEN_B];
+  for (const tk of tokens) {
+    w.join({ token: tk, name: '가', preset: 'f1' });
+    intoPark(w, tk);
+  }
+  w.activity(TOKEN_A, 'swing', '0');
+  const r = w.activity(TOKEN_B, 'swing', '0');   // 0번은 찼으므로 1번으로
+  assert.equal(r.activity.trick, '1');
+  // 앵커를 "요청 당시 위치"로 잡으면, 클라이언트는 1번 좌석으로 옮겨 앉는데
+  // 서버는 0번 자리에 묶어 둬서 남들 화면에는 두 그네 사이 허공에 낀 채로
+  // 보인다(리뷰 지적). 좌석 좌표에서 유도하면 그런 어긋남이 없다.
+  assert.deepEqual(w.players.get(TOKEN_B).rideAnchor, w.seatPosition('swing', 1));
+});
+
+test('trick만 바꿔도 앵커가 흐르지 않는다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  intoPark(w, TOKEN_A);
+  let now = Date.now();
+  w.activity(TOKEN_A, 'swing', '0:0', now);
+  const first = { ...p.rideAnchor };
+  // 진폭을 바꿀 때마다 "현재 위치"로 재앵커하면, 매번 0.6씩 흘러 앉은 채로
+  // 섬을 돌아다닐 수 있다(리뷰 지적).
+  for (let i = 1; i <= 6; i += 1) {
+    now += 300;
+    w.move(TOKEN_A, { x: p.x + 2, z: p.z }, now);
+    w.activity(TOKEN_A, 'swing', `0:${i % 3}`, now);
+  }
+  assert.deepEqual(p.rideAnchor, first, '앵커가 흘렀다 — 좌석 좌표에서 유도해야 멱등하다');
 });
