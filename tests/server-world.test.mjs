@@ -872,10 +872,10 @@ test('시소 push 데이터가 물리 상한 안에 있다', () => {
   // 통과한다 — 그러면 막으려던 회귀(데이터를 2.2로 되돌려 판이 매번 끝까지
   // 꺾이는 것)를 못 잡는다(리뷰 지적).
   const raw = JSON.parse(readFileSync('data/activities.json', 'utf-8')).park;
-  const nums = [raw.seesaw_push, raw.seesaw_max_angle, raw.seesaw_gravity].map(Number);
-  if (!nums.every(Number.isFinite)) {
-    // 키가 없으면 런타임이 폴백(0.6/0.42/2.6)으로 정상 동작한다 — 실패가 아니다.
-    return;
+  // 키 누락도 잡는다 — early-return으로 넘기면 `seesaw_pusn` 같은 오타를
+  // 린트가 조용히 통과시킨다(런타임은 폴백으로 동작하지만 의도한 값이 아니다).
+  for (const key of ['seesaw_push', 'seesaw_max_angle', 'seesaw_gravity']) {
+    assert.ok(Number.isFinite(Number(raw[key])), `data/activities.json park.${key}가 없거나 숫자가 아니다`);
   }
   const limit = Number(raw.seesaw_max_angle) * Math.sqrt(Number(raw.seesaw_gravity));
   assert.ok(Number(raw.seesaw_push) <= limit + 1e-9,

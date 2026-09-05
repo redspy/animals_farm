@@ -247,10 +247,7 @@ await waitState((s) => s.act === '');
 // --- 시소: 앉고 밀면 기운다 ---
 console.log('\n[검증] 시소');
 const seesawSeat = { x: park.seesaw.x - park.seesaw.arm, z: park.seesaw.z };
-const beforeSeesaw = await state();
-console.log(`  (시소로 이동 전 위치 (${beforeSeesaw.x},${beforeSeesaw.z}), 목표 좌석 (${seesawSeat.x},${seesawSeat.z}))`);
 const onSeesaw = await ride(seesawSeat.x, seesawSeat.z);
-console.log(`  (탑승 시도 후 (${onSeesaw.x},${onSeesaw.z}) act=${onSeesaw.act} 분기=${await page.evaluate(() => window.afTest?.state?.tapBranch)})`);
 check(onSeesaw.act === 'seesaw', `시소에 앉았다 (act=${onSeesaw.act}, 자리 ${onSeesaw.trick})`);
 seen.length = 0;
 await page.keyboard.press('Space');

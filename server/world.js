@@ -55,6 +55,14 @@ export const LIMITS = {
   RIDE_LEASH: 0.6,
 };
 
+/**
+ * 놀이기구 좌석 개수의 기본값 — **좌표 계산과 검증이 같은 값을 봐야 한다.**
+ * 한쪽만 폴백이 다르면 서로 다른 자리에 같은 좌표가 나온다(seat 4 ≡ seat 0).
+ */
+const SEAT_DEFAULTS = { swing: 2, carousel: 4, seesaw: 2 };
+/** 뺑뺑이 좌석/손잡이 기본값 — 클라이언트(scripts/park.gd)와 같아야 한다. */
+const CAROUSEL_SLOT_INSET = 0.75;
+
 const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function readJson(path, fallback) {
@@ -193,13 +201,30 @@ export class WorldState {
       // 폴백은 **seatPosition이 쓰는 기본값**이어야 한다. activities.json 값으로
       // 두면 좌표 계산(기본값 4/2)과 갈려서, 서버는 서로 다른 자리로 배정하는데
       // 좌표가 같아진다(seat 4 ≡ seat 0) — 이 가드가 막으려던 상태다(리뷰 지적).
-      const geomDefault = { swing: 2, carousel: 4, seesaw: 2 }[id] ?? a.seats;
+      const geomDefault = SEAT_DEFAULTS[id] ?? a.seats;
       const count = Number.isFinite(raw) ? Math.max(1, Math.min(99, raw)) : geomDefault;
       if (a.seats !== count) {
         console.warn(`[animals_farm] ${id}의 좌석 수가 어긋나거나 범위를 벗어났습니다(activities.json ${a.seats} / world.json ${raw}) — ${count}으로 맞춥니다`);
       }
       a.seats = count;
     }
+    // 뺑뺑이 좌석/손잡이 값의 관계도 확인한다 — world.json 주석이 요구하는
+    // 조건("grip_offset이 캐릭터 반지름 0.35보다 커야 기둥이 몸을 관통하지
+    // 않는다", "slot_inset이 반지름보다 작아야 좌석이 판 위에 있다")을 강제하는
+    // 코드가 없으면 주석만 남고 버그가 재발한다(리뷰 지적).
+    const cs = this.park.carousel;
+    if (cs) {
+      const inset = Number(cs.slot_inset);
+      const grip = Number(cs.grip_offset);
+      const radius = Number(cs.radius);
+      if (Number.isFinite(inset) && Number.isFinite(radius) && (inset < 0 || inset >= radius)) {
+        console.warn(`[animals_farm] park.carousel.slot_inset(${inset})은 0 이상 radius(${radius}) 미만이어야 합니다 — 좌석이 판 밖으로 나갑니다`);
+      }
+      if (Number.isFinite(grip) && grip <= 0.35) {
+        console.warn(`[animals_farm] park.carousel.grip_offset(${grip})이 캐릭터 반지름(0.35) 이하입니다 — 손잡이 기둥이 캐릭터를 관통합니다`);
+      }
+    }
+
     // 시소 기울기는 **서버가 소유한다**(축구공과 같은 이유: 각자 계산하면
     // 기기마다 다르게 기울어 누가 위에 있는지가 갈린다).
     // 뺑뺑이는 각도를 서버가 적분해 방송한다 — 밀 때마다 속도가 바뀌므로
@@ -289,6 +314,36 @@ export class WorldState {
     this.items = new Map();     // id -> {id, item, x, z, at}
     this.dirty = false;
     this._saveTimer = null;
+    for (const [id] of Object.entries(geomSeats)) {
+      const count = this.activities.has(id)
+        ? this.activities.get(id).seats
+        : (SEAT_DEFAULTS[id] ?? 2);
+      for (let i = 0; i < count; i += 1) {
+        const at = this.seatPosition(id, i);
+        if (!at) continue;
+        // 경계는 **클라이언트와 같은 기준**이어야 한다: 클라이언트는
+        // size/2 - RADIUS(0.35)로 클램프하므로, 그 사이에 좌석이 있으면 타는
+        // 사람 화면만 안으로 밀려 그려진다 — 이 검사가 잡겠다던 증상이다.
+        // (이 블록은 생성자 **끝**에 있다 — 위쪽에 두면 this.obstacles와
+        //  this.sizeX가 아직 없어서 터진다. 실측으로 배웠다.)
+
+        const inside = Number.isFinite(at.x) && Number.isFinite(at.z)
+          && Math.abs(at.x) <= this.sizeX / 2 - 0.35 && Math.abs(at.z) <= this.sizeZ / 2 - 0.35;
+        if (!inside) {
+          console.warn(`[animals_farm] ${id} ${i}번 좌석이 섬 밖이거나 좌표가 잘못됐습니다(${at.x}, ${at.z}) — data/world.json의 park를 확인하세요`);
+          continue;
+        }
+        // 좌석이 바위와 겹치면 클라이언트는 밀려나고 서버 앵커는 좌석에 남아
+        // 화면이 갈린다. 여유는 **실제 이동 경로와 같은 기본값**(에이전트 반지름
+        // 0.35)을 쓴다 — 다른 값을 쓰면 문제 없는 좌석에도 경고가 뜬다.
+        const pushed = this.pushOutObstacles({ x: at.x, z: at.z });
+        if (Math.abs(pushed.x - at.x) > 0.001 || Math.abs(pushed.z - at.z) > 0.001) {
+          console.warn(`[animals_farm] ${id} ${i}번 좌석이 장애물과 겹칩니다(${at.x}, ${at.z}) — data/world.json의 park나 obstacles를 확인하세요`);
+        }
+      }
+    }
+
+
 
     // persist:false는 "디스크를 아예 쓰지 않는다"는 뜻이다 — 쓰기만 막고 읽기를
     // 허용하면 유닛 테스트가 실행 중인 서버의 런타임 상태를 물려받는다.
@@ -300,33 +355,6 @@ export class WorldState {
     // 값을 고쳐야 하는 문제이므로 조용히 넘기지 않는다(리뷰 지적).
     // geomSeats를 손으로 다시 적지 않는다 — 기구가 늘면 한쪽에만 추가돼 검사가
     // 조용히 빠진다(리뷰 지적).
-    for (const [id] of Object.entries(geomSeats)) {
-      const count = this.activities.has(id) ? this.activities.get(id).seats : 2;
-      for (let i = 0; i < count; i += 1) {
-        const at = this.seatPosition(id, i);
-        if (!at) continue;
-        // 경계는 **클라이언트와 같은 기준**이어야 한다: 클라이언트는
-        // size/2 - RADIUS(0.35)로 클램프하므로, 그 사이에 좌석이 있으면 타는
-        // 사람 화면만 안으로 밀려 그려진다 — 이 검사가 잡겠다던 증상이다.
-        // (이 블록은 생성자 **끝**에 있다 — 위쪽에 두면 this.obstacles와
-        //  this.sizeX가 아직 없어서 터진다. 실측으로 배웠다.)
-        const half = LIMITS.SEPARATION / 2 + 0.35;   // = 에이전트 반지름 여유
-        const inside = Number.isFinite(at.x) && Number.isFinite(at.z)
-          && Math.abs(at.x) <= this.sizeX / 2 - 0.35 && Math.abs(at.z) <= this.sizeZ / 2 - 0.35;
-        if (!inside) {
-          console.warn(`[animals_farm] ${id} ${i}번 좌석이 섬 밖이거나 좌표가 잘못됐습니다(${at.x}, ${at.z}) — data/world.json의 park를 확인하세요`);
-          continue;
-        }
-        // 좌석이 바위와 겹치면 클라이언트는 밀려나고 서버 앵커는 좌석에 남아
-        // 화면이 갈린다. half는 밀림 계산과 같은 여유를 쓴다.
-        const pushed = this.pushOutObstacles({ x: at.x, z: at.z }, half);
-        if (Math.abs(pushed.x - at.x) > 0.001 || Math.abs(pushed.z - at.z) > 0.001) {
-          console.warn(`[animals_farm] ${id} ${i}번 좌석이 장애물과 겹칩니다(${at.x}, ${at.z}) — data/world.json의 park나 obstacles를 확인하세요`);
-        }
-      }
-    }
-
-
     if (this.persistEnabled) this._loadState();
   }
 
@@ -576,7 +604,10 @@ export class WorldState {
       // 클라이언트(carousel_slots)가 int()로 자르므로 여기서도 자른다 —
       // 4.5를 넣으면 서버는 4.5, 클라는 4로 계산해 좌석 좌표가 갈린다.
       const slots = Math.max(Math.floor(val(c.slots, 4)), 1);
-      const r = val(c.radius, 2) - val(c.slot_inset, 0.35);
+      // 폴백도 클라이언트(park.gd의 _slot_inset)와 **같은 값**이어야 한다 —
+      // 키가 빠지면 좌석 반지름이 0.4유닛 어긋나 "내 화면엔 손잡이, 남 화면엔
+      // 옆"이 된다(리뷰 지적).
+      const r = val(c.radius, 2) - val(c.slot_inset, CAROUSEL_SLOT_INSET);
       const th = (Math.PI * 2 * seat) / slots;
       return { x: val(c.x, 0) + Math.cos(th) * r, z: val(c.z, 0) + Math.sin(th) * r };
     }
