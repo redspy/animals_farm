@@ -249,6 +249,21 @@ function handle(ws, msg) {
   const type = String(msg.t || '');
 
   if (type === 'join') {
+    // 한 소켓이 **다른 토큰으로** 다시 join하면 옛 토큰을 정리해야 한다.
+    // 안 하면 sockets에 옛 토큰이 이 소켓을 가리킨 채 남고, close에서는
+    // 현재 토큰만 확인하므로 옛 캐릭터가 영원히 접속 중으로 남아 스냅샷에
+    // 뜨고 남들을 밀어낸다(pushOutPlayers).
+    const oldToken = ws.token;
+    if (oldToken && oldToken !== String(msg.token || '')) {
+      if (sockets.get(oldToken) === ws) sockets.delete(oldToken);
+      const gone = world.players.get(oldToken);
+      world.leave(oldToken);
+      broadcast({ t: 'leave', token: oldToken });
+      if (gone) {
+        broadcast({ t: 'system', text: `${gone.name} 님이 나갔습니다`, kind: 'leave', token: oldToken });
+      }
+      ws.token = null;
+    }
     // 같은 토큰의 **다른 소켓**이면 새 접속이다 — 그 판단은 소켓을 아는
     // 여기서 한다(world.join의 resetActivity 주석 참고).
     const prevSocket = sockets.get(String(msg.token || ''));

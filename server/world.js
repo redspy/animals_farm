@@ -71,6 +71,17 @@ export class WorldState {
     // 월드 크기·아이템·이모티콘은 클라이언트와 같은 data/*.json을 읽는다 —
     // 서버가 자기 사본을 갖고 있으면 둘이 갈려서 경계가 어긋난다.
     const worldCfg = readJson(join(dataDir, 'world.json'), {});
+    /** 범위를 벗어난 데이터는 기본값으로 대체하고 알린다(밸런스 데이터 규칙). */
+    const num = (value, fallback, min, max) => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < min || n > max) {
+        if (value !== undefined) {
+          console.warn(`[animals_farm] 설정값이 범위를 벗어나 기본값으로 대체: ${value} (허용 ${min}~${max})`);
+        }
+        return fallback;
+      }
+      return n;
+    };
     // 운동(활동)과 운동장 — 클라이언트와 **같은 파일**을 읽는다. 활동별 이동
     // 속도 상한이 서버에만 다르게 있으면 "자전거를 탔는데 서버가 계속
     // 되돌리는" 상태가 된다.
@@ -103,16 +114,6 @@ export class WorldState {
     // 재시작할 때까지 복구되지 않는다. 1 이상이면 감쇠가 아니라 가속이라
     // 공이 영원히 멈추지 않는다.
     const s = actCfg.soccer || {};
-    const num = (value, fallback, min, max) => {
-      const n = Number(value);
-      if (!Number.isFinite(n) || n < min || n > max) {
-        if (value !== undefined) {
-          console.warn(`[animals_farm] activities.json soccer 값이 범위를 벗어나 기본값으로 대체: ${value} (허용 ${min}~${max})`);
-        }
-        return fallback;
-      }
-      return n;
-    };
     this.soccerCfg = {
       kickRange: num(s.kick_range, 1.5, 0.2, 6),
       kickSpeed: num(s.kick_speed, 13, 1, 40),
@@ -124,7 +125,20 @@ export class WorldState {
       kickInterval: num(s.kick_min_interval_ms, 260, 0, 5000),
     };
     this.playground = worldCfg.playground || {};
-    this.field = this.playground.field || null;
+    // 축구장 값도 정규화한다 — size_x가 없거나 오타면 hx가 NaN이 되어 골 판정과
+    // 경계 반사가 모두 false가 되고, 공이 섬 밖으로 무한히 굴러간다(friction과
+    // 같은 실패 종류다).
+    const rawField = this.playground.field || null;
+    this.field = rawField
+      ? {
+        x: num(rawField.x, 0, -1000, 1000),
+        z: num(rawField.z, 0, -1000, 1000),
+        size_x: num(rawField.size_x, 20, 2, 500),
+        size_z: num(rawField.size_z, 12, 2, 500),
+        goal_width: num(rawField.goal_width, 4.4, 0.5, 100),
+        goal_depth: num(rawField.goal_depth, 1.1, 0.1, 50),
+      }
+      : null;
     // 공 상태. active는 "축구를 하는 사람이 있다"는 뜻이다 — 아무도 없으면
     // 물리를 돌리지 않고 브로드캐스트도 하지 않는다.
     this.ball = {
@@ -398,8 +412,8 @@ export class WorldState {
   /** 활동별 이동 속도 상한(초당 유닛). 지터 여유는 걷기와 같은 비율로 준다. */
   speedCapOf(p) {
     const act = this.activities.get(p.activity || '');
-    const speed = act ? act.speed : LIMITS.WALK_SPEED;
-    return speed * LIMITS.SPEED_TOLERANCE;
+    if (!act) return LIMITS.MAX_SPEED;   // 아무 운동도 하지 않을 때 = 걷기 상한
+    return act.speed * LIMITS.SPEED_TOLERANCE;
   }
 
   /**
@@ -442,10 +456,14 @@ export class WorldState {
     // 운동 전환은 전원 브로드캐스트 + 저장 표시라 도배되면 증폭이 크다.
     // 받는 쪽은 처음 보는 (운동, 기술) 조합마다 스프라이트 프레임을 새로
     // 만들기까지 한다(PlayerSprite) — 남의 클라이언트에 프레임 스파이크를 준다.
-    if (now - (p.lastActivityAt || 0) < LIMITS.ACTIVITY_MIN_INTERVAL_MS) {
+    const id = String(kind || '');
+    // **그만두기는 스로틀하지 않는다.** 클라이언트가 운동장을 벗어나 스스로
+    // 해제를 보낼 때 그게 거부되면, 스로틀 응답이 권위 상태(자전거)를 되돌려
+    // 보내 클라이언트가 다시 자전거를 탄다 — 경계에서 껐다 켜졌다 한다
+    // (리뷰 지적). 해제는 상태를 줄이는 방향이라 도배 위험도 낮다.
+    if (id !== '' && now - (p.lastActivityAt || 0) < LIMITS.ACTIVITY_MIN_INTERVAL_MS) {
       return { throttled: true };
     }
-    const id = String(kind || '');
     if (id && !this.activities.has(id)) {
       return { error: { code: 'bad_activity', message: '알 수 없는 운동' } };
     }

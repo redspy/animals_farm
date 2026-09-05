@@ -556,14 +556,18 @@ test('이름만 바꿀 때는 운동 상태를 잃지 않는다', () => {
   assert.equal(p.name, '나');
 });
 
-test('운동 전환은 레이트 리밋이 있다', () => {
+test('운동 전환은 레이트 리밋이 있다 (단, 그만두기는 예외)', () => {
   const w = fresh();
   w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
   const t0 = Date.now();
   assert.ok(w.activity(TOKEN_A, 'kickboard', '', t0).activity);
-  assert.equal(w.activity(TOKEN_A, '', '', t0 + 50).throttled, true,
+  assert.equal(w.activity(TOKEN_A, 'kickboard', '', t0 + 50).throttled, true,
     '전원 브로드캐스트 + 스프라이트 재생성을 유발하므로 도배를 막아야 한다');
-  assert.ok(w.activity(TOKEN_A, '', '', t0 + 400).activity);
+  // **그만두기는 스로틀하지 않는다.** 클라이언트가 운동장을 벗어나 스스로
+  // 해제를 보낼 때 거부되면, 스로틀 응답이 옛 상태를 되돌려 보내 다시
+  // 운동을 켜 버린다(경계에서 껐다 켜졌다 한다).
+  assert.ok(w.activity(TOKEN_A, '', '', t0 + 60).activity,
+    '해제는 즉시 받아들여야 한다');
 });
 
 test('중앙에서 한 번 차면 공이 골라인까지 간다', () => {

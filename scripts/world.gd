@@ -131,6 +131,7 @@ var _soccer_cfg: Dictionary = {}
 ## 내가 하고 있는 운동과 줄넘기 기술("" = 안 함).
 var _activity := ""
 var _trick := ""
+var _current_zone_label := ""
 var _zoom_label: Label = null
 var _zoom_buttons: Dictionary = {}   # "zoomIn"/"zoomOut" -> Button
 var _exercise_box: VBoxContainer = null
@@ -1077,12 +1078,20 @@ func _on_ball_received(ball: Dictionary) -> void:
 		return
 	if ball.is_empty():
 		_playground.set_soccer_visible(false)
+		# 점수도 지운다 — 안 지우면 마지막으로 축구하던 사람이 나간 뒤에도
+		# 존 라벨에 "2 : 1"이 남는다.
+		_score = {}
+		_refresh_zone_label()
 		return
 	_playground.set_soccer_visible(true)
 	_playground.set_ball(float(ball.get("x", 0.0)), float(ball.get("z", 0.0)))
+	# 공 패킷은 굴러가는 동안 10Hz로 온다 — **점수가 바뀔 때만** 라벨을 다시
+	# 만든다(매번 문자열을 새로 만들 이유가 없다).
 	if ball.has("score"):
-		_score = ball.get("score", {})
-		_refresh_zone_label()
+		var next_score: Dictionary = ball.get("score", {})
+		if next_score != _score:
+			_score = next_score
+			_refresh_zone_label()
 
 func _on_goal_scored(side: String, score: Dictionary) -> void:
 	_score = score
@@ -1097,7 +1106,7 @@ func _refresh_zone_label() -> void:
 	if _current_zone.is_empty():
 		_zone_label.text = ""
 		return
-	var label := _zone_label_of(_current_zone)
+	var label := _current_zone_label if not _current_zone_label.is_empty() else _current_zone
 	if _current_zone == "playground":
 		var line := "[%s] 운동을 골라보세요" % label
 		if _playground != null and _playground.soccer_visible() and not _score.is_empty():
@@ -1105,12 +1114,6 @@ func _refresh_zone_label() -> void:
 		_zone_label.text = line
 		return
 	_zone_label.text = "[%s] 모임 장소 — 미니게임 준비 중" % label
-
-func _zone_label_of(id: String) -> String:
-	for z: Variant in _zones:
-		if typeof(z) == TYPE_DICTIONARY and String((z as Dictionary).get("id", "")) == id:
-			return String((z as Dictionary).get("label", id))
-	return id
 
 ## 공을 찬다. 방향은 바라보는 방향 — 다른 플레이어를 향해 서서 차면 패스가 된다.
 func _kick_ball() -> void:
@@ -1805,6 +1808,10 @@ func _check_zone() -> void:
 		return
 	var was := _current_zone
 	_current_zone = here
+	# 라벨은 **매칭된 존의 것**을 그대로 들고 있어야 한다. id로 다시 찾으면
+	# 같은 id가 둘인 운동장(트랙 ellipse + 축구장 rect)에서 첫 번째가 잡혀
+	# 축구장에 서 있어도 "운동장 트랙"이 뜬다(리뷰 지적).
+	_current_zone_label = label
 	_refresh_zone_label()
 	if not here.is_empty():
 		_show_toast("%s에 들어왔습니다" % label)
