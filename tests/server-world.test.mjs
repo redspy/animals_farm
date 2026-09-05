@@ -862,3 +862,20 @@ test('trick만 바꿔도 앵커가 흐르지 않는다', () => {
   }
   assert.deepEqual(p.rideAnchor, first, '앵커가 흘렀다 — 좌석 좌표에서 유도해야 멱등하다');
 });
+
+
+test('시소 push는 물리 상한으로 잘린다', () => {
+  const w = fresh();
+  const limit = w.parkCfg.seesawMaxAngle * Math.sqrt(w.parkCfg.seesawGravity);
+  assert.ok(w.parkCfg.seesawPush <= limit + 1e-9,
+    `push(${w.parkCfg.seesawPush})가 물리 상한(${limit.toFixed(3)})을 넘는다 — 한 번 밀 때마다 판이 끝까지 꺾인다`);
+  // 한 번 밀어서 최대 각도에 닿지 않는지는 위의 시소 테스트가 확인한다.
+});
+
+test('좌석 개수는 world.json의 park를 따른다', () => {
+  const w = fresh();
+  // activities.json과 world.json이 갈리면 없는 자리가 배정되고 좌표 계산이
+  // 기구 밖을 가리킨다 — 단일 출처를 world.json으로 못 박았다.
+  assert.equal(w.activities.get('swing').seats, Math.floor(Number(w.park.swing.seats)));
+  assert.equal(w.activities.get('carousel').seats, Math.floor(Number(w.park.carousel.slots)));
+});

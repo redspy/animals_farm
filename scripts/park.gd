@@ -289,10 +289,13 @@ func _build_carousel() -> void:
 	_carousel_deck.add_child(deck)
 
 	# 손잡이 — 슬롯마다 하나. 돌아가는 게 보이는 유일한 단서라 꼭 필요하다.
+	# 서는 자리(slot_inset)와 같은 반지름에 둔다 — 상수로 두면 slot_inset을
+	# 바꿀 때 타는 사람이 손잡이에서 떨어져 선다.
 	var bar := _flat_material(Palette.color("world", "carousel_bar"))
+	var grip_r := r - float(_carousel.get("slot_inset", 0.35))
 	for slot in carousel_slots():
 		var th := TAU * float(slot) / float(carousel_slots())
-		var at := Vector3(cos(th) * (r - 0.3), 0.0, sin(th) * (r - 0.3))
+		var at := Vector3(cos(th) * grip_r, 0.0, sin(th) * grip_r)
 		var post := MeshInstance3D.new()
 		var pm := BoxMesh.new()
 		pm.size = Vector3(0.1, 0.95, 0.1)

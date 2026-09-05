@@ -175,6 +175,22 @@ export class WorldState {
       this.parkCfg.seesawPush = pushLimit;
     }
     this.park = worldCfg.park || {};
+    // **좌석 개수의 단일 출처는 world.json의 park다**(좌석 좌표를 그 값으로
+    // 계산하므로). activities.json의 seats와 갈리면 없는 자리가 배정되고,
+    // 좌표 계산이 기구 밖을 가리켜 허공에 앉는다(리뷰 지적).
+    const geomSeats = {
+      swing: Math.floor(Number(this.park.swing?.seats)),
+      carousel: Math.floor(Number(this.park.carousel?.slots)),
+      seesaw: 2,
+    };
+    for (const [id, count] of Object.entries(geomSeats)) {
+      if (!this.activities.has(id) || !Number.isFinite(count) || count < 1) continue;
+      const a = this.activities.get(id);
+      if (a.seats !== count) {
+        console.warn(`[animals_farm] ${id}의 좌석 수가 어긋납니다(activities.json ${a.seats} / world.json ${count}) — world.json을 따릅니다`);
+      }
+      a.seats = count;
+    }
     // 시소 기울기는 **서버가 소유한다**(축구공과 같은 이유: 각자 계산하면
     // 기기마다 다르게 기울어 누가 위에 있는지가 갈린다).
     // 뺑뺑이는 각도를 서버가 적분해 방송한다 — 밀 때마다 속도가 바뀌므로
@@ -507,13 +523,15 @@ export class WorldState {
     const val = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
     if (id === 'swing' && pk.swing) {
       const s = pk.swing;
-      const count = Math.max(val(s.seats, 2), 1);
+      const count = Math.max(Math.floor(val(s.seats, 2)), 1);
       const gap = val(s.seat_gap, 1.6);
       return { x: val(s.x, 0), z: val(s.z, 0) + (seat - (count - 1) / 2) * gap };
     }
     if (id === 'carousel' && pk.carousel) {
       const c = pk.carousel;
-      const slots = Math.max(val(c.slots, 4), 1);
+      // 클라이언트(carousel_slots)가 int()로 자르므로 여기서도 자른다 —
+      // 4.5를 넣으면 서버는 4.5, 클라는 4로 계산해 좌석 좌표가 갈린다.
+      const slots = Math.max(Math.floor(val(c.slots, 4)), 1);
       const r = val(c.radius, 2) - val(c.slot_inset, 0.35);
       const th = (Math.PI * 2 * seat) / slots;
       return { x: val(c.x, 0) + Math.cos(th) * r, z: val(c.z, 0) + Math.sin(th) * r };
@@ -658,15 +676,26 @@ export class WorldState {
       const at = this.seatPosition(id, seatNo);
       p.rideAnchor = at || { x: p.x, z: p.z };
       if (at) {
+        // 좌석 좌표는 **검증을 거쳐야 한다.** 이 값이 p.x/p.z로 들어가고 그건
+        // 디스크에 저장된다 — world.json의 park 좌표 오타 하나로 플레이어
+        // 저장 위치가 섬 밖으로 영구히 옮겨질 수 있다(리뷰 지적).
+        const safe = this.clampPos(at.x, at.z);
+        at.x = safe.x;
+        at.z = safe.z;
         // **위치도 배정된 자리로 맞춘다.** 앵커만 옮기면 서버 좌표는 옛 자리에
         // 남는다 — 타는 동안 클라이언트는 이동을 보내지 않고(input_locked),
         // 보낸다 해도 속도 상한(1.28 u/s)으로는 좌석 간격을 넘는 데 십수
         // 패킷이 걸린다. 그 사이 남들 화면에는 **다른 사람과 겹친 자리**에
         // 서 있는 것으로 보인다(리뷰 지적).
         // 좌석 좌표는 이미 존 검사를 통과한 고정값이라 순간이동 악용이 아니다.
-        p.x = Math.round(at.x * 100) / 100;
-        p.z = Math.round(at.z * 100) / 100;
-        p.moved = true;   // 남들에게 방송되도록
+        const nx = Math.round(at.x * 100) / 100;
+        const nz = Math.round(at.z * 100) / 100;
+        // 좌석이 그대로면(그네 진폭만 바꾼 경우) 방송할 이유가 없다.
+        if (p.x !== nx || p.z !== nz) {
+          p.x = nx;
+          p.z = nz;
+          p.moved = true;
+        }
       }
     } else {
       p.rideAnchor = null;
