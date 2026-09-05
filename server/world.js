@@ -51,6 +51,8 @@ export const LIMITS = {
   // 존 판정 여유(유닛). 서버 좌표는 최대 한 틱 뒤처지므로 경계에서 정상
   // 조작이 거부되지 않게 조금 넓게 본다.
   ZONE_PAD: 1.5,
+  // 놀이기구에 앉은 사람이 자리에서 벗어날 수 있는 최대 거리(유닛).
+  RIDE_LEASH: 0.6,
 };
 
 const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -117,6 +119,14 @@ export class WorldState {
     // 운동장처럼 "그 안에서만 되는" 활동을 서버도 판정할 수 있어야 한다 —
     // 클라이언트만 막으면 변조한 클라이언트가 섬 전역에서 자전거 속도를 쓴다.
     this.zones = (worldCfg.zones || []).filter((z) => z && z.id);
+    // 활동이 가리키는 존이 실제로 있는지 확인한다. 없으면 그 활동은 **어디서도
+    // 못 하는 상태**가 되는데, 조용히 그러면 원인을 찾기 어렵다.
+    const zoneIds = new Set(this.zones.map((z) => String(z.id)));
+    for (const [id, a] of this.activities) {
+      if (a.zone && !zoneIds.has(a.zone)) {
+        console.warn(`[animals_farm] activities.json의 ${id}.zone("${a.zone}")이 world.json zones에 없습니다 — 그 활동은 어디서도 시작할 수 없습니다`);
+      }
+    }
     // 축구 값도 유효범위를 강제한다(밸런스 데이터 규칙 — items의 price_range,
     // gatherables의 respawn_sec에 이미 있는 처리다).
     //
@@ -144,6 +154,14 @@ export class WorldState {
       seesawMaxAngle: num(pk.seesaw_max_angle, 0.42, 0.05, 1.4, 'park.seesaw_max_angle'),
       seesawPushInterval: num(pk.seesaw_push_min_interval_ms, 400, 0, 5000, 'park.seesaw_push_min_interval_ms'),
       carouselPushInterval: num(pk.carousel_push_min_interval_ms, 500, 0, 5000, 'park.carousel_push_min_interval_ms'),
+      carouselPush: num(pk.carousel_push, 1.0, 0.05, 10, 'park.carousel_push'),
+      carouselMaxSpeed: num(pk.carousel_max_speed, 3.2, 0.2, 12, 'park.carousel_max_speed'),
+      carouselFriction: num(pk.carousel_friction, 0.6, 0.01, 0.999, 'park.carousel_friction'),
+      // 그네 진폭 단계 — 값 개수가 곧 진폭의 유효 범위다(trick 검증에 쓴다).
+      swingAmpSteps: Array.isArray(pk.swing_amp_steps)
+        ? pk.swing_amp_steps
+          .map((v, i) => num(v, 0.3, 0.05, 1.4, `park.swing_amp_steps[${i}]`))
+        : [0.28, 0.55, 0.85],
     };
     this.park = worldCfg.park || {};
     // 시소 기울기는 **서버가 소유한다**(축구공과 같은 이유: 각자 계산하면
@@ -163,9 +181,14 @@ export class WorldState {
         // 범위는 섬 안이어야 한다 — 섬 밖 축구장은 통과시키면 안 된다.
         x: num(rawField.x, 0, -islandX / 2, islandX / 2, 'playground.field.x'),
         z: num(rawField.z, 0, -islandZ / 2, islandZ / 2, 'playground.field.z'),
-        size_x: num(rawField.size_x, 20, 2, islandX, 'playground.field.size_x'),
-        size_z: num(rawField.size_z, 12, 2, islandZ, 'playground.field.size_z'),
-        goal_width: num(rawField.goal_width, 4.4, 0.5, islandZ, 'playground.field.goal_width'),
+        // 중심과 크기를 따로만 보면 "x=38, size_x=20"이 둘 다 통과해 축구장이
+        // 섬 밖으로 나간다 — 절반을 더한 값으로 검사한다(리뷰 지적).
+        size_x: num(rawField.size_x, 20, 2,
+          Math.max(2, (islandX / 2 - Math.abs(Number(rawField.x) || 0)) * 2), 'playground.field.size_x'),
+        size_z: num(rawField.size_z, 12, 2,
+          Math.max(2, (islandZ / 2 - Math.abs(Number(rawField.z) || 0)) * 2), 'playground.field.size_z'),
+        goal_width: num(rawField.goal_width, 4.4, 0.5,
+          Math.max(1, Number(rawField.size_z) || 12), 'playground.field.goal_width'),
         goal_depth: num(rawField.goal_depth, 1.1, 0.1, 20, 'playground.field.goal_depth'),
       }
       : null;
@@ -347,6 +370,8 @@ export class WorldState {
         lastKickAt: 0,
         lastActivityAt: 0,
         lastPushAt: 0,
+        // 놀이기구에 앉은 자리(있으면 그 근처를 벗어날 수 없다).
+        rideAnchor: null,
       };
       this.players.set(token, p);
       this._markDirty();
@@ -363,6 +388,7 @@ export class WorldState {
       if (resetActivity || !p.online) {
         p.activity = '';
         p.trick = '';
+        p.rideAnchor = null;
       }
       this._markDirty();
     }
@@ -400,6 +426,18 @@ export class WorldState {
     }
     const dt = Math.max(LIMITS.SPEED_MIN_DT_MS, now - (p.lastMoveAt || now)) / 1000;
     const target = this.clampPos(x, z);
+    // 놀이기구에 앉아 있으면 그 자리 근처를 벗어날 수 없다. 0.6은 좌석에
+    // 미끄러져 들어오는 오차 여유다(클라이언트가 좌석까지 걸어간 뒤 앉는다).
+    if (p.rideAnchor) {
+      const ax = p.rideAnchor.x;
+      const az = p.rideAnchor.z;
+      const d = Math.hypot(target.x - ax, target.z - az);
+      if (d > LIMITS.RIDE_LEASH) {
+        const k = LIMITS.RIDE_LEASH / d;
+        target.x = ax + (target.x - ax) * k;
+        target.z = az + (target.z - az) * k;
+      }
+    }
     const dist = Math.hypot(target.x - p.x, target.z - p.z);
     const maxDist = this.speedCapOf(p) * dt;
     if (dist > maxDist) {
@@ -431,6 +469,7 @@ export class WorldState {
     if (act && act.zone && !this.inZone(p.x, p.z, act.zone, LIMITS.ZONE_PAD)) {
       p.activity = '';
       p.trick = '';
+      p.rideAnchor = null;
       dismounted = { token, activity: '', trick: '' };
     }
     // 축구 중에 공에 닿으면 밀어낸다(드리블). 차기는 별도 조작이지만, 걸어가
@@ -495,8 +534,23 @@ export class WorldState {
     let wanted = String(trick || '');
     if (act && wanted) {
       if (act.freeTrick) {
-        // 자유 형식이지만 그대로 방송하므로 형태를 좁힌다(자리:진폭 같은 값).
-        wanted = /^[0-9:]{1,5}$/.test(wanted) ? wanted : '';
+        // **엄격하게 정규화한다.** 그대로 방송되고, 받는 쪽은 처음 보는
+        // (운동, 기술) 조합마다 스프라이트 프레임을 새로 만든다 — 임의 문자열을
+        // 허용하면 남의 클라이언트에 프레임 스파이크를 먹일 수 있다(리뷰 지적).
+        // 형식은 "자리" 또는 "자리:진폭"이고 둘 다 유효 범위의 정수여야 한다.
+        const m = /^(\d{1,2})(?::(\d{1,2}))?$/.exec(wanted);
+        if (!m) {
+          wanted = '';
+        } else {
+          const amps = this.parkCfg.swingAmpSteps.length;
+          const seat = Number.parseInt(m[1], 10);
+          const amp = m[2] === undefined ? null : Number.parseInt(m[2], 10);
+          const seatOk = seat >= 0 && seat < Math.max(act.seats, 1);
+          const ampOk = amp === null || (amp >= 0 && amp < amps);
+          wanted = seatOk && ampOk
+            ? (amp === null ? String(seat) : `${seat}:${amp}`)
+            : '';
+        }
       } else if (!act.tricks.has(wanted)) {
         wanted = '';
       }
@@ -523,6 +577,12 @@ export class WorldState {
         return { error: { code: 'seat_taken', message: '빈 자리가 없습니다' } };
       }
       wanted = rest ? `${seat}:${rest}` : String(seat);
+      // **탄 자리에 위치를 고정한다.** 좌석 배정으로 겹침만 막고 좌표는
+      // 클라이언트 주장을 그대로 받으면, 놀이기구에 앉은 채로 섬을 돌아다닐 수
+      // 있다("놀이기구가 위치를 정한다"는 불변식이 서버에 없었다 — 리뷰 지적).
+      p.rideAnchor = { x: p.x, z: p.z };
+    } else {
+      p.rideAnchor = null;
     }
     // **아무것도 바뀌지 않으면 조용히 끝낸다.** 도배를 막는 실질적인 지점이
     // 여기다(같은 값을 최대 속도로 보내도 브로드캐스트가 나가지 않는다).
@@ -544,6 +604,7 @@ export class WorldState {
     p.lastActivityAt = now;
     p.activity = id;
     p.trick = id ? wanted : '';
+    if (!id) p.rideAnchor = null;
     // 축구하는 사람이 생기면 공을 내보내고, 아무도 없으면 치운다.
     const changed = this.refreshBall();
     this._markDirty();
@@ -639,7 +700,8 @@ export class WorldState {
     if (what === 'carousel') {
       if (now - (p.lastPushAt || 0) < this.parkCfg.carouselPushInterval) return { throttled: true };
       p.lastPushAt = now;
-      this.carousel.speed = Math.min(this.carousel.speed + 1.4, 5.0);
+      this.carousel.speed = Math.min(
+        this.carousel.speed + this.parkCfg.carouselPush, this.parkCfg.carouselMaxSpeed);
       return { pushed: 'carousel' };
     }
     return { error: { code: 'bad_ride', message: '알 수 없는 놀이기구' } };
@@ -680,7 +742,7 @@ export class WorldState {
     // 뺑뺑이: 밀면 빨라지고 마찰로 느려진다.
     if (this.carousel.speed > 0.001) {
       this.carousel.angle = (this.carousel.angle + this.carousel.speed * dt) % (Math.PI * 2);
-      this.carousel.speed *= Math.pow(0.55, dt);
+      this.carousel.speed *= Math.pow(this.parkCfg.carouselFriction, dt);
       if (this.carousel.speed < 0.05) this.carousel.speed = 0;
     }
     const changed = Math.abs(before.seesaw - this.seesaw.angle) > 0.0005

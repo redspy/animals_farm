@@ -446,6 +446,12 @@ func _apply_activity(img: Image, dir: Vector2i, phase: int) -> Image:
 			return _draw_inline(img, side, phase)
 		"kickboard":
 			_draw_kickboard(img, side, phase)
+		"slide", "swing", "seesaw":
+			# 놀이기구는 흔들림·회전·높이를 **노드 오프셋**으로 표현하므로
+			# (scripts/park.gd) 스프라이트는 정지 자세가 맞다.
+			_draw_sitting(img, side)
+		"carousel":
+			_draw_gripping(img, side)
 	return img
 
 # --- 줄넘기 ------------------------------------------------------------------
@@ -633,6 +639,38 @@ func _draw_kickboard(img: Image, side: bool, phase: int) -> void:
 		var off := 1 if phase % 3 == 0 else 3
 		_draw_rect(img, Rect2i(12, DECK_Y - 4, 4, 5), _c_bottom)
 		_draw_rect(img, Rect2i(18, DECK_Y - 4 - off, 4, 5), _c_bottom_dark)
+
+# --- 놀이기구 자세 ------------------------------------------------------------
+
+## 앉은 자세(미끄럼틀·그네·시소 공통).
+##
+## 몸을 다시 그리지 않는 이유: 4방향 × 6프레임을 자세마다 새로 그리면 관리
+## 비용이 커진다. **다리만 앞으로 접어** 덮어 그리면 이 크기(32x40)에서는
+## 충분히 "앉았다"로 읽힌다.
+func _draw_sitting(img: Image, side: bool) -> void:
+	_clear_rect(img, Rect2i(6, LEG_BASE_Y, 20, 40 - LEG_BASE_Y))
+	if side:
+		# 옆모습: 허벅지가 앞으로, 정강이가 아래로.
+		_draw_rect(img, Rect2i(15, LEG_BASE_Y + 1, 9, 4), _c_bottom)
+		_draw_rect(img, Rect2i(21, LEG_BASE_Y + 5, 4, 5), _c_bottom_dark)
+		_draw_rect(img, Rect2i(20, LEG_BASE_Y + 9, 6, 3), _c_shoe)
+	else:
+		# 앞/뒤: 무릎이 화면 쪽으로 오므로 다리를 짧고 넓게.
+		for leg_x: int in [10, 18]:
+			_draw_rect(img, Rect2i(leg_x, LEG_BASE_Y + 1, 5, 5), _c_bottom)
+			_draw_rect(img, Rect2i(leg_x, LEG_BASE_Y + 6, 5, 3), _c_shoe)
+
+## 손잡이를 잡고 선 자세(뺑뺑이).
+func _draw_gripping(img: Image, side: bool) -> void:
+	var bar := Palette.color("world", "carousel_bar")
+	if side:
+		# 몸 앞에 세로 손잡이.
+		_draw_rect(img, Rect2i(23, 18, 2, 12), bar)
+		_draw_rect(img, Rect2i(21, 19, 4, 3), _c_skin)
+	else:
+		_draw_rect(img, Rect2i(7, 19, 18, 2), bar)
+		_draw_rect(img, Rect2i(7, 18, 3, 4), _c_skin)
+		_draw_rect(img, Rect2i(22, 18, 3, 4), _c_skin)
 
 # ---------------------------------------------------------------------------
 # 그리기 도우미

@@ -101,22 +101,27 @@ func set_others(others: Array) -> void:
 
 ## 탭한 지점으로 걸어간다. 바위가 막으면 짧은 쪽으로 돌아가는 경유지가 생긴다.
 ## 마지막 경유지에 도착하면 arrived 시그널.
+## 정해진 점들을 그대로 따라간다(놀이기구처럼 경로가 미리 정해진 이동).
+## move_to와 달리 우회 계산을 하지 않는다 — 기구가 정한 길이 곧 정답이다.
+func follow_path(points: Array) -> void:
+	_path.clear()
+	for p: Variant in points:
+		if p is Vector3:
+			_path.append(p as Vector3)
+
+## 타고 있는 동안 직접 조작을 받지 않는다(기구가 위치를 정한다).
+var input_locked := false
+
 func move_to(target: Vector3) -> void:
 	var clamped := Vector3(
 		clampf(target.x, -_half_x, _half_x),
 		0.0,
 		clampf(target.z, -_half_z, _half_z)
 	)
+	# PathPlanner.plan은 **빈 배열을 반환하지 않는다**(우회를 못 찾아도 목표를
+	# 그대로 붙인다) — 여기서 폴백을 둘 필요가 없다. 벽 모서리에 끼여 못 움직이는
+	# 것은 push_out이 표면을 따라 잡아 주는 정상 동작이다.
 	_path = PathPlanner.plan(position, clamped, _obstacles, RADIUS)
-	# **우회 경로를 못 찾아도 목표를 향해 출발한다.**
-	#
-	# 실측(2026-09-05): 석벽 모서리와 섬 경계 사이에 끼면 어느 쪽으로 돌아도
-	# 막힌 것으로 판정돼 경로가 비고, 그러면 탭해도 **아무 일도 일어나지 않아**
-	# 조작이 고장 난 것처럼 보인다. 그럴 때는 직선 목표를 그대로 넣는다 —
-	# 매 프레임 push_out이 표면을 따라 미끄러뜨리므로(수동 이동과 같은 처리)
-	# 벽을 따라 빠져나가거나, 최소한 벽에 붙어 서기라도 한다.
-	if _path.is_empty() and not position.is_equal_approx(clamped):
-		_path = [clamped]
 
 func cancel_move_to() -> void:
 	_path.clear()
@@ -141,6 +146,10 @@ func _physics_process(delta: float) -> void:
 	)
 	var touch := _touch_vector if joystick_enabled else Vector2.ZERO
 	var dir := keys if keys.length() >= touch.length() else touch
+	# 놀이기구를 타는 동안에는 방향 입력을 무시한다 — 경로(미끄럼틀)나 좌석
+	# 고정(그네·시소·뺑뺑이)이 위치를 정한다. 서버도 같은 규칙을 강제한다.
+	if input_locked:
+		dir = Vector2.ZERO
 
 	# 수동 입력이 들어오면 탭 경로를 버린다 — 손으로 조작하는 중에 캐릭터가
 	# 예전 목표로 끌려가면 조작을 빼앗긴 느낌이 된다.

@@ -54,11 +54,18 @@ func display_name() -> String:
 ## 남의 운동 모습. 서버가 브로드캐스트한 값을 그대로 스프라이트에 넘긴다.
 func set_activity(kind: String, trick: String) -> void:
 	_activity = kind
+	_trick = trick
 	if sprite != null:
 		sprite.set_activity(kind, trick)
 
 func activity() -> String:
 	return _activity
+
+## 놀이기구 자리·진폭이 담긴다("자리:진폭"). 보이는 위치 계산에 쓴다.
+func trick() -> String:
+	return _trick
+
+var _trick := ""
 
 var _activity := ""
 

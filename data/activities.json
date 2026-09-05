@@ -60,7 +60,8 @@
       "speed": 9.0,
       "zone": "park",
       "locked": true,
-      "note": "사다리로 올라가 정해진 경로로 내려온다. 속도는 내려가는 구간에서 쓴다."
+      "note": "사다리로 올라가 정해진 경로로 내려온다. 속도는 내려가는 구간에서 쓴다.",
+      "button": false
     },
     {
       "id": "swing",
@@ -70,7 +71,8 @@
       "locked": true,
       "seats": 2,
       "free_trick": true,
-      "note": "trick은 '자리:진폭'(예: 0:2). 진폭은 액션 버튼으로 올린다. 흔들림은 시간 함수라 동기화가 필요 없다."
+      "note": "trick은 '자리:진폭'(예: 0:2). 진폭은 액션 버튼으로 올린다. 흔들림은 시간 함수라 동기화가 필요 없다.",
+      "button": false
     },
     {
       "id": "carousel",
@@ -80,7 +82,8 @@
       "locked": true,
       "seats": 4,
       "free_trick": true,
-      "note": "논리 위치는 테두리 슬롯에 고정하고 보이는 위치만 돈다 — 접선 속도가 걷기보다 빨라 서버 상한에 걸린다."
+      "note": "논리 위치는 테두리 슬롯에 고정하고 보이는 위치만 돈다 — 접선 속도가 걷기보다 빨라 서버 상한에 걸린다.",
+      "button": false
     },
     {
       "id": "seesaw",
@@ -90,7 +93,8 @@
       "locked": true,
       "seats": 2,
       "free_trick": true,
-      "note": "기울기는 서버가 소유한다(축구공과 같은 구조). 액션 버튼으로 자기 쪽을 누른다."
+      "note": "기울기는 서버가 소유한다(축구공과 같은 구조). 액션 버튼으로 자기 쪽을 누른다.",
+      "button": false
     }
   ],
   "soccer": {
@@ -104,9 +108,9 @@
     "kick_min_interval_ms": 260
   },
   "park": {
-    "_comment": "놀이기구 물리·연출 값. 시소는 서버가 기울기를 적분하고, 그네·뺑뺑이는 시간 함수다.",
+    "_comment": "놀이기구 물리·연출 값. 시소는 서버가 기울기를 적분하고(스프링-감쇠), 그네·뺑뺑이는 각도를 서버가 갖거나 시간 함수로 만든다. seesaw_push는 **한 번 밀었을 때 최대 각도에 부딪히지 않을 만큼**이어야 한다: 고유 진동수 ω=√gravity=1.61이므로 충격 v가 만드는 진폭은 v/ω다 — 2.2는 진폭 1.37로 max_angle 0.42를 훨씬 넘어 밀 때마다 판이 끝까지 탁 꺾였다(리뷰 지적). 0.6이면 진폭 0.37로 최대 각도 안에서 부드럽게 오간다.",
     "seesaw_gravity": 2.6,
-    "seesaw_push": 2.2,
+    "seesaw_push": 0.6,
     "seesaw_damping": 0.55,
     "seesaw_max_angle": 0.42,
     "seesaw_push_min_interval_ms": 400,
@@ -117,6 +121,9 @@
       0.85
     ],
     "slide_climb_sec": 0.9,
-    "carousel_push_min_interval_ms": 500
+    "carousel_push_min_interval_ms": 500,
+    "carousel_push": 1.0,
+    "carousel_max_speed": 3.2,
+    "carousel_friction": 0.6
   }
 }

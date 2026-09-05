@@ -659,3 +659,131 @@ test('축구 설정이 범위를 벗어나면 기본값으로 대체한다', () 
   assert.ok(w.soccerCfg.kickSpeed > 0);
   assert.ok(w.soccerCfg.dribbleRange > 0);
 });
+
+// ---------------------------------------------------------------------------
+// 놀이터(park) — 좌석 배정과 놀이기구 물리
+// ---------------------------------------------------------------------------
+
+/** 놀이터 안(중심)으로 옮긴다 — 놀이기구는 놀이터에서만 탈 수 있다. */
+function intoPark(w, token) {
+  const p = w.players.get(token);
+  p.x = Number(w.park.x);
+  p.z = Number(w.park.z);
+  return p;
+}
+
+test('놀이기구는 놀이터에서만 탈 수 있다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  assert.equal(w.activity(TOKEN_A, 'swing', '0').error.code, 'not_in_zone');
+  intoPark(w, TOKEN_A);
+  assert.equal(w.activity(TOKEN_A, 'swing', '0', Date.now() + 400).activity.activity, 'swing');
+});
+
+test('같은 자리를 요청하면 빈 자리로 배정하고, 다 차면 거절한다', () => {
+  const w = fresh();
+  const tokens = [TOKEN_A, TOKEN_B, '33333333-3333-4333-8333-333333333333'];
+  for (const t of tokens) {
+    w.join({ token: t, name: '가', preset: 'f1' });
+    intoPark(w, t);
+  }
+  // 그네는 2인 — 세 번째는 앉을 자리가 없다.
+  const a = w.activity(tokens[0], 'swing', '0');
+  const b = w.activity(tokens[1], 'swing', '0');
+  assert.equal(a.activity.trick, '0');
+  assert.equal(b.activity.trick, '1', '찬 자리를 요청하면 빈 자리로 옮겨 준다');
+  const c = w.activity(tokens[2], 'swing', '0');
+  assert.equal(c.error.code, 'seat_taken', '자리가 없으면 앉히지 않는다 — 겹쳐 앉으면 안 된다');
+});
+
+test('그네 진폭은 유효 범위의 정수만 받는다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  intoPark(w, TOKEN_A);
+  const t0 = Date.now();
+  assert.equal(w.activity(TOKEN_A, 'swing', '0:2', t0).activity.trick, '0:2');
+  // 범위를 벗어나거나 형식이 다르면 버린다 — 그대로 방송되고, 받는 쪽은 처음
+  // 보는 (운동, 기술) 조합마다 스프라이트를 새로 만든다.
+  assert.equal(w.activity(TOKEN_A, 'swing', '0:99', t0 + 300).activity.trick, '0');
+  // 형식이 다르면 진폭이 사라져 자리만 남는다 — 이미 그 상태라 no-op이 된다.
+  assert.equal(w.activity(TOKEN_A, 'swing', 'a:b', t0 + 600).noop, true);
+  assert.equal(w.players.get(TOKEN_A).trick, '0');
+});
+
+test('놀이기구에 앉으면 그 자리를 벗어날 수 없다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  intoPark(w, TOKEN_A);
+  w.activity(TOKEN_A, 'carousel', '0');
+  const seat = { x: p.x, z: p.z };
+  let now = Date.now();
+  for (let i = 0; i < 20; i += 1) {
+    now += 120;
+    w.move(TOKEN_A, { x: seat.x + 5, z: seat.z + 5 }, now);
+  }
+  const moved = Math.hypot(p.x - seat.x, p.z - seat.z);
+  assert.ok(moved <= LIMITS.RIDE_LEASH + 0.01,
+    `앉은 자리에서 ${LIMITS.RIDE_LEASH} 이상 벗어났다 (${moved.toFixed(2)}) — 놀이기구가 위치를 정해야 한다`);
+});
+
+test('미끄럼틀은 자리가 없어 위치가 고정되지 않는다(내려가야 하므로)', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  intoPark(w, TOKEN_A);
+  w.activity(TOKEN_A, 'slide', '');
+  assert.equal(p.rideAnchor, null, '경로를 따라 내려가므로 좌석 고정을 걸면 안 된다');
+  assert.ok(w.speedCapOf(p) > 10, `내려가는 속도가 나와야 한다 (${w.speedCapOf(p)})`);
+});
+
+test('타고 있는 사람만 놀이기구를 밀 수 있다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  intoPark(w, TOKEN_A);
+  assert.equal(w.pushRide(TOKEN_A, 'seesaw').error.code, 'not_riding',
+    '지나가면서 남의 기구를 흔들 수는 없다');
+  w.activity(TOKEN_A, 'seesaw', '0');
+  assert.equal(w.pushRide(TOKEN_A, 'seesaw').pushed, 'seesaw');
+});
+
+test('시소는 밀면 기울고 최대 각도를 넘지 않으며 수평으로 돌아온다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  intoPark(w, TOKEN_A);
+  w.activity(TOKEN_A, 'seesaw', '0');
+  w.pushRide(TOKEN_A, 'seesaw');
+  let peak = 0;
+  for (let i = 0; i < 40; i += 1) {
+    w.tickPark(0.1);
+    peak = Math.max(peak, Math.abs(w.seesaw.angle));
+  }
+  assert.ok(peak > 0.05, `밀었는데 기울지 않았다 (${peak})`);
+  assert.ok(peak <= w.parkCfg.seesawMaxAngle + 0.001,
+    `최대 각도를 넘었다 (${peak} > ${w.parkCfg.seesawMaxAngle}) — 한 번 밀 때마다 판이 끝까지 꺾이면 시소가 아니다`);
+
+  // 아무도 안 타면 수평으로 돌아온다.
+  w.activity(TOKEN_A, '', '', Date.now() + 1000);
+  for (let i = 0; i < 200; i += 1) w.tickPark(0.1);
+  assert.ok(Math.abs(w.seesaw.angle) < 0.02, `수평으로 돌아오지 않았다 (${w.seesaw.angle})`);
+});
+
+test('뺑뺑이는 밀면 돌고 마찰로 멈춘다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  intoPark(w, TOKEN_A);
+  w.activity(TOKEN_A, 'carousel', '0');
+  w.pushRide(TOKEN_A, 'carousel');
+  assert.ok(w.carousel.speed > 0, '밀었는데 돌지 않았다');
+  const before = w.carousel.angle;
+  w.tickPark(0.1);
+  assert.notEqual(w.carousel.angle, before);
+  for (let i = 0; i < 400; i += 1) w.tickPark(0.1);
+  assert.equal(w.carousel.speed, 0, '마찰로 멈춰야 한다');
+});
+
+test('놀이기구 상태는 스냅샷에 들어간다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const snap = w.snapshot();
+  assert.ok(snap.park != null, '새로 들어온 사람도 기울기·각도를 맞춰야 한다');
+  assert.equal(typeof snap.park.seesaw, 'number');
+});

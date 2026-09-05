@@ -34,6 +34,8 @@ signal activity_received(token: String, activity: String, trick: String)
 ## 축구공. ball이 비어 있으면 "공이 없다"(아무도 축구를 하지 않는다).
 signal ball_received(ball: Dictionary)
 signal goal_scored(side: String, score: Dictionary)
+## 놀이기구 상태(시소 기울기·뺑뺑이 각도). 서버가 소유한다.
+signal park_state(state: Dictionary)
 
 ## 내 위치는 10Hz로만 보낸다(서버 레이트 리밋과 같은 간격).
 const MOVE_SEND_INTERVAL := 0.1
@@ -176,6 +178,8 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			ball_received.emit(ball if typeof(ball) == TYPE_DICTIONARY else {})
 		"goal":
 			goal_scored.emit(String(msg.get("side", "")), msg.get("score", {}))
+		"park":
+			park_state.emit(msg.get("park", {}))
 		"system":
 			system_message.emit(String(msg.get("text", "")), String(msg.get("kind", "")))
 		"error":
@@ -248,6 +252,10 @@ func send_chat(text: String) -> void:
 ## 운동 시작/변경/그만두기. activity가 빈 문자열이면 원래 모습으로 돌아온다.
 func send_activity(activity_id: String, trick_id: String = "") -> void:
 	_send({"t": "activity", "activity": activity_id, "trick": trick_id})
+
+## 놀이기구 밀기(시소·뺑뺑이). 타고 있는 사람만 밀 수 있다(서버가 검사).
+func send_push(what: String) -> void:
+	_send({"t": "push", "what": what})
 
 ## 공 차기. 방향은 클라이언트가 정하고 **사거리는 서버가 검사한다**.
 func send_kick(dir: Vector2) -> void:

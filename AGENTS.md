@@ -45,6 +45,7 @@ npm run test:server                  # 서버 규칙 유닛 테스트 (소켓 �
 npm run test:multiplayer             # 2탭 + WS 옵저버로 실시간 동기화 검증
 npm run test:mobile                  # 폰 터치 에뮬레이션(조이스틱·버튼·DOM 채팅)
 npm run test:playground              # 운동장(운동 버튼·모습·속도·줄넘기 기술·축구공)
+npm run test:park                    # 놀이터(미끄럼틀·그네·뺑뺑이·시소 탑승/밀기/내리기)
 npm run test:safari                  # 사파리(WebKit) 텍스트 입력 — 첫 실행 전 `npx playwright install webkit`
 npm run test:insecure                # http(비보안 컨텍스트)에서도 실행되는지
 npm run capture:chat                 # 채팅 UI 상태별 캡쳐(문서용)

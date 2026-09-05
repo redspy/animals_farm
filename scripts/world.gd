@@ -124,6 +124,12 @@ var _tap_intent := {"kind": "", "id": ""}
 
 # --- 운동장/운동 ---
 var _playground: Playground = null
+var _park: Park = null
+## data/activities.json의 park(놀이기구 물리·연출 값).
+var _park_phys: Dictionary = {}
+## 놀이기구를 타고 있을 때의 자리 번호와 그네 진폭 단계(trick "자리:진폭").
+var _ride_seat := 0
+var _ride_amp := 0
 ## data/activities.json — 버튼 목록·속도·기술의 단일 출처(서버도 같은 파일을 읽는다).
 var _activities: Array = []
 var _activity_by_id: Dictionary = {}
@@ -199,6 +205,7 @@ func _ready() -> void:
 		if typeof(a) == TYPE_DICTIONARY:
 			_activity_by_id[String((a as Dictionary).get("id", ""))] = a
 	_soccer_cfg = act_cfg.get("soccer", {})
+	_park_phys = act_cfg.get("park", {})
 	_build_world()
 	_apply_daily_respawn()
 	_refresh_hud()
@@ -286,6 +293,13 @@ func _build_environment() -> void:
 		_playground = Playground.new()
 		_playground.setup(pg_cfg)
 		add_child(_playground)
+
+	# 놀이터(모래 바닥 + 놀이기구). 운동장과 같은 이유로 바위보다 먼저 깐다.
+	var park_cfg: Dictionary = _world_cfg.get("park", {})
+	if not park_cfg.is_empty():
+		_park = Park.new()
+		_park.setup(park_cfg, _park_phys)
+		add_child(_park)
 
 	# 바위 조형물 — 통과 불가 장애물.
 	for o: Variant in _obstacles:
@@ -694,10 +708,23 @@ func _price_of(item_id: String) -> int:
 
 ## 폰 안내문. 좁은 화면에서는 글자를 키우기 때문에 긴 문장이 화면 폭을
 ## 넘어간다 — 꼭 필요한 것만 남긴다(나머지는 눌러 보면 알 수 있는 버튼들이다).
+## Space가 지금 무엇을 하는지 — 상황에 따라 달라진다.
+func _action_hint() -> String:
+	match _activity:
+		"soccer": return "공 차기"
+		"seesaw", "carousel": return "밀기"
+		"swing": return "더 높이"
+		"slide": return "내려가는 중"
+	return "채집/줍기"
+
 func _touch_hint() -> String:
 	if _is_narrow_screen():
+		if _is_riding():
+			return "액션 버튼으로 밀기/높이 · 내리기 버튼으로 내림"
 		if _activity == "soccer":
 			return "공을 탭하면 다가가서 찬다 · 액션 버튼도 차기"
+		if _current_zone == "park":
+			return "놀이기구를 탭하면 탑니다"
 		return "가고 싶은 곳을 탭 · 대상을 탭하면 자동 처리 · 오른쪽 운동 버튼"
 	return "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 가방 · 오른쪽 운동 버튼"
 
@@ -712,8 +739,8 @@ func _refresh_hud() -> void:
 	# 없고, 오히려 터치 UI를 못 찾게 만든다.
 	var hint := _touch_hint() \
 		if _touch != null \
-		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기)  [방향키] 이동  [Space] %s  [I] 가방  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % [
-			"공 차기" if _activity == "soccer" else "채집/줍기", maxi(_emotes.size(), 1)]
+		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기·놀이기구 탑승)  [방향키] 이동  [Space] %s  [I] 가방  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % [
+			_action_hint(), maxi(_emotes.size(), 1)]
 	# 좁은 화면에서는 이름·시각을 한 줄에 두면 오른쪽 상단의 연결 상태와 겹친다
 	# (2026-09-05 폰 실측: "Minsu | 2026-09-05 07:37 (새벽)"이 "서버 연결됨"을
 	# 파고들었다). 이름/벨을 첫 줄에, 시각을 그 아래 줄로 내린다.
@@ -922,15 +949,23 @@ func _on_zoom_pressed(steps: float) -> void:
 # 운동(줄넘기·축구·자전거·인라인·킥보드)
 # ---------------------------------------------------------------------------
 
+## 존 id → 표시 이름(데이터의 label). 안내 문구에만 쓴다.
+func _zone_label_by_id(id: String) -> String:
+	for z: Variant in _zones:
+		if typeof(z) == TYPE_DICTIONARY and String((z as Dictionary).get("id", "")) == id:
+			return String((z as Dictionary).get("label", id))
+	return id
+
 func _activity_label(id: String) -> String:
 	var a: Dictionary = _activity_by_id.get(id, {})
 	return String(a.get("label", id))
 
-func _zone_only(id: String) -> bool:
+## 그 활동을 할 수 있는 존 id. 빈 문자열이면 어디서나(킥보드).
+func _activity_zone(id: String) -> String:
 	if id.is_empty():
-		return false
+		return ""
 	var a: Dictionary = _activity_by_id.get(id, {})
-	return bool(a.get("zone_only", true))
+	return String(a.get("zone", ""))
 
 func _activity_speed(id: String) -> float:
 	var a: Dictionary = _activity_by_id.get(id, {})
@@ -947,12 +982,17 @@ func _activity_speed(id: String) -> float:
 ## zone_only가 아닌 것만(= 킥보드) 보인다.
 func _available_activities() -> Array:
 	var out: Array = []
-	var inside := _current_zone == "playground"
 	for a: Variant in _activities:
 		if typeof(a) != TYPE_DICTIONARY:
 			continue
 		var act := a as Dictionary
-		if inside or not bool(act.get("zone_only", true)):
+		# 놀이기구는 버튼이 아니라 **기구를 탭해서** 탄다(button:false).
+		if act.get("button", true) == false:
+			continue
+		var zone := String(act.get("zone", ""))
+		# 존이 지정된 활동은 그 존 안에서만 보인다. 지정이 없으면 어디서나
+		# (킥보드). 예전에는 "운동장"만 알았고, 그 뒤 놀이터가 생겼다.
+		if zone.is_empty() or zone == _current_zone:
 			out.append(act)
 	return out
 
@@ -971,6 +1011,21 @@ func _refresh_exercise_ui() -> void:
 		for i in 8:
 			_hooks.untrack("exercise%d" % (i + 1))
 			_hooks.untrack("trick%d" % (i + 1))
+
+	# 놀이기구를 타고 있으면 버튼은 "내리기" 하나만 둔다 — 앉은 채로 다른 운동을
+	# 시작할 수는 없고, 내릴 방법은 있어야 한다.
+	if _is_riding():
+		var off := Button.new()
+		off.text = "내리기"
+		off.custom_minimum_size = Vector2(UiScale.dim(EXERCISE_BTN.x), UiScale.dim(EXERCISE_BTN.y))
+		off.clip_text = true
+		off.focus_mode = Control.FOCUS_NONE
+		off.add_theme_font_size_override("font_size", UiScale.font(15))
+		off.pressed.connect(_dismount)
+		_exercise_box.add_child(off)
+		if _hooks != null:
+			_hooks.track("exercise1", off)
+		return
 
 	var index := 0
 	for a: Variant in _available_activities():
@@ -1013,6 +1068,99 @@ func _refresh_exercise_ui() -> void:
 			if _hooks != null:
 				_hooks.track("trick%d" % ti, tb)
 
+## 지금 놀이기구를 타고 있는가(버튼이 아니라 기구를 탭해 타는 활동).
+func _is_riding() -> bool:
+	if _activity.is_empty():
+		return false
+	var a: Dictionary = _activity_by_id.get(_activity, {})
+	return a.get("button", true) == false
+
+func _dismount() -> void:
+	if _park != null and _activity == "slide":
+		_player.cancel_move_to()
+	_apply_activity("", "", true)
+	_show_toast("내렸습니다")
+
+## 놀이기구에 탄다. 자리는 **서버가 배정**하므로 요청만 하고, 확정된 자리는
+## _on_activity_received로 돌아온다(그때 그 자리로 옮겨 앉는다).
+func _mount_ride(kind: String, seat: int) -> void:
+	if _park == null:
+		return
+	if _current_zone != "park":
+		_show_toast("놀이터에서만 탈 수 있습니다")
+		return
+	_apply_activity(kind, str(seat), true)
+	_show_toast("%s!" % _activity_label(kind))
+
+## 서버가 확정한 자리(trick)를 반영해 그 자리에 앉히고, 미끄럼틀이면 경로를 태운다.
+func _apply_ride_state() -> void:
+	if _park == null or _player == null:
+		return
+	var parts := _trick.split(":")
+	_ride_seat = int(parts[0]) if parts.size() > 0 and parts[0].is_valid_int() else 0
+	_ride_amp = int(parts[1]) if parts.size() > 1 and parts[1].is_valid_int() else 0
+	if _activity == "slide":
+		# 사다리 → 위 → 출구. 높이는 위치의 함수라(Park.height_at) 따로 동기화하지
+		# 않는다 — 남의 화면에서도 같은 높이로 보인다.
+		_player.position = _park.slide_ladder()
+		_player.follow_path(_park.slide_path())
+		return
+	_player.position = _park.seat_position(_activity, _ride_seat)
+	_player.cancel_move_to()
+
+## 놀이기구를 타는 동안 보이는 위치를 옮긴다(논리 위치는 좌석/경로에 있다).
+func _update_rider_visuals() -> void:
+	if _park == null:
+		return
+	_apply_rider_offset(_player, _activity, _ride_seat, _ride_amp)
+	for token: String in _remotes.keys():
+		var remote: RemotePlayer = _remotes[token]
+		if remote == null or not is_instance_valid(remote):
+			continue
+		var kind := remote.activity()
+		var seat := 0
+		var amp := 0
+		var tr := remote.trick()
+		if not tr.is_empty():
+			var parts := tr.split(":")
+			if parts.size() > 0 and parts[0].is_valid_int():
+				seat = int(parts[0])
+			if parts.size() > 1 and parts[1].is_valid_int():
+				amp = int(parts[1])
+		_apply_rider_offset(remote, kind, seat, amp)
+
+func _apply_rider_offset(node: Node3D, kind: String, seat: int, amp: int) -> void:
+	if node == null or not is_instance_valid(node):
+		return
+	var offset := Vector3.ZERO
+	if not kind.is_empty() and _park != null and _park_ride_kinds.has(kind):
+		offset = _park.rider_offset(kind, seat, node.position, amp)
+	# 스프라이트와 이름표를 함께 옮긴다 — 스프라이트만 올리면 이름표가 발밑에 남는다.
+	for child: Node in node.get_children():
+		if child is PlayerSprite or child is AvatarExtras:
+			(child as Node3D).position = offset
+
+const _park_ride_kinds := ["slide", "swing", "carousel", "seesaw"]
+
+## 놀이기구를 탄 상태에서 액션 버튼: 시소·뺑뺑이는 밀고, 그네는 진폭을 올린다.
+func _ride_action() -> bool:
+	match _activity:
+		"seesaw", "carousel":
+			if _net != null and _net.connected:
+				_net.send_push(_activity)
+			else:
+				_show_toast("서버에 연결돼 있지 않아 밀 수 없습니다")
+			return true
+		"swing":
+			var steps: Array = _park_phys.get("swing_amp_steps", [])
+			var count := maxi(steps.size(), 1)
+			var next := (_ride_amp + 1) % count
+			_apply_activity("swing", "%d:%d" % [_ride_seat, next], true)
+			return true
+		"slide":
+			return true   # 내려가는 중에는 할 일이 없다
+	return false
+
 func _on_exercise_pressed(id: String) -> void:
 	# 같은 버튼을 다시 누르면 그만둔다(사용자 요청: "버튼을 다시 누르면
 	# 원래대로 돌아와").
@@ -1028,8 +1176,9 @@ func _on_trick_pressed(tid: String) -> void:
 	_apply_activity(_activity, "" if tid == _trick else tid, true)
 
 func _start_activity(id: String, trick: String) -> void:
-	if _zone_only(id) and _current_zone != "playground":
-		_show_toast("운동장에서만 할 수 있습니다")
+	var zone := _activity_zone(id)
+	if not zone.is_empty() and zone != _current_zone:
+		_show_toast("%s에서만 할 수 있습니다" % _zone_label_by_id(zone))
 		return
 	_apply_activity(id, trick, true)
 	_show_toast("%s 시작!" % _activity_label(id))
@@ -1048,8 +1197,16 @@ func _apply_activity(id: String, trick: String, broadcast: bool) -> void:
 	_trick = trick
 	if _player != null:
 		_player.speed = _activity_speed(id) if not id.is_empty() else Player.SPEED
+		# 놀이기구를 타는 동안에는 직접 조작을 받지 않는다(데이터의 locked).
+		var act: Dictionary = _activity_by_id.get(id, {})
+		_player.input_locked = bool(act.get("locked", false))
 		if _player.sprite != null:
 			_player.sprite.set_activity(id, trick)
+	if _park_ride_kinds.has(id):
+		_apply_ride_state()
+	elif _player != null:
+		# 내리면 스프라이트를 제자리로 돌린다.
+		_apply_rider_offset(_player, "", 0, 0)
 	# 오프라인(서버 미연결)에서도 축구 골대/공이 보이게 한다 — 서버가 없으면
 	# ball 메시지가 오지 않으므로 여기서 켜 준다.
 	if _playground != null and (_net == null or not _net.connected):
@@ -1093,6 +1250,10 @@ func _on_ball_received(ball: Dictionary) -> void:
 			_score = next_score
 			_refresh_zone_label()
 
+func _on_park_state(state: Dictionary) -> void:
+	if _park != null:
+		_park.set_state(state)
+
 func _on_goal_scored(side: String, score: Dictionary) -> void:
 	_score = score
 	_show_toast("골! (%s 골대)" % ("왼쪽" if side == "left" else "오른쪽"))
@@ -1107,6 +1268,10 @@ func _refresh_zone_label() -> void:
 		_zone_label.text = ""
 		return
 	var label := _current_zone_label if not _current_zone_label.is_empty() else _current_zone
+	if _current_zone == "park":
+		# 놀이터는 버튼이 아니라 기구를 탭해서 탄다.
+		_zone_label.text = "[%s] 놀이기구를 탭하면 탑니다" % label
+		return
 	if _current_zone == "playground":
 		var line := "[%s] 운동을 골라보세요" % label
 		if _playground != null and _playground.soccer_visible() and not _score.is_empty():
@@ -1172,6 +1337,10 @@ func _send_emote(emote_id: String) -> void:
 
 ## Space: 주변에 놓인 물건이 있으면 줍고, 없으면 채집한다.
 func _try_interact() -> void:
+	# 놀이기구를 타고 있으면 액션은 그 기구를 미는 것이다(시소·뺑뺑이) 또는
+	# 진폭 올리기(그네).
+	if _is_riding() and _ride_action():
+		return
 	# 축구 중이고 공이 발 근처면 **차기**가 액션이다 — 축구를 하는 중에 액션
 	# 버튼이 채집이면 공을 찰 방법이 없다(폰에는 키보드가 없다).
 	if _activity == "soccer" and _ball_in_kick_range():
@@ -1277,6 +1446,7 @@ func _start_net() -> void:
 	_net.activity_received.connect(_on_activity_received)
 	_net.ball_received.connect(_on_ball_received)
 	_net.goal_scored.connect(_on_goal_scored)
+	_net.park_state.connect(_on_park_state)
 	_net.server_error.connect(_on_server_error)
 	_net.system_message.connect(_on_system_message)
 	_net.start(String(_slot.get("token", "")), String(_slot.get("name", "")), String(_slot.get("preset", "")))
@@ -1658,6 +1828,20 @@ func _on_world_tapped(screen_pos: Vector2) -> void:
 		_show_marker(g.global_position)
 		return
 
+	# 놀이기구를 탭하면 그 자리까지 걸어가서 탄다.
+	if _park != null and _current_zone == "park" and not _is_riding():
+		var mount := _park.mount_near(point)
+		if not mount.is_empty():
+			_tap_intent = {"kind": "mount", "id": "%s:%d" % [mount["kind"], int(mount["seat"])]}
+			_tap_gatherable = null
+			# 좌석 **정확히**로 걸어간다(대상 앞에서 멈추면 서버가 그 자리를
+			# 좌석으로 고정해 기구에서 떨어져 앉는다).
+			_player.move_to(mount["position"])
+			_show_marker(mount["position"])
+			if _hooks != null:
+				_hooks.set_state("tapBranch", "mount:%s" % _tap_intent["id"])
+			return
+
 	# 공을 탭하면 공까지 가서 찬다(폰에서 공을 다루는 가장 자연스러운 조작).
 	if _activity == "soccer" and _playground != null and _playground.soccer_visible():
 		var ball_pos := _playground.ball_position()
@@ -1756,6 +1940,10 @@ func _on_player_arrived() -> void:
 	var id := String(_tap_intent.get("id", ""))
 	var target := _tap_gatherable
 	_clear_tap_intent()
+	# 미끄럼틀은 다 내려오면 저절로 끝난다(탭 의도와 무관하게 처리한다).
+	if _activity == "slide":
+		_apply_activity("", "", true)
+		_show_toast("휙!")
 	match kind:
 		"gather":
 			# 탭한 그 대상만 캔다. "근처에서 아무거나"로 두면 지나가다 옆 나무를
@@ -1772,6 +1960,10 @@ func _on_player_arrived() -> void:
 				_net.send_pickup(id)
 			elif not _drops.has(id):
 				_show_toast("아쉽게도 물건이 사라졌습니다")
+		"mount":
+			var parts := id.split(":")
+			if parts.size() == 2:
+				_mount_ride(parts[0], int(parts[1]))
 		"kick":
 			# 도착하는 동안 남이 공을 차 갔을 수 있다 — 거리를 다시 본다.
 			if _ball_in_kick_range():
@@ -1826,13 +2018,17 @@ func _check_zone() -> void:
 	# 축구장에 서 있어도 "운동장 트랙"이 뜬다(리뷰 지적).
 	_current_zone_label = label
 	_refresh_zone_label()
+	if _hooks != null:
+		_hooks.set_state("zone", here)
 	if not here.is_empty():
 		_show_toast("%s에 들어왔습니다" % label)
 	# 운동장을 벗어나면 운동장에서만 할 수 있는 운동은 자동으로 그만둔다 —
 	# 트랙 밖에서 자전거를 타고 섬을 돌아다니는 것은 의도가 아니다(킥보드는
 	# 사용자 지정대로 어디서나 탈 수 있어 계속 유지된다).
-	if was == "playground" and here != "playground" and _zone_only(_activity):
-		_stop_activity("운동장을 벗어나 %s를 그만뒀습니다" % _activity_label(_activity))
+	var need := _activity_zone(_activity)
+	if not need.is_empty() and here != need and was == need:
+		_stop_activity("%s를 벗어나 %s를 그만뒀습니다"
+			% [_zone_label_by_id(need), _activity_label(_activity)])
 	_refresh_exercise_ui()
 
 ## 존 모양: radius(원) / rect(사각형) / ellipse(타원). 운동장은 트랙이 타원,
@@ -1865,6 +2061,7 @@ func _publish_test_points() -> void:
 		if c != null and is_instance_valid(c):
 			_hooks.track(key, c)
 	_hooks.set_state("uiZoom", UiScale.zoom())
+	_hooks.set_state("zone", _current_zone)
 	# 운동 상태는 처음부터 공개한다 — 운동을 시작해야 값이 생기면 테스트가
 	# "아직 안 함"과 "훅이 없음"을 구분할 수 없다.
 	_hooks.set_state("activity", _activity)
@@ -2048,6 +2245,9 @@ func _process(delta: float) -> void:
 			# 최소 이동량 미만이라 누락되면 상대 화면에 옛 위치가 남는다.
 			_net.flush_move(_player.position, facing)
 		_was_moving = moving
+
+	# 놀이기구를 타는 사람들의 보이는 위치(그네 흔들림·회전·기울기·미끄럼틀 높이).
+	_update_rider_visuals()
 
 	if _toast_timer > 0.0:
 		_toast_timer -= delta
