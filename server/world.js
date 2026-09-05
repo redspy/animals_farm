@@ -21,8 +21,14 @@ export const LIMITS = {
   CHAT_MAX: 200,
   // 클라이언트 이동속도(player.gd SPEED=4.2)의 1.6배. 정확한 시뮬레이션이
   // 아니라 순간이동/속도핵 완화용 상한이다.
+  // 걷기 속도. 클라이언트(Player.SPEED)·활동 속도 폴백·상한이 모두 이 값에서
+  // 파생돼야 한다 — 세 곳에 4.2를 따로 적어 두면 하나만 고쳐도 알 수 없다.
+  WALK_SPEED: 4.2,
+  // 지터 여유 1.6배. 활동 속도에도 같은 비율을 적용한다(speedCapOf).
+  SPEED_TOLERANCE: 1.6,
   MAX_SPEED: 4.2 * 1.6,
   MOVE_MIN_INTERVAL_MS: 80,   // 10Hz + 여유
+  ACTIVITY_MIN_INTERVAL_MS: 250,   // 운동 전환은 전원 브로드캐스트라 도배를 막는다
   GATHER_MIN_INTERVAL_MS: 250,  // 초당 4건 — 연타 채집 도배 방지
   CHAT_MIN_INTERVAL_MS: 500,  // 초당 2건
   EMOTE_MIN_INTERVAL_MS: 500,
@@ -41,6 +47,9 @@ export const LIMITS = {
   // 좌표 검증 유예: 네트워크 지터로 간격이 튀어도 바로 되돌리지 않도록
   // 속도 상한 계산에 최소 시간을 둔다.
   SPEED_MIN_DT_MS: 50,
+  // 존 판정 여유(유닛). 서버 좌표는 최대 한 틱 뒤처지므로 경계에서 정상
+  // 조작이 거부되지 않게 조금 넓게 본다.
+  ZONE_PAD: 1.5,
 };
 
 const TOKEN_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -68,12 +77,23 @@ export class WorldState {
     this.activities = new Map();
     for (const a of actCfg.activities || []) {
       if (!a || !a.id) continue;
+      // 폴백은 **걷기 속도**다. 예전에는 MAX_SPEED로 폴백했는데, 데이터에
+      // `"speed": 0` 같은 오타가 나면 클라이언트는 못 움직이는데(0.0을 그대로
+      // 씀) 서버는 상한을 대폭 열어 주는 상태가 됐다.
+      const speed = Number(a.speed);
+      const valid = Number.isFinite(speed) && speed > 0;
+      if (!valid && a.speed !== undefined) {
+        console.warn(`[animals_farm] activities.json의 ${a.id}.speed가 올바르지 않아 걷기 속도로 대체: ${a.speed}`);
+      }
       this.activities.set(String(a.id), {
-        speed: Number(a.speed) || LIMITS.MAX_SPEED,
+        speed: valid ? speed : LIMITS.WALK_SPEED,
         zoneOnly: a.zone_only !== false,
         tricks: new Set((a.tricks || []).map((k) => String(k.id))),
       });
     }
+    // 운동장처럼 "그 안에서만 되는" 활동을 서버도 판정할 수 있어야 한다 —
+    // 클라이언트만 막으면 변조한 클라이언트가 섬 전역에서 자전거 속도를 쓴다.
+    this.zones = (worldCfg.zones || []).filter((z) => z && z.id);
     this.soccerCfg = {
       kickRange: Number(actCfg.soccer?.kick_range) || 1.5,
       kickSpeed: Number(actCfg.soccer?.kick_speed) || 11,
@@ -254,6 +274,7 @@ export class WorldState {
         activity: '',
         trick: '',
         lastKickAt: 0,
+        lastActivityAt: 0,
       };
       this.players.set(token, p);
       this._markDirty();
@@ -262,6 +283,15 @@ export class WorldState {
       // 인벤토리는 서버 기록이 우선이다(docs/protocol.md §4).
       p.name = cleanName;
       if (preset) p.preset = String(preset);
+      // **운동 상태는 초기화한다.** 새로 들어온 클라이언트는 아무 운동도 하지
+      // 않는 상태로 시작하므로, 서버가 옛 상태를 들고 있으면 남들 화면에는
+      // 계속 자전거를 탄 모습이 보이고 **서버 이동 상한도 자전거로 열려 있다**
+      // (같은 버튼을 두 번 눌러야 겨우 복구됐다). rename도 이 함수를 쓰므로
+      // **접속이 끊겼던 경우에만** 초기화한다.
+      if (!p.online) {
+        p.activity = '';
+        p.trick = '';
+      }
       this._markDirty();
     }
     p.online = true;
@@ -325,26 +355,67 @@ export class WorldState {
     return { player: p };
   }
 
-  /** 활동별 이동 속도 상한(초당 유닛). 지터 여유는 MAX_SPEED와 같은 비율로 준다. */
+  /** 활동별 이동 속도 상한(초당 유닛). 지터 여유는 걷기와 같은 비율로 준다. */
   speedCapOf(p) {
-    const base = 4.2;
     const act = this.activities.get(p.activity || '');
-    const speed = act ? act.speed : base;
-    // LIMITS.MAX_SPEED가 base*1.6이므로 같은 여유 비율을 활동 속도에도 적용한다.
-    return speed * (LIMITS.MAX_SPEED / base);
+    const speed = act ? act.speed : LIMITS.WALK_SPEED;
+    return speed * LIMITS.SPEED_TOLERANCE;
+  }
+
+  /**
+   * 좌표가 그 id의 존 안인가. 모양은 클라이언트(_point_in_zone)와 같은 규칙:
+   * radius(원) / rect(사각형) / ellipse(타원).
+   *
+   * pad를 주는 이유: 서버가 가진 좌표는 10Hz로 오므로 최대 한 틱 뒤처진다.
+   * 여유가 없으면 존 경계에서 정상 조작이 간헐적으로 거부된다.
+   */
+  inZone(x, z, id, pad = 0) {
+    for (const zone of this.zones) {
+      if (String(zone.id) !== id) continue;
+      const cx = Number(zone.x) || 0;
+      const cz = Number(zone.z) || 0;
+      const shape = String(zone.shape || 'circle');
+      if (shape === 'rect') {
+        const hx = (Number(zone.size_x) || 0) / 2 + pad;
+        const hz = (Number(zone.size_z) || 0) / 2 + pad;
+        if (Math.abs(x - cx) <= hx && Math.abs(z - cz) <= hz) return true;
+      } else if (shape === 'ellipse') {
+        const a = (Number(zone.a) || 1) + pad;
+        const b = (Number(zone.b) || 1) + pad;
+        const dx = (x - cx) / a;
+        const dz = (z - cz) / b;
+        if (dx * dx + dz * dz <= 1) return true;
+      } else if (Math.hypot(x - cx, z - cz) <= (Number(zone.radius) || 0) + pad) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
    * 운동 상태 변경. 남들 화면에 보여야 하므로 서버를 거친다.
    * kind가 빈 문자열이면 "그만두기"(원래 모습으로).
    */
-  activity(token, kind, trick = '') {
+  activity(token, kind, trick = '', now = Date.now()) {
     const p = this.players.get(token);
     if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
+    // 운동 전환은 전원 브로드캐스트 + 저장 표시라 도배되면 증폭이 크다.
+    // 받는 쪽은 처음 보는 (운동, 기술) 조합마다 스프라이트 프레임을 새로
+    // 만들기까지 한다(PlayerSprite) — 남의 클라이언트에 프레임 스파이크를 준다.
+    if (now - (p.lastActivityAt || 0) < LIMITS.ACTIVITY_MIN_INTERVAL_MS) {
+      return { throttled: true };
+    }
     const id = String(kind || '');
     if (id && !this.activities.has(id)) {
       return { error: { code: 'bad_activity', message: '알 수 없는 운동' } };
     }
+    // 운동장에서만 하는 운동은 **서버도** 위치를 본다. 클라이언트만 막으면
+    // 변조한 클라이언트가 어디서나 자전거 속도 상한을 받는다.
+    if (id && this.activities.get(id).zoneOnly
+        && !this.inZone(p.x, p.z, 'playground', LIMITS.ZONE_PAD)) {
+      return { error: { code: 'not_in_zone', message: '운동장에서만 할 수 있습니다' } };
+    }
+    p.lastActivityAt = now;
     let t = String(trick || '');
     if (id && t && !this.activities.get(id).tricks.has(t)) t = '';
     p.activity = id;
@@ -478,7 +549,11 @@ export class WorldState {
   }
 
   ballState() {
-    return this.ball.active ? { x: this.ball.x, z: this.ball.z } : null;
+    // 점수를 함께 싣는다 — docs/protocol.md가 `ball`을 {x, z, score}로 적고
+    // 클라이언트도 그렇게 읽는데, 실제로는 snapshot/goal로만 오고 있었다.
+    return this.ball.active
+      ? { x: this.ball.x, z: this.ball.z, score: { ...this.score } }
+      : null;
   }
 
   chat(token, text, now = Date.now()) {

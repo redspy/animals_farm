@@ -312,22 +312,28 @@ func _setup_name_dom() -> void:
 			].join(';');
 		})();
 	""" % [NAME_DOM_ID, NAME_DOM_ID, SaveManager.NAME_MAX_LEN], true)
-	_place_name_dom()
+	# 지금은 컨테이너 레이아웃이 아직 계산되지 않아 실패할 수 있다 — 그러면
+	# 입력창이 필드 위가 아니라 페이지 좌상단에 남아, 탭해도 포커스가 걸리지
+	# 않는다(그 사이 탭이 캔버스로 새어 이름이 빈 채 제출됐다, 실측).
+	# 자리가 안정될 때까지는 _process가 매 프레임 다시 놓는다.
+	_name_dom_rect = _place_name_dom()
 
 ## LineEdit 자리에 DOM 입력을 겹쳐 둔다. 화면 회전·창 크기 변경으로 자리가
-## 바뀌므로 _process에서 계속 맞춘다 — 한 번만 놓으면 회전 후 엉뚱한 곳에 남는다.
-func _place_name_dom() -> void:
+## 바뀌므로 주기적으로 다시 맞춘다 — 한 번만 놓으면 회전 후 엉뚱한 곳에 남는다.
+## 놓은 자리를 돌려준다(실패하면 빈 Rect2).
+func _place_name_dom() -> Rect2:
 	if not _name_dom or _name_edit == null or not is_instance_valid(_name_edit):
-		return
+		return Rect2()
 	var vp := get_viewport()
 	if vp == null:
-		return
+		return Rect2()
 	var size := vp.get_visible_rect().size
 	if size.x <= 0.0 or size.y <= 0.0:
-		return
+		return Rect2()
 	var r := _name_edit.get_global_rect()
 	if r.size.x <= 0.0:
-		return
+		# 컨테이너 레이아웃이 아직 계산되지 않았다 — 다음 프레임에 다시 본다.
+		return Rect2()
 	JavaScriptBridge.eval("""
 		(function(){
 			var el = document.getElementById('%s');
@@ -345,10 +351,51 @@ func _place_name_dom() -> void:
 		r.position.x / size.x, r.position.y / size.y,
 		r.size.x / size.x, r.size.y / size.y,
 	], true)
+	return r
 
-func _process(_delta: float) -> void:
-	if _name_dom:
-		_place_name_dom()
+## DOM 위치 갱신 주기(초).
+##
+## 매 프레임 하면 안 된다: getBoundingClientRect 읽기 + style 쓰기가 섞여
+## 브라우저 레이아웃을 초당 60번 강제로 계산하게 만든다(같은 이유로
+## ui_scale.gd는 DPR을 캐시하고 touch_controls.gd는 0.5초 주기로 게시한다).
+## 캐릭터 선택은 폰에서 첫 화면이라 프레임 드랍이 바로 보인다.
+const NAME_DOM_INTERVAL := 0.4
+## 같은 자리를 이만큼 연속으로 얻으면 "안정됐다"고 본다.
+const NAME_DOM_STABLE_FRAMES := 3
+var _name_dom_timer := 0.0
+var _name_dom_rect := Rect2()
+var _name_dom_stable := 0
+
+func _process(delta: float) -> void:
+	if not _name_dom:
+		return
+	# **자리가 안정될 때까지는 매 프레임 다시 놓는다.**
+	#
+	# 한 번 성공하면 끝내면 안 된다: 컨테이너 레이아웃은 여러 프레임에 걸쳐
+	# 값이 바뀌고(실측: 폭 80 → 700), 중간값으로 놓고 멈추면 입력창이 필드에서
+	# 벗어난 자리에 남는다 — 사용자가 필드를 눌러도 캔버스가 눌려 포커스가
+	# 걸리지 않는다. 안정된 뒤에는 회전·창 크기 변경만 따라가면 되므로 주기를
+	# 늘린다(매 프레임 getBoundingClientRect + style 쓰기는 브라우저 레이아웃을
+	# 초당 60번 강제로 계산하게 만든다).
+	if _name_dom_stable < NAME_DOM_STABLE_FRAMES:
+		var placed := _place_name_dom()
+		if placed.size.x <= 0.0:
+			return
+		if placed.is_equal_approx(_name_dom_rect):
+			_name_dom_stable += 1
+		else:
+			_name_dom_stable = 0
+			_name_dom_rect = placed
+		return
+	_name_dom_timer += delta
+	if _name_dom_timer < NAME_DOM_INTERVAL:
+		return
+	_name_dom_timer = 0.0
+	var again := _place_name_dom()
+	# 화면이 바뀌어 자리가 달라졌으면 다시 안정될 때까지 매 프레임 따라간다.
+	if again.size.x > 0.0 and not again.is_equal_approx(_name_dom_rect):
+		_name_dom_rect = again
+		_name_dom_stable = 0
 
 func _name_dom_value() -> String:
 	var got: Variant = JavaScriptBridge.eval("""
@@ -373,6 +420,8 @@ func _hide_name_dom() -> void:
 	if not _name_dom:
 		return
 	_name_dom = false
+	_name_dom_stable = 0
+	_name_dom_rect = Rect2()
 	JavaScriptBridge.eval("""
 		(function(){
 			var el = document.getElementById('%s');

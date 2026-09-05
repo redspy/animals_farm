@@ -264,6 +264,9 @@ function handle(ws, msg) {
     }
     ws.token = p.token;
     sockets.set(p.token, ws);
+    // 재접속으로 운동 상태가 초기화됐을 수 있다(world.join) — 축구를 하던
+    // 사람이 그렇게 빠지면 공을 치워야 한다.
+    if (world.refreshBall()) broadcastBall(true);
 
     sendTo(ws, {
       t: 'welcome',
@@ -286,6 +289,8 @@ function handle(ws, msg) {
     // 자기 화면에만 문구를 넣어서, 알림 문구가 클라이언트마다 갈릴 수 있었다.
     // 본인에게는 보내지 않는다 — 자기 입장 알림은 "서버에 접속했습니다"와 겹친다.
     broadcast({ t: 'system', text: `${p.name} 님이 들어왔습니다`, kind: 'join', token: p.token }, p.token);
+    // 재접속으로 운동 상태가 비워졌다면 남들 화면의 옛 모습도 지워야 한다.
+    broadcast({ t: 'activity', token: p.token, activity: p.activity || '', trick: p.trick || '' });
     return;
   }
 
@@ -366,6 +371,7 @@ function handle(ws, msg) {
       // 남들 화면에도 같은 모습이 보여야 하므로 서버를 거친다.
       const r = world.activity(ws.token, msg.activity, msg.trick);
       if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      if (r.throttled) break;
       broadcast({ t: 'activity', ...r.activity });
       if (r.ballChanged) broadcastBall(true);
       break;

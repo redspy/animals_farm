@@ -90,11 +90,48 @@ await page.waitForFunction(() => window.afTest?.points?.slot1, null, { timeout: 
 await tapGodot(page, 'slot1');
 await page.waitForTimeout(400);
 await tapGodot(page, 'preset1');
-await page.waitForTimeout(400);
+// 이름 화면이 **실제로 자리를 잡을 때까지** 기다린다. 고정 대기로는 부족했다:
+// 이름 입력은 캔버스 위에 겹친 DOM <input>이고(사파리 키보드 대응), 컨테이너
+// 레이아웃이 계산된 뒤에야 그 자리에 놓인다. 그 전에 누르면 클릭이 캔버스로
+// 새어 포커스가 걸리지 않고, 이름이 빈 채로 제출된다(2026-09-05 실측).
+await page.waitForFunction(() => {
+  const el = document.getElementById('af-name-input');
+  if (!el || el.style.display === 'none') return false;
+  const r = el.getBoundingClientRect();
+  if (!(r.width > 200 && r.height > 10 && r.top > 5)) return false;
+  // **자리가 안정됐는지**까지 본다. 컨테이너 레이아웃은 여러 프레임에 걸쳐
+  // 값이 바뀌어서(실측: 폭 80 → 700) 중간값에 눌러 놓치는 일이 있었다.
+  const key = `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)}`;
+  const same = window.__afNameRect === key;
+  window.__afNameRect = key;
+  return same;
+}, null, { timeout: 20000 });
 await tapGodot(page, 'nameField');
 await page.keyboard.type('Athlete', { delay: 40 });
+// 글자가 실제로 들어갔는지 확인하고 제출한다.
+await page.waitForFunction(
+  () => (document.getElementById('af-name-input')?.value ?? '').length >= 7,
+  null, { timeout: 10000 });
 await tapGodot(page, 'startButton');
-await page.waitForFunction(() => window.afTest?.points?.playerScreen, null, { timeout: 40000 });
+try {
+  await page.waitForFunction(() => window.afTest?.points?.playerScreen, null, { timeout: 40000 });
+} catch (e) {
+  // 월드에 못 들어가면 그 뒤 판정이 전부 무의미하다 — 왜 막혔는지 남긴다.
+  const diag = await page.evaluate(() => {
+    const el = document.getElementById('af-name-input');
+    const r = el ? el.getBoundingClientRect() : null;
+    return {
+      hooks: Object.keys(window.afTest?.points || {}),
+      input: el ? { value: el.value, display: el.style.display,
+                    rect: [Math.round(r.left), Math.round(r.top), Math.round(r.width), Math.round(r.height)],
+                    focused: document.activeElement === el } : null,
+    };
+  });
+  console.error('월드 진입 실패 진단:', JSON.stringify(diag));
+  console.error('브라우저 오류:', errors.slice(0, 5).join(' | '));
+  await page.screenshot({ path: `${OUT}/0-진입실패.png` }).catch(() => {});
+  throw e;
+}
 await page.waitForTimeout(1500);
 
 const state = async () => await page.evaluate(() => ({

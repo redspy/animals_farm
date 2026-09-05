@@ -21,9 +21,9 @@
     { "id": "kickboard", "label": "킥보드", "speed": 6.0, "zone_only": false, "note": "바퀴 두 개. 운동장 밖에서도 탈 수 있다(사용자 지정)." }
   ],
   "soccer": {
-    "_comment": "공 물리는 서버가 소유한다. 값은 실측으로 조정한 것 — 마찰이 크면 패스가 안 가고, 작으면 공이 계속 굴러 골대 뒤로 빠진다.",
+    "_comment": "공 물리는 서버가 소유한다. 값은 실측으로 조정한 것 — 마찰이 크면 패스가 안 가고, 작으면 공이 계속 굴러 골대 뒤로 빠진다. kick_speed는 **중앙에서 한 번 차서 골라인(10유닛)에 닿는 값**이어야 한다: 총 이동 거리 ≈ kick_speed × tick(0.1) ÷ (1 − friction^0.1) 이므로 11.0이면 9.2유닛으로 0.8 부족했다(리뷰 지적).",
     "kick_range": 1.5,
-    "kick_speed": 11.0,
+    "kick_speed": 13.0,
     "dribble_range": 0.55,
     "dribble_speed": 4.5,
     "friction_per_sec": 0.28,

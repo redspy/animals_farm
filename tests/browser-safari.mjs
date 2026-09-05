@@ -15,11 +15,36 @@
 // 충족됐는지로 본다.
 import { webkit } from 'playwright';
 import { spawn } from 'node:child_process';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { tapGodot, godotPoint } from './godot-tap.mjs';
 const PORT = Number(process.env.PORT || 3191);
-const srv = spawn('node', ['server/index.js'], { cwd: process.cwd(),
-  env: { ...process.env, PORT: String(PORT), TLS: 'off', HOST: '127.0.0.1', WORLD_STATE_PATH: '/tmp/af-ios.json' }, stdio: 'ignore' });
-await new Promise(r=>setTimeout(r,1500));
+// 상태 파일은 **매번 임시 디렉터리**로 만든다(고정 경로면 지난 실행의 캐릭터가
+// 남는다). 서버가 떴는지는 고정 대기가 아니라 **우리 프로세스의 기동 로그**로
+// 확인한다 — 그 포트를 남이 잡고 있으면 healthz만으로는 엉뚱한 서버에 붙는다
+// (tests/server-reconnect.test.mjs와 같은 이유).
+const statePath = join(mkdtempSync(join(tmpdir(), 'af-safari-')), 'world.json');
+const srv = spawn('node', ['server/index.js'], {
+  cwd: process.cwd(),
+  env: { ...process.env, PORT: String(PORT), TLS: 'off', HOST: '127.0.0.1', WORLD_STATE_PATH: statePath },
+  stdio: ['ignore', 'pipe', 'pipe'],
+});
+let srvLog = '';
+srv.stdout.on('data', (d) => { srvLog += d.toString(); });
+srv.stderr.on('data', (d) => { srvLog += d.toString(); });
+const stop = () => { try { srv.kill(); } catch { /* 이미 종료 */ } };
+process.on('exit', stop);
+await new Promise((resolve, reject) => {
+  const t0 = Date.now();
+  const tick = () => {
+    if (srvLog.includes('서버 기동')) return resolve();
+    if (srv.exitCode !== null) return reject(new Error(`서버가 죽었다(${PORT} 점유?)\n${srvLog}`));
+    if (Date.now() - t0 > 10000) return reject(new Error(`서버 기동 시간 초과\n${srvLog}`));
+    setTimeout(tick, 60);
+  };
+  tick();
+});
 const browser = await webkit.launch();
 const ctx = await browser.newContext({ viewport:{width:390,height:844}, deviceScaleFactor:3, isMobile:true, hasTouch:true });
 const page = await ctx.newPage();
@@ -70,7 +95,7 @@ const chatTyped = await page.evaluate(()=>document.getElementById('af-chat-input
 check(chatTyped.length > 0, `채팅 입력창에 글자가 들어간다 (${chatTyped})`);
 await page.screenshot({ path: 'build/screenshots/safari-채팅.png' }).catch(() => {});
 await browser.close();
-srv.kill();
+stop();
 
 const failed = results.filter((r) => !r.ok);
 console.log('');

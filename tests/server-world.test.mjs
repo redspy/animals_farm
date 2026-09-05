@@ -357,21 +357,34 @@ test('스냅샷에는 접속 중인 캐릭터만 들어간다', () => {
 // 운동(활동)과 축구공 — 서버가 소유하는 것들
 // ---------------------------------------------------------------------------
 
+/** 운동장(축구장 중앙)으로 옮긴다 — 운동장 전용 운동은 서버도 위치를 본다. */
+function intoPlayground(w, token) {
+  const p = w.players.get(token);
+  p.x = Number(w.field.x);
+  p.z = Number(w.field.z);
+  return p;
+}
+
 test('알 수 없는 운동은 거부하고, 빈 문자열은 그만두기다', () => {
   const w = fresh();
   w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
-  assert.equal(w.activity(TOKEN_A, '수영').error.code, 'bad_activity');
-  assert.equal(w.activity(TOKEN_A, 'bike').activity.activity, 'bike');
-  assert.equal(w.activity(TOKEN_A, '').activity.activity, '', '빈 문자열이면 원래 모습');
+  intoPlayground(w, TOKEN_A);
+  // 레이트 리밋(250ms)이 있으므로 호출마다 시간을 넘겨준다.
+  const t0 = Date.now();
+  assert.equal(w.activity(TOKEN_A, '수영', '', t0).error.code, 'bad_activity');
+  assert.equal(w.activity(TOKEN_A, 'bike', '', t0).activity.activity, 'bike');
+  assert.equal(w.activity(TOKEN_A, '', '', t0 + 300).activity.activity, '', '빈 문자열이면 원래 모습');
 });
 
 test('줄넘기 기술은 줄넘기에만 붙고, 없는 기술은 버린다', () => {
   const w = fresh();
   w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
-  assert.equal(w.activity(TOKEN_A, 'jumprope', 'double').activity.trick, 'double');
-  assert.equal(w.activity(TOKEN_A, 'jumprope', '공중제비').activity.trick, '',
+  intoPlayground(w, TOKEN_A);
+  const t0 = Date.now();
+  assert.equal(w.activity(TOKEN_A, 'jumprope', 'double', t0).activity.trick, 'double');
+  assert.equal(w.activity(TOKEN_A, 'jumprope', '공중제비', t0 + 300).activity.trick, '',
     '없는 기술은 무시한다 — 거부하면 오래된 클라이언트가 줄넘기를 아예 못 한다');
-  assert.equal(w.activity(TOKEN_A, 'bike', 'double').activity.trick, '',
+  assert.equal(w.activity(TOKEN_A, 'bike', 'double', t0 + 600).activity.trick, '',
     '자전거에는 줄넘기 기술이 붙지 않는다');
 });
 
@@ -387,15 +400,18 @@ test('활동에 따라 이동 속도 상한이 달라진다', () => {
 test('자전거는 걷기 상한을 넘는 이동이 허용된다', () => {
   const w = fresh();
   const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  intoPlayground(w, TOKEN_A);
   const t0 = Date.now();
-  w.move(TOKEN_A, { x: 0, z: 0 }, t0);
+  const startX = Number(w.field.x);
+  w.move(TOKEN_A, { x: startX, z: 0 }, t0);
   // 0.5초에 3유닛 = 6유닛/초 — 걷기 상한(6.72)에는 걸리지 않지만
   // 자전거(12.16)와는 확실히 구분되는 값으로 검증한다.
   w.activity(TOKEN_A, 'bike');
-  w.move(TOKEN_A, { x: 5.5, z: 0 }, t0 + 500);
-  assert.ok(p.x > 5.0, `자전거로 0.5초에 5유닛 이상 이동해야 한다 (x=${p.x})`);
+  w.move(TOKEN_A, { x: startX + 5.5, z: 0 }, t0 + 500);
+  assert.ok(p.x > startX + 5.0, `자전거로 0.5초에 5유닛 이상 이동해야 한다 (x=${p.x})`);
 
-  w.activity(TOKEN_A, '');
+  // 레이트 리밋(250ms) 때문에 시간을 벌린다.
+  w.activity(TOKEN_A, '', '', t0 + 600);
   const walkStart = p.x;
   w.move(TOKEN_A, { x: walkStart + 5.5, z: 0 }, t0 + 1000);
   assert.ok(p.x - walkStart < 3.6,
@@ -405,26 +421,31 @@ test('자전거는 걷기 상한을 넘는 이동이 허용된다', () => {
 test('축구를 시작하면 공이 나오고, 아무도 안 하면 사라진다', () => {
   const w = fresh();
   w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  intoPlayground(w, TOKEN_A);
   assert.equal(w.ballState(), null, '처음에는 공이 없다');
-  w.activity(TOKEN_A, 'soccer');
+  const t0 = Date.now();
+  w.activity(TOKEN_A, 'soccer', '', t0);
   assert.ok(w.ballState() != null, '축구를 시작하면 공이 나온다');
   assert.equal(w.snapshot().ball != null, true, '새로 들어온 사람도 공을 본다');
-  w.activity(TOKEN_A, '');
+  w.activity(TOKEN_A, '', '', t0 + 300);
   assert.equal(w.ballState(), null, '아무도 축구를 하지 않으면 공을 치운다');
 });
 
 test('축구 중이 아니거나 공이 멀면 차지 못한다', () => {
   const w = fresh();
-  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
   assert.equal(w.kick(TOKEN_A, { dx: 1, dz: 0 }).error.code, 'no_ball');
+  intoPlayground(w, TOKEN_A);
   w.activity(TOKEN_A, 'soccer');
-  // 스폰 지점은 축구장 중앙에서 멀다.
+  // 공에서 멀찍이 떨어진다(축구장 안이지만 사거리 밖).
+  p.x = Number(w.field.x) - Number(w.field.size_x) / 2 + 0.5;
   assert.equal(w.kick(TOKEN_A, { dx: 1, dz: 0 }).error.code, 'too_far');
 });
 
 test('공을 골대 쪽으로 차면 골이 들어가고 공이 중앙으로 돌아온다', () => {
   const w = fresh();
   const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  intoPlayground(w, TOKEN_A);
   w.activity(TOKEN_A, 'soccer');
   const field = w.field;
   // 왼쪽 골대 바로 앞에 서서(치팅이 아니라 좌표를 직접 넣는다 — 이동 상한을
@@ -448,6 +469,7 @@ test('공을 골대 쪽으로 차면 골이 들어가고 공이 중앙으로 돌
 test('골대 폭을 벗어난 공은 골이 아니라 튕긴다', () => {
   const w = fresh();
   const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  intoPlayground(w, TOKEN_A);
   w.activity(TOKEN_A, 'soccer');
   const field = w.field;
   // 골대 폭(goal_width) 밖 — 골라인 근처지만 z가 크게 벗어난 자리.
@@ -466,6 +488,7 @@ test('골대 폭을 벗어난 공은 골이 아니라 튕긴다', () => {
 test('걸어가 공에 닿으면 드리블로 밀린다(패스의 기본)', () => {
   const w = fresh();
   const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  intoPlayground(w, TOKEN_A);
   w.activity(TOKEN_A, 'soccer');
   const field = w.field;
   p.x = field.x - 1.0;
@@ -483,6 +506,7 @@ test('축구를 하지 않는 사람은 공을 건드리지 못한다', () => {
   const w = fresh();
   const a = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
   w.join({ token: TOKEN_B, name: '나', preset: 'm1' });
+  intoPlayground(w, TOKEN_B);
   w.activity(TOKEN_B, 'soccer');   // 공을 내보내는 건 B
   const field = w.field;
   a.x = field.x;
@@ -490,4 +514,69 @@ test('축구를 하지 않는 사람은 공을 건드리지 못한다', () => {
   w.dribble(a);
   assert.equal(w.ball.vx, 0, '축구 중이 아닌 사람의 접촉으로는 공이 움직이지 않는다');
   assert.equal(w.kick(TOKEN_A, { dx: 1, dz: 0 }).error.code, 'not_soccer');
+});
+
+
+test('운동장 밖에서는 운동장 전용 운동을 서버가 거부한다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  // 스폰(0,0)은 운동장 밖이다.
+  assert.equal(w.activity(TOKEN_A, 'bike').error.code, 'not_in_zone',
+    '클라이언트만 막으면 변조한 클라이언트가 어디서나 자전거 속도를 쓴다');
+  assert.equal(w.activity(TOKEN_A, 'kickboard', '', Date.now() + 400).activity.activity, 'kickboard',
+    '킥보드는 어디서나 탈 수 있다(사용자 지정)');
+});
+
+test('재접속하면 운동 상태가 초기화된다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  p.x = Number(w.field.x);
+  p.z = Number(w.field.z);
+  w.activity(TOKEN_A, 'bike');
+  assert.equal(p.activity, 'bike');
+  w.leave(TOKEN_A);
+
+  const again = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  assert.equal(again.activity, '',
+    '새 클라이언트는 아무 운동도 하지 않는 상태로 시작한다 — 서버가 옛 상태를 들고 있으면 남들 화면에는 계속 자전거가 보이고 이동 상한도 열려 있다');
+  assert.ok(again.trick === '' || again.trick === undefined);
+  assert.ok(w.speedCapOf(again) < 7.0, `상한도 걷기로 돌아와야 한다 (${w.speedCapOf(again)})`);
+});
+
+test('이름만 바꿀 때는 운동 상태를 잃지 않는다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  p.x = Number(w.field.x);
+  p.z = Number(w.field.z);
+  w.activity(TOKEN_A, 'bike');
+  // rename도 join을 거친다 — 접속이 끊기지 않았으면 초기화하지 않아야 한다.
+  w.join({ token: TOKEN_A, name: '나', preset: 'f1' });
+  assert.equal(p.activity, 'bike');
+  assert.equal(p.name, '나');
+});
+
+test('운동 전환은 레이트 리밋이 있다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const t0 = Date.now();
+  assert.ok(w.activity(TOKEN_A, 'kickboard', '', t0).activity);
+  assert.equal(w.activity(TOKEN_A, '', '', t0 + 50).throttled, true,
+    '전원 브로드캐스트 + 스프라이트 재생성을 유발하므로 도배를 막아야 한다');
+  assert.ok(w.activity(TOKEN_A, '', '', t0 + 400).activity);
+});
+
+test('중앙에서 한 번 차면 공이 골라인까지 간다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  p.x = Number(w.field.x);
+  p.z = Number(w.field.z);
+  w.activity(TOKEN_A, 'soccer');
+  // 킥오프: 공은 중앙, 사람은 그 옆.
+  p.x = Number(w.field.x) - 0.8;
+  const r = w.kick(TOKEN_A, { dx: -1, dz: 0 });
+  assert.ok(r.kicked, JSON.stringify(r));
+  let goal = null;
+  for (let i = 0; i < 80 && !goal; i++) goal = w.tickBall(0.1);
+  assert.ok(goal,
+    '중앙에서 한 번 차서 골라인에 닿지 않으면 킥오프마다 드리블로 밀고 가야 한다(kick_speed 확인)');
 });

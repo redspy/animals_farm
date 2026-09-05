@@ -933,7 +933,14 @@ func _zone_only(id: String) -> bool:
 
 func _activity_speed(id: String) -> float:
 	var a: Dictionary = _activity_by_id.get(id, {})
-	return float(a.get("speed", Player.SPEED))
+	var speed := float(a.get("speed", Player.SPEED))
+	# 데이터 오타(0 이하)에 대비한다. 서버는 같은 경우 걷기 속도로 폴백하므로
+	# 여기서 0을 그대로 쓰면 "클라이언트는 못 움직이는데 서버는 상한을 열어
+	# 주는" 상태가 된다(리뷰 지적).
+	if speed <= 0.0:
+		push_warning("activities.json의 %s.speed가 올바르지 않아 걷기 속도로 대체" % id)
+		return Player.SPEED
+	return speed
 
 ## 지금 화면에 보여야 하는 운동 목록. 운동장 안에서는 전부, 밖에서는
 ## zone_only가 아닌 것만(= 킥보드) 보인다.
