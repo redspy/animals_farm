@@ -1116,6 +1116,8 @@ func _apply_ride_state() -> void:
 ## 놀이기구를 타고 있는 사람 목록. 매 프레임 전원을 순회하며 문자열을 쪼개는
 ## 대신, 활동이 바뀔 때만 다시 만든다(아무도 안 타면 목록이 비어 프레임 비용 0).
 var _riders: Array[Dictionary] = []
+## 이번 프레임에 목록을 다시 만들어야 하는지(입장이 몰릴 때 O(N²)를 막는다).
+var _riders_dirty := false
 
 func _refresh_riders() -> void:
 	_riders.clear()
@@ -1147,6 +1149,9 @@ func _refresh_riders() -> void:
 
 ## 놀이기구를 타는 동안 보이는 위치를 옮긴다(논리 위치는 좌석/경로에 있다).
 func _update_rider_visuals() -> void:
+	if _riders_dirty:
+		_riders_dirty = false
+		_refresh_riders()
 	for r: Dictionary in _riders:
 		var node: Node3D = r["node"]
 		if node == null or not is_instance_valid(node):
@@ -1580,8 +1585,8 @@ func _on_player_joined(player: Dictionary) -> void:
 	# **이미 놀이기구를 타고 있던 사람**을 놓치지 않으려면 여기서도 목록을
 	# 갱신해야 한다 — 그 사람은 activity 메시지가 다시 오지 않으므로, 스냅샷의
 	# 각도는 맞췄는데 그 각도로 그릴 대상이 비어 있게 된다(리뷰 지적).
-	# 자식 노드(스프라이트)는 _ready 뒤에 생기므로 한 프레임 미룬다.
-	_refresh_riders.call_deferred()
+	# 스냅샷으로 여러 명이 한 번에 들어오므로 **프레임당 한 번만** 다시 만든다.
+	_riders_dirty = true
 
 func _on_player_left(token: String) -> void:
 	if not _remotes.has(token):

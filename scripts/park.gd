@@ -262,7 +262,10 @@ func carousel_slots() -> int:
 func carousel_slot_position(slot: int) -> Vector3:
 	var center := carousel_center()
 	var th := TAU * float(slot) / float(carousel_slots())
-	var r := carousel_radius() - 0.35
+	# 테두리에서 안쪽으로 들어와 서는 거리 — **서버도 같은 값으로 좌석을 계산**
+	# 하므로(좌석 고정) 데이터에서 읽어야 한다. 여기만 상수로 두면 값을 바꿀 때
+	# 앉은 자리가 어긋난다.
+	var r := carousel_radius() - float(_carousel.get("slot_inset", 0.35))
 	return center + Vector3(cos(th) * r, 0.0, sin(th) * r)
 
 func _build_carousel() -> void:

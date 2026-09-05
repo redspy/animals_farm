@@ -170,7 +170,9 @@ export class WorldState {
     // 밀 때마다 끝까지 꺾이는 예전 동작으로 조용히 돌아간다(리뷰 지적).
     const pushLimit = this.parkCfg.seesawMaxAngle * Math.sqrt(this.parkCfg.seesawGravity);
     if (this.parkCfg.seesawPush > pushLimit) {
-      console.warn(`[animals_farm] park.seesaw_push(${this.parkCfg.seesawPush})가 물리 상한 ${pushLimit.toFixed(2)}을 넘습니다 — 한 번 밀 때마다 판이 최대 각도에 부딪힙니다(진폭 = push/√gravity ≤ max_angle)`);
+      // 경고만 하면 배포에서는 아무도 안 본다 — 다른 값들처럼 **잘라 낸다**.
+      console.warn(`[animals_farm] park.seesaw_push(${this.parkCfg.seesawPush})가 물리 상한 ${pushLimit.toFixed(2)}을 넘어 잘랐습니다(진폭 = push/√gravity ≤ max_angle)`);
+      this.parkCfg.seesawPush = pushLimit;
     }
     this.park = worldCfg.park || {};
     // 시소 기울기는 **서버가 소유한다**(축구공과 같은 이유: 각자 계산하면
@@ -501,24 +503,25 @@ export class WorldState {
    */
   seatPosition(id, seat) {
     const pk = this.park || {};
+    // `|| 기본값`을 쓰지 않는다 — 0도 정당한 값이다(slot_inset: 0 = 테두리에 딱 서기).
+    const val = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback);
     if (id === 'swing' && pk.swing) {
       const s = pk.swing;
-      const count = Math.max(Number(s.seats) || 2, 1);
-      const gap = Number(s.seat_gap) || 1.6;
-      const offset = (seat - (count - 1) / 2) * gap;
-      return { x: Number(s.x) || 0, z: (Number(s.z) || 0) + offset };
+      const count = Math.max(val(s.seats, 2), 1);
+      const gap = val(s.seat_gap, 1.6);
+      return { x: val(s.x, 0), z: val(s.z, 0) + (seat - (count - 1) / 2) * gap };
     }
     if (id === 'carousel' && pk.carousel) {
       const c = pk.carousel;
-      const slots = Math.max(Number(c.slots) || 4, 1);
-      const r = (Number(c.radius) || 2) - (Number(c.slot_inset) || 0.35);
+      const slots = Math.max(val(c.slots, 4), 1);
+      const r = val(c.radius, 2) - val(c.slot_inset, 0.35);
       const th = (Math.PI * 2 * seat) / slots;
-      return { x: (Number(c.x) || 0) + Math.cos(th) * r, z: (Number(c.z) || 0) + Math.sin(th) * r };
+      return { x: val(c.x, 0) + Math.cos(th) * r, z: val(c.z, 0) + Math.sin(th) * r };
     }
     if (id === 'seesaw' && pk.seesaw) {
       const s = pk.seesaw;
-      const arm = Number(s.arm) || 1.6;
-      return { x: (Number(s.x) || 0) + (seat === 0 ? -arm : arm), z: Number(s.z) || 0 };
+      const arm = val(s.arm, 1.6);
+      return { x: val(s.x, 0) + (seat === 0 ? -arm : arm), z: val(s.z, 0) };
     }
     return null;
   }
@@ -652,7 +655,19 @@ export class WorldState {
     const seated = act && act.seats > 0;
     if (seated) {
       const seatNo = Number.parseInt(String(wanted).split(':')[0], 10) || 0;
-      p.rideAnchor = this.seatPosition(id, seatNo) || { x: p.x, z: p.z };
+      const at = this.seatPosition(id, seatNo);
+      p.rideAnchor = at || { x: p.x, z: p.z };
+      if (at) {
+        // **위치도 배정된 자리로 맞춘다.** 앵커만 옮기면 서버 좌표는 옛 자리에
+        // 남는다 — 타는 동안 클라이언트는 이동을 보내지 않고(input_locked),
+        // 보낸다 해도 속도 상한(1.28 u/s)으로는 좌석 간격을 넘는 데 십수
+        // 패킷이 걸린다. 그 사이 남들 화면에는 **다른 사람과 겹친 자리**에
+        // 서 있는 것으로 보인다(리뷰 지적).
+        // 좌석 좌표는 이미 존 검사를 통과한 고정값이라 순간이동 악용이 아니다.
+        p.x = Math.round(at.x * 100) / 100;
+        p.z = Math.round(at.z * 100) / 100;
+        p.moved = true;   // 남들에게 방송되도록
+      }
     } else {
       p.rideAnchor = null;
     }

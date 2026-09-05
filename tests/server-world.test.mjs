@@ -837,7 +837,13 @@ test('자리를 재배정받으면 앵커도 그 자리로 옮겨진다', () => 
   // 앵커를 "요청 당시 위치"로 잡으면, 클라이언트는 1번 좌석으로 옮겨 앉는데
   // 서버는 0번 자리에 묶어 둬서 남들 화면에는 두 그네 사이 허공에 낀 채로
   // 보인다(리뷰 지적). 좌석 좌표에서 유도하면 그런 어긋남이 없다.
-  assert.deepEqual(w.players.get(TOKEN_B).rideAnchor, w.seatPosition('swing', 1));
+  const pb = w.players.get(TOKEN_B);
+  assert.deepEqual(pb.rideAnchor, w.seatPosition('swing', 1));
+  // **위치까지** 그 자리로 옮겨야 한다 — 앵커만 옮기면 서버 좌표가 옛 자리에
+  // 남아 남들 화면에는 다른 사람과 겹친 자리에 서 있는 것으로 보인다.
+  const seat1 = w.seatPosition('swing', 1);
+  assert.ok(Math.hypot(pb.x - seat1.x, pb.z - seat1.z) < 0.02,
+    `배정된 좌석으로 위치가 옮겨지지 않았다 (${pb.x},${pb.z}) vs (${seat1.x},${seat1.z})`);
 });
 
 test('trick만 바꿔도 앵커가 흐르지 않는다', () => {
