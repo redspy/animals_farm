@@ -296,13 +296,14 @@ func _build_carousel() -> void:
 	var bar := _flat_material(Palette.color("world", "carousel_bar"))
 	# 라이더가 서는 반지름보다 **캐릭터 반지름만큼** 바깥에 둔다(grip_offset).
 	# 0.05만 띄우면 캐릭터 반지름(0.35) 안이라 기둥이 몸을 관통한다(리뷰 지적).
-	var grip_r := r - _slot_inset() + float(_carousel.get("grip_offset", 0.4))
+	var grip_r := r - _slot_inset() + float(_carousel.get("grip_offset", 0.5))
 	for slot in carousel_slots():
 		var th := TAU * float(slot) / float(carousel_slots())
 		var at := Vector3(cos(th) * grip_r, 0.0, sin(th) * grip_r)
 		var post := MeshInstance3D.new()
 		var pm := BoxMesh.new()
-		pm.size = Vector3(0.1, 0.95, 0.1)
+		var thick := float(_carousel.get("grip_thick", 0.1))
+		pm.size = Vector3(thick, 0.95, thick)
 		post.mesh = pm
 		post.material_override = bar
 		post.position = at + Vector3(0, 0.6, 0)

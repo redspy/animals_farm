@@ -53,6 +53,9 @@ export const LIMITS = {
   ZONE_PAD: 1.5,
   // 놀이기구에 앉은 사람이 자리에서 벗어날 수 있는 최대 거리(유닛).
   RIDE_LEASH: 0.6,
+  // 캐릭터 반지름(클라이언트 Player.RADIUS와 같은 값) — 밀림·경계·좌석 검증이
+  // 모두 이 값을 쓴다. 리터럴로 흩뿌리면 한쪽만 고쳐도 알 수 없다.
+  AGENT_RADIUS: 0.35,
 };
 
 /**
@@ -220,8 +223,14 @@ export class WorldState {
       if (Number.isFinite(inset) && Number.isFinite(radius) && (inset < 0 || inset >= radius)) {
         console.warn(`[animals_farm] park.carousel.slot_inset(${inset})은 0 이상 radius(${radius}) 미만이어야 합니다 — 좌석이 판 밖으로 나갑니다`);
       }
-      if (Number.isFinite(grip) && grip <= 0.35) {
-        console.warn(`[animals_farm] park.carousel.grip_offset(${grip})이 캐릭터 반지름(0.35) 이하입니다 — 손잡이 기둥이 캐릭터를 관통합니다`);
+      // 기둥은 사각 기둥이라 **모서리**까지 봐야 한다: 반지름 + 반두께 × √2.
+      const thick = Number.isFinite(Number(cs.grip_thick)) ? Number(cs.grip_thick) : 0.1;
+      const gripMin = LIMITS.AGENT_RADIUS + (thick / 2) * Math.SQRT2;
+      if (Number.isFinite(grip) && grip <= gripMin) {
+        console.warn(`[animals_farm] park.carousel.grip_offset(${grip})이 ${gripMin.toFixed(2)} 이하입니다 — 손잡이 기둥이 캐릭터를 관통합니다(캐릭터 반지름 ${LIMITS.AGENT_RADIUS} + 기둥 모서리)`);
+      }
+      if (Number.isFinite(grip) && Number.isFinite(inset) && grip > inset) {
+        console.warn(`[animals_farm] park.carousel.grip_offset(${grip})이 slot_inset(${inset})보다 커서 손잡이가 판 밖에 뜹니다`);
       }
     }
 
@@ -328,7 +337,8 @@ export class WorldState {
         //  this.sizeX가 아직 없어서 터진다. 실측으로 배웠다.)
 
         const inside = Number.isFinite(at.x) && Number.isFinite(at.z)
-          && Math.abs(at.x) <= this.sizeX / 2 - 0.35 && Math.abs(at.z) <= this.sizeZ / 2 - 0.35;
+          && Math.abs(at.x) <= this.sizeX / 2 - LIMITS.AGENT_RADIUS
+          && Math.abs(at.z) <= this.sizeZ / 2 - LIMITS.AGENT_RADIUS;
         if (!inside) {
           console.warn(`[animals_farm] ${id} ${i}번 좌석이 섬 밖이거나 좌표가 잘못됐습니다(${at.x}, ${at.z}) — data/world.json의 park를 확인하세요`);
           continue;
@@ -383,7 +393,7 @@ export class WorldState {
 
   // 바위 안이면 표면 밖으로 되돌린다. 거부하지 않고 밀어내는 이유는
   // 클라이언트와 같다 — 거부하면 지터가 큰 클라이언트가 벽에 붙어 멈춘다.
-  pushOutObstacles(pos, agentRadius = 0.35) {
+  pushOutObstacles(pos, agentRadius = LIMITS.AGENT_RADIUS) {
     let { x, z } = pos;
     for (const o of this.obstacles) {
       if (o.shape === 'box') {
