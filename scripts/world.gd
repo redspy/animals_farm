@@ -61,10 +61,6 @@ const ZOOM_BTN := Vector2(40.0, 40.0)
 const FULLSCREEN_BTN_W := 96.0
 const EXERCISE_BTN := Vector2(88.0, 44.0)
 const TRICK_BTN := Vector2(152.0, 40.0)
-## HUD 스택(이름·시각·가방·안내문) 아래에서 시작해야 글자와 겹치지 않는다.
-## 4.8인 이유: 본문 3줄 + 안내문 1줄인데 안내문이 한 단계 작아 4.0으로는
-## 안내문 위에 버튼이 얹혔다(폰 실측).
-const HUD_STACK_LINES := 4.8
 ## 월드에 놓인 물건을 주울 수 있는 거리(월드 단위).
 const PICKUP_DISTANCE := 1.6
 ## 드랍 아이템 메시 크기.
@@ -144,6 +140,8 @@ var _zoom_label: Label = null
 var _fullscreen_button: Button = null
 var _fullscreen_on := false
 var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화면)
+## HUD 글자 상자 — 폭 상한을 리사이즈 때 다시 잡아야 해서 들고 있는다.
+var _hud_box: VBoxContainer = null
 var _exercise_box: VBoxContainer = null
 var _trick_box: VBoxContainer = null
 var _score: Dictionary = {}
@@ -423,31 +421,61 @@ func _build_hud() -> void:
 	var text_color := Palette.color("ui", "hud_text")
 	var outline_color := Palette.color("ui", "hud_outline")
 
+	# 줄 높이는 HUD 글자 줄과 오른쪽 버튼 열이 **같은 값**으로 자리를 나눠야
+	# 하므로 여기서 한 번만 정한다. 데스크톱 24인 이유: 글자 16 + 줄 간격 +
+	# 외곽선이라 22로 잡으면 오른쪽 버튼이 안내문 줄과 겹쳤다(실측).
+	var narrow := _is_narrow_screen()
+	var line_h := NARROW_LINE_H if narrow else 24.0
+
 	# HUD를 세 줄로 나눈다: 정보 / 가방(탭 가능) / 조작 안내.
 	# 예전에는 라벨 하나가 세 줄을 다 갖고 MOUSE_FILTER_STOP이라 **좌상단 텍스트
 	# 블록 전체**가 입력을 먹었다. 탭 이동을 붙이면 그 영역의 월드 탭이 판매
-	# 확인으로 새므로, 탭 대상을 가방 줄로 좁힌다.
+	# 확인으로 새므로, 탭 대상을 가방 줄로 좁히고 그 줄은 글자 폭만 차지한다.
 	var hud_box := VBoxContainer.new()
 	hud_box.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	hud_box.offset_left = HUD_MARGIN
 	hud_box.offset_top = HUD_MARGIN
+	# 폭을 **오른쪽 버튼 열 왼쪽까지**로 정한다(_relayout_hud_text). 폭이
+	# 정해져야 안내문을 접을 수 있고(자동 줄바꿈), 버튼 밑으로 글자가
+	# 지나가지도 않는다. 예전에는 폭을 안 주고 문장을 짧게 줄여 피했는데,
+	# 그건 논리 폭에 의존하는 가정이라 +로 키우면 다시 겹쳤다(리뷰 지적).
+	hud_box.anchor_right = 1.0
 	hud_box.add_theme_constant_override("separation", 2)
 	hud_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(hud_box)
+	_hud_box = hud_box
 
 	_hud = _stack_label(hud_box, text_color, outline_color)
+	# **최소 폭을 없앤다.** Godot의 Control은 크기를 항상 최소 크기로 클램프하고,
+	# 자동 줄바꿈·트리밍이 없는 Label의 최소 폭은 **글자 전체 폭**이다 — 그러면
+	# 상자가 상한을 넘겨 오른쪽으로 늘어나고, 안내문도 그 넓어진 폭을 받아
+	# 접히지 않은 채 버튼 밑을 지난다(리뷰 지적: 긴 이름·아이템 종류가 늘면
+	# 재현). 말줄임표 트리밍을 켜면 최소 폭이 1로 떨어져 상한이 실제로 먹는다.
+	_hud.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	_bag_label = _stack_label(hud_box, text_color, outline_color)
+	_bag_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	# 가방 줄만 입력을 받는다 — 탭하면 판매 확인 시트가 뜬다.
+	# 히트박스 폭을 **글자 폭으로 직접 잡는다**(_refresh_hud에서 갱신). VBox
+	# 자식은 기본으로 상자 폭까지 늘어나는데(데스크톱이면 700px 넘는다) 그러면
+	# 이 줄이 화면을 가로질러 그 위의 월드 탭을 다 먹고, 최소 폭이 1로 떨어진
+	# 상태에서 SHRINK만 걸면 1px로 죽는다.
+	_bag_label.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	_bag_label.mouse_filter = Control.MOUSE_FILTER_STOP
 	_bag_label.gui_input.connect(_on_bag_clicked)
+	# 안내문은 스택의 마지막 줄이다 — 세로 위치는 상자가 계산한다. 직접
+	# `line_h * 3` 처럼 줄 수를 곱했더니 실제 줄 높이(글자+외곽선)보다 작아서
+	# 가방 줄 위에 겹쳐 그려졌다(폰 실측).
 	_hint_label = _stack_label(hud_box, text_color, outline_color)
-	# 좁은 화면에서만 안내문을 본문보다 한 단계 작게 한다 — 가장 긴 줄이라 본문
-	# 크기(21px)로 키우면 폰 폭을 넘어간다. 데스크톱은 건드리지 않는다(테마
-	# 기본값 16 유지). 자동 줄바꿈은 쓰지 않는다: 폭을 주려면 HUD 스택 전체를
-	# 넓혀야 하고, 그러면 입력을 받는 가방 줄이 화면 폭을 가로질러 그 위의
-	# 월드 탭을 다 먹는다(_build_hud 주석). 좁은 화면에서는 문장을 줄인다.
-	if _is_narrow_screen():
-		_hint_label.add_theme_font_size_override("font_size", UiScale.font(12))
+	# **자르지 말고 접는다.** 폭이 정해진 상자 안이라 자동 줄바꿈이 되고, 두
+	# 줄까지 허용한다. clip_text만 켜면 좁은 폰·높은 배율에서 문장 뒤쪽이
+	# 말줄임표도 없이 사라져 사용자는 잘렸다는 사실조차 모른다(리뷰 지적).
+	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_hint_label.max_lines_visible = 2
+	_hint_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	# 높이 예약과 폰트 크기는 _relayout_hud_text가 잡는다 — 좁은 화면 판정은
+	# 런타임에 뒤집히므로(창을 세로로 줄이면 true가 된다) 빌드 시점에 굳혀
+	# 두면 안 된다.
+	_relayout_hud_text()
 
 	_net_label = _make_label(layer, Control.PRESET_TOP_RIGHT, Palette.color("ui", "warn_text"), outline_color)
 	_net_label.offset_right = -HUD_MARGIN
@@ -463,7 +491,6 @@ func _build_hud() -> void:
 	# 좁은 화면 여부를 함께 보지 않는 이유: 토글은 좁든 넓든 터치 기기면
 	# 만들어진다. narrow까지 AND로 걸면 **터치되는 넓은 화면**(태블릿·터치
 	# 노트북)에서 토스트와 존 라벨이 다시 토글 뒤로 들어간다(리뷰 지적).
-	var narrow := _is_narrow_screen()
 	var stack := HUD_MARGIN
 	if DisplayServer.is_touchscreen_available():
 		stack = TouchControls.MARGIN + TouchControls.BTN_SMALL + NARROW_STACK_GAP
@@ -541,9 +568,6 @@ func _build_hud() -> void:
 	# 화면에서 비어 있는 자리가 여기뿐이다.
 	# HUD 글자 아래에서 시작한다 — 위에서 시작하면 안내문·날짜 줄과 겹친다
 	# (폰 실측: 기술 버튼이 HUD 두 줄을 덮었다).
-	# 데스크톱 24인 이유: 글자 16 + 줄 간격 + 외곽선이라 22로 잡으면 오른쪽
-	# 버튼이 HUD 안내문 줄과 겹쳤다(실측).
-	var line_h := NARROW_LINE_H if narrow else 24.0
 	# 오른쪽 위 버튼들은 **연결 상태 라벨 아래 한 줄**에서 시작한다.
 	#
 	# 한때 HUD 글자 블록(4.8줄) 아래로 내렸는데, 그러면 세로 예산을 105px 먹어
@@ -552,28 +576,26 @@ func _build_hud() -> void:
 	# 안내문을 짧게 줄여 오른쪽을 비운다(_action_hint 아래 주석).
 	var right_top := HUD_MARGIN + line_h * 1.6
 	var btn_h := UiScale.dim(ZOOM_BTN.y)
+	# 전체화면을 지원하는지 **레이아웃을 잡기 전에** 알아야 한다 — 나중에
+	# visible만 끄면 버튼이 사라진 자리(약 60px)가 그대로 남아 운동 버튼이
+	# 괜히 밀린다(리뷰 지적).
+	var fs_supported := _fullscreen_supported()
 	var fs_top := right_top
-	var zoom_top := fs_top + btn_h + 6.0
-	# 운동 버튼 열은 HUD 글자 블록과 오른쪽 버튼 두 줄 **둘 다** 아래여야 한다.
-	var boxes_top := maxf(zoom_top + btn_h + 10.0, HUD_MARGIN + line_h * HUD_STACK_LINES)
+	# 미지원이면 줌 행이 그 자리를 쓴다 — 빈 자리를 남기지 않는다.
+	var zoom_top := (fs_top + btn_h + 6.0) if fs_supported else fs_top
+	# 운동 버튼 열은 위 버튼 두 줄 바로 아래에서 시작한다. HUD 글자 블록까지
+	# 피할 필요가 없다 — 글자 상자의 폭이 이 열 왼쪽까지로 제한돼 있어 서로
+	# 만나지 않는다. 예전에는 글자 블록(4.8줄) 아래로 내려 세로를 105px 더
+	# 먹었고, 창이 짧거나 배율이 높으면 마지막 버튼이 잘렸다(리뷰 지적).
+	var boxes_top := zoom_top + btn_h + 10.0
 
 	# 오른쪽 위는 위에서 아래로 **연결 상태 → 전체화면 → 크기(−/+) → 운동 버튼**
 	# 순서로 쌓는다. 자주 누르지 않는 버튼이라 조작 손가락(아래쪽)에서 먼 자리가
 	# 낫고, 그 줄은 HUD 글자가 왼쪽에만 있어 비어 있다.
-	# 전체화면 — 사용자 요청대로 +/− **위**에 둔다.
-	_fullscreen_button = Button.new()
-	_fullscreen_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
-	_fullscreen_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	_fullscreen_button.offset_right = -HUD_MARGIN
-	_fullscreen_button.offset_top = fs_top
-	_fullscreen_button.offset_bottom = fs_top + btn_h
-	_fullscreen_button.custom_minimum_size = Vector2(UiScale.dim(FULLSCREEN_BTN_W), btn_h)
-	_fullscreen_button.clip_text = true
-	_fullscreen_button.focus_mode = Control.FOCUS_NONE
-	_fullscreen_button.add_theme_font_size_override("font_size", UiScale.font(15))
-	_fullscreen_button.pressed.connect(_on_fullscreen_pressed)
-	layer.add_child(_fullscreen_button)
-	_refresh_fullscreen_button()
+	# 전체화면 — 사용자 요청대로 +/− **위**에 둔다. 지원하지 않는 브라우저에서는
+	# 만들지 않는다(아이폰 사파리에는 Fullscreen API가 없다).
+	if fs_supported:
+		_build_fullscreen_button(layer, fs_top, btn_h)
 
 	var zoom_box := HBoxContainer.new()
 	zoom_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
@@ -595,7 +617,6 @@ func _build_hud() -> void:
 	zoom_box.add_child(_zoom_label)
 	zoom_box.add_child(_make_zoom_button("+", 1.0))
 	_tracked_buttons["zoomLabel"] = _zoom_label
-	_tracked_buttons["fullscreenButton"] = _fullscreen_button
 	_exercise_box = VBoxContainer.new()
 	_exercise_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	_exercise_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -633,6 +654,8 @@ func _build_hud() -> void:
 		# 설정은 세이브에 남긴다(기기별 취향이라 슬롯이 아니라 세이브 전역).
 		var settings: Dictionary = _save.get("settings", {})
 		_touch.setup(_emotes, bool(settings.get("joystick", true)))
+		# 시트가 열리면 전체화면 핫스팟을 바로 내린다(모달 위 오작동 방지).
+		_touch.sheet_toggled.connect(func() -> void: _publish_fullscreen_hotspot.call_deferred())
 		_touch.joystick_toggled.connect(_on_joystick_toggled)
 		_touch.action_pressed.connect(_try_interact)
 		_touch.chat_pressed.connect(_open_chat_input)
@@ -754,6 +777,14 @@ func _action_hint() -> String:
 		"slide": return "내려가는 중"
 	return "채집/줍기"
 
+## 두 줄에 안 들어갈 때 쓰는 짧은 문장 — 조작 수단별로 핵심만 남긴다.
+func _short_hint() -> String:
+	if _touch != null:
+		if _is_riding():
+			return "액션 버튼으로 밀기 · 내리기 버튼으로 내림"
+		return "가고 싶은 곳을 탭 · 대상을 탭하면 자동 처리"
+	return "[클릭] 이동  [Space] %s  [I] 가방" % _action_hint()
+
 func _touch_hint() -> String:
 	if _is_narrow_screen():
 		if _is_riding():
@@ -762,8 +793,12 @@ func _touch_hint() -> String:
 			return "공을 탭하면 다가가서 찬다 · 액션 버튼도 차기"
 		if _current_zone == "park":
 			return "놀이기구를 탭하면 탑니다"
-		return "가고 싶은 곳을 탭 · 대상을 탭하면 자동 처리 · 오른쪽 운동 버튼"
-	return "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 가방 · 오른쪽 운동 버튼"
+		# 두 줄에 들어가는 길이로 맞춘다 — 넘치면 말줄임표로 끝이 사라진다.
+		# "오른쪽 운동 버튼"은 버튼이 보이면 자명해서 뺐다.
+		return "가고 싶은 곳을 탭 · 대상을 탭하면 자동 처리"
+	# 두 줄 상한이 실제로 걸리므로 길이를 맞춘다 — 배율 1.8이면 확보 폭이
+	# 350px 남짓이라 예전 문장(64자)은 뒤가 말줄임표로 사라졌다.
+	return "가고 싶은 곳을 탭 · 대상을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 가방"
 
 func _refresh_hud() -> void:
 	var inv: Dictionary = _slot.get("inventory", {})
@@ -776,7 +811,7 @@ func _refresh_hud() -> void:
 	# 없고, 오히려 터치 UI를 못 찾게 만든다.
 	var hint := _touch_hint() \
 		if _touch != null \
-		else "[클릭] 이동·대상 자동 처리  [방향키] 이동  [Space] %s  [I] 가방  [T] 채팅  [1~%d] 이모티콘" % [
+		else "[클릭/방향키] 이동·대상 자동 처리  [Space] %s  [I] 가방  [T] 채팅  [1~%d] 이모티콘" % [
 			_action_hint(), maxi(_emotes.size(), 1)]
 	# 좁은 화면에서는 이름·시각을 한 줄에 두면 오른쪽 상단의 연결 상태와 겹친다
 	# (2026-09-05 폰 실측: "Minsu | 2026-09-05 07:37 (새벽)"이 "서버 연결됨"을
@@ -786,7 +821,13 @@ func _refresh_hud() -> void:
 	else:
 		_hud.text = "%s  |  %s\n벨: %d" % [who, GameClock.label(), int(_slot.get("bells", 0))]
 	_bag_label.text = bag
+	_refresh_bag_width()
 	_hint_label.text = hint
+	# **넘치면 짧은 문장으로 내린다.** "두 줄에 들어가는 길이로 맞춰 뒀다"는
+	# 가정은 보간(활동별 문구·이모티콘 개수)과 배율에 따라 깨진다 — 실제 줄
+	# 수를 보고 판단한다(리뷰 지적).
+	if _hint_label.get_line_count() > _hint_label.max_lines_visible:
+		_hint_label.text = _short_hint()
 
 	# E2E가 확인할 수 있게 상태를 공개한다 — 판매 결과처럼 본인에게만 오는
 	# 값은 WS 옵저버로 볼 수 없다(scripts/test_hooks.gd).
@@ -963,6 +1004,88 @@ func _make_zoom_button(text: String, steps: float) -> Button:
 	_tracked_buttons["zoomIn" if steps > 0.0 else "zoomOut"] = b
 	return b
 
+## HUD 글자 상자의 폭·안내문 높이·안내문 폰트를 다시 잡는다.
+##
+## **빌드 시점에 굳히면 안 된다.** 이 값들은 전부 좁은 화면 판정(`UiScale`)에
+## 딸려 있고, 그 판정은 런타임에 뒤집힌다 — 창을 세로로 줄이거나 전체화면을
+## 오가면 CSS 짧은 변이 480을 가로지른다. 굳혀 두면 줌 행은 넓어진 채 상자
+## 상한은 옛 값이라, 없애려던 "안내문이 버튼 밑을 지나감"이 되돌아온다.
+func _relayout_hud_text() -> void:
+	if _hud_box == null or not is_instance_valid(_hud_box):
+		return
+	_hud_box.offset_right = -(HUD_MARGIN + _right_column_width() + 8.0)
+	if _hint_label != null and is_instance_valid(_hint_label):
+		var narrow := _is_narrow_screen()
+		var line_h := NARROW_LINE_H if narrow else 24.0
+		# **높이를 예약한다.** autowrap + 트리밍을 같이 켜면 Label의 최소 크기가
+		# (1, 1)이 되고 VBox는 그 값을 그대로 주므로, 라벨이 1px로 접혀 한 줄도
+		# 안 그려질 수 있다. max_lines_visible은 높이를 예약해 주지 않는다.
+		_hint_label.custom_minimum_size.y = line_h * 2.0
+		# 좁은 화면에서만 안내문을 본문보다 한 단계 작게 한다 — 가장 긴 줄이라
+		# 본문 크기(21px)로 키우면 두 줄로도 다 안 들어간다.
+		if narrow:
+			_hint_label.add_theme_font_size_override("font_size", UiScale.font(12))
+		else:
+			_hint_label.remove_theme_font_size_override("font_size")
+
+## 가방 줄 폭을 **글자 폭으로** 잡는다(상한은 글자 상자 폭).
+##
+## 상수로 잘라 두면(예: 300px) 표시 폭까지 그 값이 되어, 아이템 종류가 몇 개만
+## 늘어도 뒤가 말줄임표로 사라진다 — 안내문에 대해 지적한 "잘린 줄도 모른다"가
+## 가방 줄에 남는다(리뷰 지적). 실제 글자 폭을 재면 히트박스는 글자만큼만
+## 차지하고(위쪽 월드 탭을 안 먹음) 잘림도 안 생긴다.
+func _refresh_bag_width() -> void:
+	if _bag_label == null or not is_instance_valid(_bag_label):
+		return
+	var font := _bag_label.get_theme_font("font")
+	if font == null:
+		return
+	var fs := _bag_label.get_theme_font_size("font_size")
+	var need := font.get_string_size(
+		_bag_label.text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	_bag_label.custom_minimum_size.x = minf(need + 2.0, _hud_text_width())
+
+## HUD 글자 상자의 폭 상한 — 오른쪽 버튼 열 왼쪽까지.
+func _hud_text_width() -> float:
+	var vp := get_viewport()
+	var w := vp.get_visible_rect().size.x if vp != null else 960.0
+	return maxf(w - HUD_MARGIN * 2.0 - _right_column_width() - 8.0, 80.0)
+
+## 오른쪽 위 버튼 열의 폭 — 안내문 폭을 자를 때 쓴다.
+## 줌 행(− 100% +)이 가장 넓다.
+func _right_column_width() -> float:
+	return UiScale.dim(ZOOM_BTN.x) * 2.0 + UiScale.dim(52.0) + 8.0
+
+## 전체화면 버튼을 만든다(지원하는 환경에서만 호출된다).
+func _build_fullscreen_button(layer: CanvasLayer, top: float, btn_h: float) -> void:
+	_fullscreen_button = Button.new()
+	_fullscreen_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_fullscreen_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_fullscreen_button.offset_right = -HUD_MARGIN
+	_fullscreen_button.offset_top = top
+	_fullscreen_button.offset_bottom = top + btn_h
+	_fullscreen_button.custom_minimum_size = Vector2(UiScale.dim(FULLSCREEN_BTN_W), btn_h)
+	_fullscreen_button.clip_text = true
+	_fullscreen_button.focus_mode = Control.FOCUS_NONE
+	_fullscreen_button.add_theme_font_size_override("font_size", UiScale.font(15))
+	_fullscreen_button.pressed.connect(_on_fullscreen_pressed)
+	layer.add_child(_fullscreen_button)
+	# 훅은 이 시점에 아직 없다 — 만든 버튼만 목록에 넣고 _publish_test_points가
+	# 게시한다(미지원이면 아예 들어가지 않아 테스트가 "없음"을 볼 수 있다).
+	_tracked_buttons["fullscreenButton"] = _fullscreen_button
+	_refresh_fullscreen_button()
+
+## 이 환경이 전체화면을 지원하는지. 웹이면 셸이 판정한 값을 읽는다
+## (window.afFullscreenSupported) — 아이폰 사파리에는 Fullscreen API가 없다.
+func _fullscreen_supported() -> bool:
+	if not OS.has_feature("web"):
+		return true
+	var got: Variant = JavaScriptBridge.eval(
+		"window.afFullscreenSupported === false ? 0 : 1", true)
+	# 셸 초기화가 늦으면 지원한다고 본다(fail-open) — 버튼이 안 뜨는 쪽이
+	# 사용자에게는 더 나쁘다. 미지원이면 눌러도 아무 일이 없을 뿐이다.
+	return int(got) != 0 if got != null else true
+
 ## 전체화면 켜고 끄기.
 ##
 ## 웹에서는 **셸이 실제 요청을 한다**(web/shell.html의 afHotspots) — 브라우저는
@@ -989,19 +1112,13 @@ func _refresh_fullscreen_button() -> void:
 		return
 	var on := _fullscreen_on
 	if OS.has_feature("web"):
-		# **두 값을 비트로 합쳐 받는다.** JavaScriptBridge.eval은 숫자·문자열·
-		# 불리언만 변환하고 배열/객체는 null을 준다 — 배열로 받으려다 분기가
-		# 아예 실행되지 않아 미지원 브라우저에서도 버튼이 남아 있었다(실측).
-		var got: Variant = JavaScriptBridge.eval(
-			"(window.afFullscreen ? 1 : 0) + (window.afFullscreenSupported === false ? 0 : 2)", true)
-		var bits := int(got) if got != null else 2
-		on = (bits & 1) != 0
-		# **지원하지 않는 브라우저에서는 버튼을 숨긴다**(아이폰 사파리에는
-		# Fullscreen API가 없어 눌러도 아무 일이 없다 — 리뷰 지적).
-		var supported := (bits & 2) != 0
-		if _fullscreen_button.visible != supported:
-			_fullscreen_button.visible = supported
-			_publish_fullscreen_hotspot()
+		# JavaScriptBridge.eval은 숫자·문자열·불리언만 변환한다(배열/객체는
+		# null) — 두 값을 배열로 받으려다 분기가 아예 실행되지 않은 전례가 있다.
+		# 지원 여부는 **_build_hud에서 한 번만** 본다(_fullscreen_supported).
+		# 여기서 다시 보고 visible을 내리면, 자리는 이미 잡힌 뒤라 없애려던
+		# "60px 빈 자리"가 그대로 재현된다(리뷰 지적). 여기서는 상태만 읽는다.
+		var got: Variant = JavaScriptBridge.eval("window.afFullscreen ? 1 : 0", true)
+		on = int(got) != 0 if got != null else _fullscreen_on
 	else:
 		on = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 	if on == _fullscreen_on and not _fullscreen_button.text.is_empty():
@@ -1046,12 +1163,14 @@ func _publish_fullscreen_hotspot() -> void:
 	# 도는 것은 낭비다(같은 파일이 HUD 문자열에도 같은 스로틀을 건다).
 	if spec == _fs_hotspot:
 		return
-	_fs_hotspot = spec
-	if spec.is_empty():
-		JavaScriptBridge.eval("if (window.afHotspots) delete window.afHotspots.fullscreen;", true)
-		return
-	JavaScriptBridge.eval(
-		"window.afHotspots.fullscreen = %s;" % spec, true)
+	# **쓰기가 실제로 됐을 때만 캐시한다.** afHotspots는 셸이 만드는데, 없을 때
+	# 조용히 넘기면서 캐시까지 해 버리면 spec이 바뀔 때까지(=버튼이 움직일
+	# 때까지) 재시도가 영영 안 가서, 일시적 실패가 영구 실패가 된다 — 핫스팟
+	# 없이 굳어 전체화면 버튼이 조용히 죽는다(리뷰 지적).
+	var js := "window.afHotspots ? (delete window.afHotspots.fullscreen, 1) : 0" if spec.is_empty() \
+		else "window.afHotspots ? (window.afHotspots.fullscreen = %s, 1) : 0" % spec
+	var ok: Variant = JavaScriptBridge.eval(js, true)
+	_fs_hotspot = spec if ok != null and int(ok) == 1 else ""
 
 ## +/− 를 누르면 화면 전체(글자·버튼·HUD)가 같이 커지고 작아진다.
 ## content_scale_factor 하나로 처리하므로 레이아웃을 다시 만들 필요가 없다.
@@ -1561,6 +1680,9 @@ func _drop_one() -> void:
 
 ## 가방 화면을 연다. 이미 열려 있으면 무시.
 func _open_inventory() -> void:
+	# 모달이 뜨면 전체화면 핫스팟을 **즉시** 내린다 — 0.25초 주기 갱신만
+	# 믿으면 그 사이 오른쪽 위를 탭할 때 가방을 닫으려다 전체화면이 켜진다.
+	_publish_fullscreen_hotspot.call_deferred()
 	if _inventory_ui != null and is_instance_valid(_inventory_ui):
 		return
 	_inventory_ui = InventoryUI.new()
@@ -1568,7 +1690,11 @@ func _open_inventory() -> void:
 	_inventory_ui.drop_requested.connect(_on_inventory_drop)
 	_inventory_ui.sell_requested.connect(func(item_id: String) -> void: _sell(item_id))
 	_inventory_ui.sell_all_requested.connect(func() -> void: _sell(""))
-	_inventory_ui.closed.connect(func() -> void: _inventory_ui = null)
+	_inventory_ui.closed.connect(func() -> void:
+		_inventory_ui = null
+		# 내리는 쪽만 즉시면 반쪽이다 — 닫자마자 전체화면을 누르면 0.25초
+		# 폴링까지 먹통이다(리뷰 지적). 되돌리는 쪽도 바로 알린다.
+		_publish_fullscreen_hotspot.call_deferred())
 	add_child(_inventory_ui)
 	# 자식이 _ready를 지난 뒤에 내용을 채운다.
 	_refresh_inventory_ui.call_deferred()
@@ -2246,6 +2372,9 @@ func _publish_test_points() -> void:
 		if c != null and is_instance_valid(c):
 			_hooks.track(key, c)
 	_hooks.set_state("uiZoom", UiScale.zoom())
+	# 전체화면 상태는 값이 바뀔 때만 갱신되므로(폴링 비용 절약) 처음 한 번은
+	# 여기서 게시한다 — 훅은 _build_hud 뒤에 생겨 그때는 null이었다.
+	_hooks.set_state("fullscreen", 1 if _fullscreen_on else 0)
 	_hooks.set_state("zone", _current_zone)
 	# 운동 상태는 처음부터 공개한다 — 운동을 시작해야 값이 생기면 테스트가
 	# "아직 안 함"과 "훅이 없음"을 구분할 수 없다.
@@ -2396,6 +2525,9 @@ func _on_viewport_resized() -> void:
 	# 전체화면 전환은 크기 변경으로 나타난다 — 버튼 글자를 바로 맞춘다.
 	_refresh_fullscreen_button()
 	_publish_fullscreen_hotspot()
+	# 좁은 화면 판정이 뒤집힐 수 있으므로 글자 폭·높이·폰트를 다시 잡는다.
+	_relayout_hud_text()
+	_refresh_bag_width()
 	if _camera != null:
 		_camera.size = _camera_size_for_screen()
 

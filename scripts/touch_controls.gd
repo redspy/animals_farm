@@ -25,6 +25,8 @@ signal sell_requested          # (남겨둠) 확인 시트에서 전부 판매�
 signal inventory_pressed       # 가방 화면 열기
 ## 조이스틱 사용 여부가 바뀔 때. 세이브에 남겨 다음 접속에도 유지한다.
 signal joystick_toggled(enabled: bool)
+signal sheet_toggled            # 시트(이모티콘/판매)가 열리거나 닫힘 — 월드가
+                                # 전체화면 핫스팟을 즉시 내리는 데 쓴다
 
 ## 터치 타깃 최소 크기. 44는 접근성 하한, 주 액션은 더 크게 잡는다.
 const BTN_MAIN := 72.0
@@ -306,7 +308,11 @@ func _make_sheet() -> Control:
 	dim.flat = true
 	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	dim.focus_mode = Control.FOCUS_NONE
-	dim.pressed.connect(func() -> void: sheet.visible = false)
+	# 시트를 닫는 가장 흔한 제스처가 이 배경 탭이다 — 여기서 알리지 않으면
+	# 닫은 뒤 0.25초 폴링까지 전체화면 버튼이 먹통이다(리뷰 지적).
+	dim.pressed.connect(func() -> void:
+		sheet.visible = false
+		sheet_toggled.emit())
 	sheet.add_child(dim)
 	return sheet
 
@@ -353,6 +359,7 @@ func _build_emote_sheet() -> void:
 		b.pressed.connect(func() -> void:
 			emote_selected.emit(String(emote.get("id", "")))
 			_emote_sheet.visible = false
+			sheet_toggled.emit()
 		)
 		grid.add_child(b)
 		if _hooks != null:
@@ -387,6 +394,7 @@ func _build_sell_sheet() -> void:
 	yes.focus_mode = Control.FOCUS_NONE
 	yes.pressed.connect(func() -> void:
 		_sell_sheet.visible = false
+		sheet_toggled.emit()
 		sell_requested.emit()
 	)
 	box.add_child(yes)
@@ -395,12 +403,15 @@ func _build_sell_sheet() -> void:
 	no.text = "취소"
 	no.custom_minimum_size = Vector2(0, BTN_MED)
 	no.focus_mode = Control.FOCUS_NONE
-	no.pressed.connect(func() -> void: _sell_sheet.visible = false)
+	no.pressed.connect(func() -> void:
+		_sell_sheet.visible = false
+		sheet_toggled.emit())
 	box.add_child(no)
 
 func _toggle_emote_sheet(show_it: bool) -> void:
 	if _emote_sheet != null:
 		_emote_sheet.visible = show_it
+		sheet_toggled.emit()
 	if show_it:
 		_release_stick()
 
@@ -408,6 +419,7 @@ func _toggle_emote_sheet(show_it: bool) -> void:
 func show_sell_confirm() -> void:
 	if _sell_sheet != null:
 		_sell_sheet.visible = true
+		sheet_toggled.emit()
 	_release_stick()
 
 ## 시트가 열려 있는 동안에는 게임 조작을 받지 않아야 한다.

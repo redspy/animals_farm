@@ -103,14 +103,20 @@ await page.waitForTimeout(400);
 // (비디오 전용 webkitEnterFullscreen만 있다) 눌러도 아무 일이 없다 — 그런
 // 브라우저에서는 버튼을 숨기는 것이 올바른 동작이고, 헤드리스 WebKit도 같은
 // 상태를 보고한다. 그래서 두 경로를 각각 확인한다.
-const fsSupported = await page.evaluate(() => window.afFullscreenSupported === true);
+// 기본값 극성을 게임과 맞춘다(셸 초기화가 늦으면 지원한다고 본다) — 반대로
+// 두면 원인 찾기 어려운 실패가 남는다.
+const fsSupported = await page.evaluate(() => window.afFullscreenSupported !== false);
 const fsHotspot = await page.evaluate(() => window.afHotspots?.fullscreen ?? null);
 if (!fsSupported) {
   check(fsHotspot == null,
-    '전체화면을 지원하지 않는 브라우저에서는 버튼(핫스팟)을 내린다 — 눌러도 아무 일 없는 버튼을 남기지 않는다');
-  const hidden = await page.evaluate(() => !window.afTest?.points?.fullscreenButton
-    || window.afTest.points.fullscreenButton[0] < 0);
-  check(hidden || fsHotspot == null, '버튼이 화면에서 사라진다');
+    '전체화면을 지원하지 않는 브라우저에서는 핫스팟을 내린다 — 눌러도 아무 일 없는 버튼을 남기지 않는다');
+  // 훅은 보이지 않는 컨트롤을 게시하지 않으므로(test_hooks.gd) 키가 사라진다.
+  // 앞 단언과 겹치는 `|| fsHotspot == null`을 두면 이 검증이 죽는다(리뷰 지적).
+  // 훅 자체가 죽어도 "버튼이 사라졌다"로 읽히면 공허한 통과다 — 살아 있어야
+  // 하는 키를 같이 단언한다(리뷰 지적).
+  const points = await page.evaluate(() => window.afTest?.points ?? null);
+  check(points != null && points.zoomIn != null, '테스트 훅이 살아 있다(zoomIn 존재)');
+  check(points?.fullscreenButton == null, '버튼이 화면에서 사라진다(훅에서도 빠진다)');
 } else {
   check(Array.isArray(fsHotspot) && fsHotspot[4] === 'fullscreen',
     `게임이 전체화면 버튼 영역을 셸에 알린다 (${JSON.stringify(fsHotspot)})`);

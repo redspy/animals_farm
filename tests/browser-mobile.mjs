@@ -387,6 +387,61 @@ const restored = await playerScreenY();
 check(Math.abs(restored - beforeKeyboard) < 30,
   `키보드가 내려가면 보정이 풀린다(${restored.toFixed(0)} ≈ ${beforeKeyboard.toFixed(0)})`);
 
+// --- 전체화면 버튼(지원하는 브라우저 경로) ---
+// 사파리 테스트는 Fullscreen API가 없는 쪽만 지나가므로, 지원하는 경로는
+// 여기(크로미움)에서 확인한다 — 안 그러면 버튼이 동작하는지 아무도 안 본다.
+console.log('\n[검증] 전체화면 버튼');
+const fsSupported = await page.evaluate(() => window.afFullscreenSupported !== false);
+if (fsSupported) {
+  check(await page.evaluate(() => typeof window.afTest?.state?.fullscreen === 'number'),
+    '전체화면 상태를 처음부터 알린다(누르기 전에도 훅에 있다)');
+  const spot = await page.evaluate(() => window.afHotspots?.fullscreen ?? null);
+  check(Array.isArray(spot) && spot[4] === 'fullscreen',
+    `버튼 영역을 셸에 알린다 (${JSON.stringify(spot)})`);
+
+  // 가방을 열면 핫스팟을 **즉시** 내린다 — 남아 있으면 가방을 닫으려는 탭이
+  // 전체화면으로 샌다(실제로 겪은 오작동).
+  await tapGodot(page, 'bagButton', { touch: true });
+  await page.waitForTimeout(300);
+  check(await page.evaluate(() => window.afHotspots?.fullscreen == null),
+    '가방(모달)이 열리면 전체화면 핫스팟을 내린다');
+  await tapGodot(page, 'invClose', { touch: true });
+  // 짧게 기다린다 — 0.25초 폴링에 의존하면 "닫자마자 먹통"이 테스트에
+  // 가려진다(닫는 쪽도 즉시 게시해야 통과한다).
+  await page.waitForTimeout(150);
+  check(await page.evaluate(() => window.afHotspots?.fullscreen != null),
+    '모달을 닫으면 핫스팟이 돌아온다');
+
+  const before = await page.evaluate(() => window.afFullscreenRequests ?? -1);
+  await tapGodot(page, 'fullscreenButton', { touch: true });
+  // 고정 대기는 느린 CI에서 "아직 안 온 reject"를 실패로 만든다 — 결과가
+  // 정해질 때까지(진입했거나 이유가 남았거나) 기다린다.
+  await page.waitForFunction(
+    () => document.fullscreenElement != null || (window.afFullscreenLastError || '').length > 0,
+    null, { timeout: 2000 }).catch(() => {});
+  const after = await page.evaluate(() => window.afFullscreenRequests ?? -1);
+  const err = await page.evaluate(() => window.afFullscreenLastError ?? '');
+  check(after === before + 1,
+    `탭하면 셸이 제스처 안에서 전체화면을 요청한다 (${before} → ${after}${err ? ', 오류: ' + err : ''})`);
+  const entered = await page.evaluate(() => document.fullscreenElement != null);
+  // 거절은 **비동기로** 온다(Promise의 reject). 잡지 않으면 콘솔에 uncaught
+  // rejection만 남고 기록은 비어 있어 왜 안 됐는지 알 수 없다.
+  check(entered || err.length > 0,
+    `전체화면에 들어가거나, 안 되면 이유가 남는다 (${entered ? '진입' : '거절: ' + (err || '기록 없음')})`);
+  // 뒤 검증(가로 모드 회전)이 창 크기를 바꾸므로 되돌려 둔다 — 전체화면인
+  // 창은 리사이즈가 거부된다. 나가기는 제스처가 필요 없다.
+  if (entered) {
+    await page.evaluate(() => document.exitFullscreen?.());
+    // 고정 대기로는 이탈이 안 끝난 채 뷰포트를 바꿀 수 있고, 전체화면 창은
+    // 리사이즈가 거부되어 **뒤 검증 전체가 잘못된 크기로** 돌아간다.
+    await page.waitForFunction(() => document.fullscreenElement == null,
+      null, { timeout: 5000 });
+  }
+} else {
+  check(await page.evaluate(() => window.afHotspots?.fullscreen == null),
+    '미지원 브라우저에서는 핫스팟을 내린다');
+}
+
 // --- 가로 모드 전환 ---
 console.log('\n[검증] 가로 모드 회전');
 await page.setViewportSize({ width: size.height, height: size.width });
