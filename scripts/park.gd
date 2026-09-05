@@ -109,12 +109,16 @@ func height_at(pos: Vector3) -> float:
 	var ladder := slide_ladder()
 	var top := slide_top()
 	var exit_p := slide_exit()
-	var climb := _progress_on(pos, ladder, top)
-	if climb >= 0.0:
-		return slide_height() * climb
+	# **내려가는 구간을 먼저 본다.** 사다리와 미끄럼면이 같은 직선 위에 있어서
+	# (같은 x), 진행도를 0~1로 자르면 상단을 지난 지점도 올라가는 구간에 t=1로
+	# 걸린다 — 내려가기 시작한 1유닛 동안 최고 높이에 붙어 있다가 뚝 떨어졌다
+	# (리뷰 지적). 그래서 자르지 않고 **구간 안에 있는지**로 판정한다.
 	var down := _progress_on(pos, top, exit_p)
 	if down >= 0.0:
 		return slide_height() * (1.0 - down)
+	var climb := _progress_on(pos, ladder, top)
+	if climb >= 0.0:
+		return slide_height() * climb
 	return 0.0
 
 ## 선분 위 진행도(0~1). 선분에서 너무 멀면 -1.
@@ -124,9 +128,12 @@ func _progress_on(pos: Vector3, from: Vector3, to: Vector3) -> float:
 	if len2 < 0.0001:
 		return -1.0
 	var rel := Vector2(pos.x - from.x, pos.z - from.z)
-	var t := clampf(rel.dot(seg) / len2, 0.0, 1.0)
-	var closest := seg * t
-	if rel.distance_to(closest) > float(_slide.get("width", 1.0)) * 0.9:
+	# 자르지 않는다 — 구간 **밖**이면 -1을 돌려줘야 한다(위 height_at 주석).
+	var t := rel.dot(seg) / len2
+	if t < -0.02 or t > 1.02:
+		return -1.0
+	t = clampf(t, 0.0, 1.0)
+	if rel.distance_to(seg * t) > float(_slide.get("width", 1.0)) * 0.9:
 		return -1.0
 	return t
 
@@ -392,10 +399,14 @@ func rider_offset(kind: String, seat: int, logical: Vector3, amp_step: int) -> V
 		"carousel":
 			var center := carousel_center()
 			var rel := logical - center
+			# **Godot의 Y축 회전과 같은 부호를 써야 한다.** 발판은 rotation.y로
+			# 돌리는데(+θ) 여기서 전치(−θ)를 쓰면 사람이 반대로 돌아, 밀자마자
+			# 자기 손잡이에서 두 배 속도로 멀어진다(리뷰 지적).
+			# Basis.from_euler(0, θ, 0): (x·cosθ + z·sinθ, y, −x·sinθ + z·cosθ)
 			var rotated := Vector3(
-				rel.x * cos(_carousel_angle) - rel.z * sin(_carousel_angle),
+				rel.x * cos(_carousel_angle) + rel.z * sin(_carousel_angle),
 				0.0,
-				rel.x * sin(_carousel_angle) + rel.z * cos(_carousel_angle))
+				-rel.x * sin(_carousel_angle) + rel.z * cos(_carousel_angle))
 			# 발판 높이만큼 올라선다.
 			return rotated - rel + Vector3(0, 0.22, 0)
 		"seesaw":

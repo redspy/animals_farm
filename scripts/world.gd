@@ -1089,7 +1089,12 @@ func _mount_ride(kind: String, seat: int) -> void:
 	if _current_zone != "park":
 		_show_toast("놀이터에서만 탈 수 있습니다")
 		return
-	_apply_activity(kind, str(seat), true)
+	# 좌석이 없는 기구(미끄럼틀)는 trick을 **빈 문자열**로 보낸다. "0"을 보내면
+	# 서버가 ''로 정규화해 되돌려 주고, 그 불일치 때문에 탑승 처리가 한 번 더
+	# 돌아 사다리로 순간이동하며 경로가 재시작됐다(리뷰 지적).
+	var a: Dictionary = _activity_by_id.get(kind, {})
+	var seats := int(a.get("seats", 0))
+	_apply_activity(kind, str(seat) if seats > 0 else "", true)
 	_show_toast("%s!" % _activity_label(kind))
 
 ## 서버가 확정한 자리(trick)를 반영해 그 자리에 앉히고, 미끄럼틀이면 경로를 태운다.
@@ -1108,26 +1113,36 @@ func _apply_ride_state() -> void:
 	_player.position = _park.seat_position(_activity, _ride_seat)
 	_player.cancel_move_to()
 
-## 놀이기구를 타는 동안 보이는 위치를 옮긴다(논리 위치는 좌석/경로에 있다).
-func _update_rider_visuals() -> void:
+## 놀이기구를 타고 있는 사람 목록. 매 프레임 전원을 순회하며 문자열을 쪼개는
+## 대신, 활동이 바뀔 때만 다시 만든다(아무도 안 타면 목록이 비어 프레임 비용 0).
+var _riders: Array[Dictionary] = []
+
+func _refresh_riders() -> void:
+	_riders.clear()
 	if _park == null:
 		return
-	_apply_rider_offset(_player, _activity, _ride_seat, _ride_amp)
+	if _park_ride_kinds.has(_activity):
+		_riders.append({"node": _player, "kind": _activity, "seat": _ride_seat, "amp": _ride_amp})
 	for token: String in _remotes.keys():
 		var remote: RemotePlayer = _remotes[token]
 		if remote == null or not is_instance_valid(remote):
 			continue
 		var kind := remote.activity()
+		if not _park_ride_kinds.has(kind):
+			continue
 		var seat := 0
 		var amp := 0
-		var tr := remote.trick()
-		if not tr.is_empty():
-			var parts := tr.split(":")
-			if parts.size() > 0 and parts[0].is_valid_int():
-				seat = int(parts[0])
-			if parts.size() > 1 and parts[1].is_valid_int():
-				amp = int(parts[1])
-		_apply_rider_offset(remote, kind, seat, amp)
+		var parts := remote.trick().split(":")
+		if parts.size() > 0 and parts[0].is_valid_int():
+			seat = int(parts[0])
+		if parts.size() > 1 and parts[1].is_valid_int():
+			amp = int(parts[1])
+		_riders.append({"node": remote, "kind": kind, "seat": seat, "amp": amp})
+
+## 놀이기구를 타는 동안 보이는 위치를 옮긴다(논리 위치는 좌석/경로에 있다).
+func _update_rider_visuals() -> void:
+	for r: Dictionary in _riders:
+		_apply_rider_offset(r["node"], String(r["kind"]), int(r["seat"]), int(r["amp"]))
 
 func _apply_rider_offset(node: Node3D, kind: String, seat: int, amp: int) -> void:
 	if node == null or not is_instance_valid(node):
@@ -1207,6 +1222,7 @@ func _apply_activity(id: String, trick: String, broadcast: bool) -> void:
 	elif _player != null:
 		# 내리면 스프라이트를 제자리로 돌린다.
 		_apply_rider_offset(_player, "", 0, 0)
+	_refresh_riders()
 	# 오프라인(서버 미연결)에서도 축구 골대/공이 보이게 한다 — 서버가 없으면
 	# ball 메시지가 오지 않으므로 여기서 켜 준다.
 	if _playground != null and (_net == null or not _net.connected):
@@ -1229,6 +1245,10 @@ func _on_activity_received(token: String, id: String, trick: String) -> void:
 	var remote: RemotePlayer = _remotes.get(token)
 	if remote != null and is_instance_valid(remote):
 		remote.set_activity(id, trick)
+		# 남이 내렸으면 올라가 있던 스프라이트를 제자리로 돌린다.
+		if not _park_ride_kinds.has(id):
+			_apply_rider_offset(remote, "", 0, 0)
+		_refresh_riders()
 
 func _on_ball_received(ball: Dictionary) -> void:
 	if _playground == null:

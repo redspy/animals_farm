@@ -787,3 +787,30 @@ test('놀이기구 상태는 스냅샷에 들어간다', () => {
   assert.ok(snap.park != null, '새로 들어온 사람도 기울기·각도를 맞춰야 한다');
   assert.equal(typeof snap.park.seesaw, 'number');
 });
+
+test('거부된 탑승 요청은 좌석 고정을 남기지 않는다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  intoPark(w, TOKEN_A);
+  const t0 = Date.now();
+  // 첫 요청은 통과, 두 번째는 스로틀로 거부된다.
+  w.activity(TOKEN_A, 'kickboard', '', t0);
+  assert.equal(w.activity(TOKEN_A, 'swing', '0', t0 + 50).throttled, true);
+  assert.equal(p.rideAnchor, null,
+    '거부된 요청이 앵커를 남기면, 타지도 않았는데 그 지점을 벗어날 수 없다');
+
+  // 존 밖에서 거부되는 경우도 마찬가지다.
+  p.x = 0;
+  p.z = 0;
+  assert.equal(w.activity(TOKEN_A, 'swing', '0', t0 + 400).error.code, 'not_in_zone');
+  assert.equal(p.rideAnchor, null);
+});
+
+test('미끄럼틀은 trick이 빈 문자열로 정규화된다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  intoPark(w, TOKEN_A);
+  // 좌석이 없는 기구라 자리 번호가 의미 없다 — 클라이언트가 "0"을 보내도
+  // ''로 되돌려 주면 클라이언트가 그 불일치를 탑승 재시작으로 오해한다.
+  assert.equal(w.activity(TOKEN_A, 'slide', '').activity.trick, '');
+});

@@ -149,7 +149,9 @@ export class WorldState {
     const pk = actCfg.park || {};
     this.parkCfg = {
       seesawGravity: num(pk.seesaw_gravity, 2.6, 0.1, 20, 'park.seesaw_gravity'),
-      seesawPush: num(pk.seesaw_push, 2.2, 0.1, 20, 'park.seesaw_push'),
+      // 폴백도 **고친 값**이어야 한다 — 2.2는 최대 각도를 훨씬 넘겨 판이 끝까지
+      // 꺾이던 값이라, 데이터가 범위를 벗어나면 예전 동작으로 되돌아갔다.
+      seesawPush: num(pk.seesaw_push, 0.6, 0.1, 20, 'park.seesaw_push'),
       seesawDamping: num(pk.seesaw_damping, 0.55, 0.01, 0.999, 'park.seesaw_damping'),
       seesawMaxAngle: num(pk.seesaw_max_angle, 0.42, 0.05, 1.4, 'park.seesaw_max_angle'),
       seesawPushInterval: num(pk.seesaw_push_min_interval_ms, 400, 0, 5000, 'park.seesaw_push_min_interval_ms'),
@@ -577,12 +579,6 @@ export class WorldState {
         return { error: { code: 'seat_taken', message: '빈 자리가 없습니다' } };
       }
       wanted = rest ? `${seat}:${rest}` : String(seat);
-      // **탄 자리에 위치를 고정한다.** 좌석 배정으로 겹침만 막고 좌표는
-      // 클라이언트 주장을 그대로 받으면, 놀이기구에 앉은 채로 섬을 돌아다닐 수
-      // 있다("놀이기구가 위치를 정한다"는 불변식이 서버에 없었다 — 리뷰 지적).
-      p.rideAnchor = { x: p.x, z: p.z };
-    } else {
-      p.rideAnchor = null;
     }
     // **아무것도 바뀌지 않으면 조용히 끝낸다.** 도배를 막는 실질적인 지점이
     // 여기다(같은 값을 최대 속도로 보내도 브로드캐스트가 나가지 않는다).
@@ -604,7 +600,14 @@ export class WorldState {
     p.lastActivityAt = now;
     p.activity = id;
     p.trick = id ? wanted : '';
-    if (!id) p.rideAnchor = null;
+    // **탄 자리에 위치를 고정한다.** 좌석 배정으로 겹침만 막고 좌표는 클라이언트
+    // 주장을 그대로 받으면, 놀이기구에 앉은 채로 섬을 돌아다닐 수 있다.
+    //
+    // 이 대입은 **검증을 모두 통과한 뒤**에 해야 한다. 예전에는 좌석 배정
+    // 단계에서 먼저 박아서, 스로틀·존 검사로 거부된 요청도 앵커를 남겼다 —
+    // 타고 있지도 않은데 그 지점 0.6유닛 밖으로 영구히 못 나갔다(리뷰 지적).
+    const seated = act && act.seats > 0;
+    p.rideAnchor = seated ? { x: p.x, z: p.z } : null;
     // 축구하는 사람이 생기면 공을 내보내고, 아무도 없으면 치운다.
     const changed = this.refreshBall();
     this._markDirty();

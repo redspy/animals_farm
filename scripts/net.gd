@@ -140,6 +140,15 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			welcomed.emit(msg.get("you", {}), msg.get("world", {}), bool(msg.get("resync", false)))
 		"snapshot":
 			snapshot_received.emit(msg.get("players", []), msg.get("items", []), msg.get("gatherables", []))
+			# 놀이기구 각도도 스냅샷에 실려 온다 — 버리면 뺑뺑이가 0이 아닌
+			# 각도에서 멈춘 뒤 접속한 사람만 각도 0으로 그려 탑승자 위치가
+			# 남들 화면과 어긋난다(리뷰 지적).
+			var park_snap: Variant = msg.get("park", null)
+			if typeof(park_snap) == TYPE_DICTIONARY:
+				park_state.emit(park_snap)
+			var ball_snap: Variant = msg.get("ball", null)
+			if typeof(ball_snap) == TYPE_DICTIONARY:
+				ball_received.emit(ball_snap)
 		"join":
 			player_joined.emit(msg.get("player", {}))
 		"leave":
