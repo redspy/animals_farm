@@ -152,17 +152,48 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 // 사파리는 무시한다(사용자 보고 2026-09-05: "사파리에서 텍스트 입력할 때
 // 키보드가 안나와").
 //
-// 그래서 게임이 "여기를 누르면 글자를 입력한다"는 영역을 캔버스 비율(0~1)로
-// 알려주고(window.afTextHotspots), 여기서 **터치 핸들러 안에서 직접** 입력창에
-// 포커스를 준다. 비율로 주는 이유는 DPR·스트레치 배율을 셸이 몰라도 되게
-// 하려는 것이다.
+// 그래서 게임이 "여기를 누르면 브라우저 API를 써야 한다"는 영역을 캔버스
+// 비율(0~1)로 알려주고(window.afHotspots), 여기서 **터치 핸들러 안에서 직접**
+// 그 API를 부른다. 비율로 주는 이유는 DPR·스트레치 배율을 셸이 몰라도 되게
+// 하려는 것이다. 전체화면도 같은 제약을 받으므로 같은 통로를 쓴다.
 (function () {
-	window.afTextHotspots = {};
+	// 게임이 알려주는 "여기를 누르면 브라우저 API를 써야 한다"는 영역들.
+	// 값은 [x, y, w, h, 동작] 이고 동작은 요소 id(포커스) 또는 'fullscreen'이다.
+	window.afHotspots = {};
+	// 옛 이름(입력창 전용이던 시절) — 아직 참조하는 코드가 있어도 같은 객체를 본다.
+	window.afTextHotspots = window.afHotspots;
+	window.afFullscreen = false;
+	window.afFullscreenRequests = 0;
+	document.addEventListener('fullscreenchange', function () {
+		window.afFullscreen = document.fullscreenElement != null;
+	});
+	document.addEventListener('webkitfullscreenchange', function () {
+		window.afFullscreen = (document.webkitFullscreenElement || document.fullscreenElement) != null;
+	});
 	function focusInput(id) {
 		var el = document.getElementById(id);
 		if (!el) return;
 		if (el.style.display === 'none') el.style.display = 'block';
 		try { el.focus(); } catch (e) { /* 포커스 불가 상태는 무시 */ }
+	}
+	// **전체화면도 사용자 제스처 안에서만 허용된다**(키보드와 같은 제약).
+	// Godot 버튼을 누른 뒤 GDScript에서 요청하면 이미 제스처를 벗어난 다음
+	// 프레임이라 브라우저가 거절한다 — 그래서 여기서 직접 부른다.
+	function toggleFullscreen() {
+		window.afFullscreenRequests += 1;
+		var el = document.documentElement;
+		var active = (document.fullscreenElement || document.webkitFullscreenElement) != null;
+		try {
+			if (active) {
+				(document.exitFullscreen || document.webkitExitFullscreen).call(document);
+			} else {
+				(el.requestFullscreen || el.webkitRequestFullscreen).call(el);
+			}
+		} catch (e) { /* 지원하지 않는 브라우저는 무시 */ }
+	}
+	function act(spec) {
+		if (spec === 'fullscreen') { toggleFullscreen(); return; }
+		focusInput(spec);
 	}
 	function onGesture(ev) {
 		var canvas = document.querySelector('canvas');
@@ -173,11 +204,11 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 		if (typeof pt.clientX !== 'number') return;
 		var fx = (pt.clientX - rect.left) / rect.width;
 		var fy = (pt.clientY - rect.top) / rect.height;
-		for (var key in window.afTextHotspots) {
-			var h = window.afTextHotspots[key];
+		for (var key in window.afHotspots) {
+			var h = window.afHotspots[key];
 			if (!h || h.length < 5) continue;
 			if (fx >= h[0] && fx <= h[0] + h[2] && fy >= h[1] && fy <= h[1] + h[3]) {
-				focusInput(h[4]);
+				act(h[4]);
 				return;
 			}
 		}

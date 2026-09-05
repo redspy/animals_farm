@@ -7,8 +7,10 @@
 //  1) 이름 입력: Godot LineEdit은 웹에서 OS 키보드를 못 띄운다 → 실제 <input>을
 //     필드 위에 겹쳐 둔다. 사용자가 그것을 직접 탭하므로 제스처가 그대로 인정된다.
 //  2) 채팅: 버튼이 캔버스 안에 그려져 있어 탭 → Godot 신호 → focus()는 이미
-//     제스처를 벗어난다 → 셸(web/shell.html)이 버튼 영역(afTextHotspots)을 받아
+//     제스처를 벗어난다 → 셸(web/shell.html)이 버튼 영역(afHotspots)을 받아
 //     터치 핸들러 안에서 직접 포커스를 준다.
+//  3) 전체화면: 브라우저가 요구하는 제약이 같다(제스처 안에서만 허용) —
+//     그래서 같은 통로(afHotspots)로 처리한다.
 //
 // 판정은 **document.activeElement가 그 input인지**다. 헤드리스에서는 실제
 // 키보드가 뜨지 않으므로, 브라우저가 요구하는 조건(제스처 안 포커스)이
@@ -80,7 +82,7 @@ await page.waitForFunction(()=>window.afTest?.points?.actionButton, null, {timeo
 await page.waitForTimeout(1500);
 check(true, 'DOM 입력으로 지은 이름으로 월드에 진입한다');
 // 채팅 버튼 탭 → 핫스팟으로 포커스가 걸려야 한다
-const hs = await page.evaluate(()=>window.afTextHotspots?.chat || null);
+const hs = await page.evaluate(()=>window.afHotspots?.chat || null);
 check(Array.isArray(hs) && hs.length === 5, `게임이 채팅 버튼 영역을 셸에 알린다 (${JSON.stringify(hs)})`);
 const cb = await godotPoint(page,'chatButton');
 await page.touchscreen.tap(cb.x, cb.y);
@@ -93,6 +95,22 @@ check(chatFocused.focused, '채팅 버튼을 탭하면 채팅 <input>에 포커�
 await page.keyboard.type('안녕', {delay:60});
 const chatTyped = await page.evaluate(()=>document.getElementById('af-chat-input').value);
 check(chatTyped.length > 0, `채팅 입력창에 글자가 들어간다 (${chatTyped})`);
+
+// --- 전체화면도 같은 제약(제스처 안에서만 허용)을 받는다 ---
+await page.keyboard.press('Escape');   // 채팅 닫기
+await page.waitForTimeout(400);
+const fsHotspot = await page.evaluate(() => window.afHotspots?.fullscreen ?? null);
+check(Array.isArray(fsHotspot) && fsHotspot[4] === 'fullscreen',
+  `게임이 전체화면 버튼 영역을 셸에 알린다 (${JSON.stringify(fsHotspot)})`);
+const fsBefore = await page.evaluate(() => window.afFullscreenRequests ?? -1);
+await tapGodot(page, 'fullscreenButton', { touch: true });
+await page.waitForTimeout(600);
+const fsAfter = await page.evaluate(() => window.afFullscreenRequests ?? -1);
+// **판정은 "제스처 안에서 요청했는가"다.** 헤드리스 브라우저가 전체화면을
+// 허용하는지는 환경에 따라 다르고(iOS 사파리는 요소별 정책도 있다), 우리가
+// 지킬 수 있는 것은 요청을 제스처 핸들러 안에서 부르는 것까지다.
+check(fsAfter === fsBefore + 1,
+  `버튼을 탭하면 셸이 제스처 안에서 전체화면을 요청한다 (${fsBefore} → ${fsAfter})`);
 await page.screenshot({ path: 'build/screenshots/safari-채팅.png' }).catch(() => {});
 await browser.close();
 stop();

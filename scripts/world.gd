@@ -57,6 +57,8 @@ const NARROW_ROSTER_H := 100.0     # 초상화 62 + 이름 28 + 패널 여백
 ## 화면 크기 조절(+/−) 버튼. 자주 누르는 버튼이 아니라 작게 두지만, 터치
 ## 하한(44)은 지킨다.
 const ZOOM_BTN := Vector2(40.0, 40.0)
+## 전체화면 버튼 폭 — "전체화면"/"창으로" 네 글자가 들어가야 한다.
+const FULLSCREEN_BTN_W := 96.0
 const EXERCISE_BTN := Vector2(88.0, 44.0)
 const TRICK_BTN := Vector2(152.0, 40.0)
 ## HUD 스택(이름·시각·가방·안내문) 아래에서 시작해야 글자와 겹치지 않는다.
@@ -139,6 +141,8 @@ var _activity := ""
 var _trick := ""
 var _current_zone_label := ""
 var _zoom_label: Label = null
+var _fullscreen_button: Button = null
+var _fullscreen_on := false
 var _zoom_buttons: Dictionary = {}   # "zoomIn"/"zoomOut" -> Button
 var _exercise_box: VBoxContainer = null
 var _trick_box: VBoxContainer = null
@@ -537,17 +541,40 @@ func _build_hud() -> void:
 	# 화면에서 비어 있는 자리가 여기뿐이다.
 	# HUD 글자 아래에서 시작한다 — 위에서 시작하면 안내문·날짜 줄과 겹친다
 	# (폰 실측: 기술 버튼이 HUD 두 줄을 덮었다).
-	var line_h := NARROW_LINE_H if narrow else 22.0
-	var boxes_top := HUD_MARGIN + line_h * HUD_STACK_LINES
+	# 데스크톱 24인 이유: 글자 16 + 줄 간격 + 외곽선이라 22로 잡으면 오른쪽
+	# 버튼이 HUD 안내문 줄과 겹쳤다(실측).
+	var line_h := NARROW_LINE_H if narrow else 24.0
+	# **오른쪽 위 버튼들도 HUD 글자 블록 아래에서 시작한다.** 데스크톱 안내문은
+	# 화면 폭을 거의 다 쓰기 때문에, 위쪽에 두면 글자 위에 버튼이 얹힌다.
+	var right_top := HUD_MARGIN + line_h * HUD_STACK_LINES
+	var btn_h := UiScale.dim(ZOOM_BTN.y)
+	var fs_top := right_top
+	var zoom_top := fs_top + btn_h + 6.0
+	var boxes_top := zoom_top + btn_h + 10.0
 
-	# 화면 크기 조절(−/+). 오른쪽 위, 연결 상태 라벨 바로 아래에 둔다 —
-	# 자주 누르지 않는 버튼이라 조작 손가락(아래쪽)에서 먼 자리가 낫고,
-	# 그 줄은 HUD 글자가 왼쪽에만 있어 비어 있다.
+	# 오른쪽 위는 위에서 아래로 **연결 상태 → 전체화면 → 크기(−/+) → 운동 버튼**
+	# 순서로 쌓는다. 자주 누르지 않는 버튼이라 조작 손가락(아래쪽)에서 먼 자리가
+	# 낫고, 그 줄은 HUD 글자가 왼쪽에만 있어 비어 있다.
+	# 전체화면 — 사용자 요청대로 +/− **위**에 둔다.
+	_fullscreen_button = Button.new()
+	_fullscreen_button.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_fullscreen_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_fullscreen_button.offset_right = -HUD_MARGIN
+	_fullscreen_button.offset_top = fs_top
+	_fullscreen_button.offset_bottom = fs_top + btn_h
+	_fullscreen_button.custom_minimum_size = Vector2(UiScale.dim(FULLSCREEN_BTN_W), btn_h)
+	_fullscreen_button.clip_text = true
+	_fullscreen_button.focus_mode = Control.FOCUS_NONE
+	_fullscreen_button.add_theme_font_size_override("font_size", UiScale.font(15))
+	_fullscreen_button.pressed.connect(_on_fullscreen_pressed)
+	layer.add_child(_fullscreen_button)
+	_refresh_fullscreen_button()
+
 	var zoom_box := HBoxContainer.new()
 	zoom_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	zoom_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	zoom_box.offset_right = -HUD_MARGIN
-	zoom_box.offset_top = HUD_MARGIN + line_h * 1.6
+	zoom_box.offset_top = zoom_top
 	zoom_box.add_theme_constant_override("separation", 4)
 	layer.add_child(zoom_box)
 	zoom_box.add_child(_make_zoom_button("−", -1.0))
@@ -563,6 +590,7 @@ func _build_hud() -> void:
 	zoom_box.add_child(_zoom_label)
 	zoom_box.add_child(_make_zoom_button("+", 1.0))
 	_zoom_buttons["zoomLabel"] = _zoom_label
+	_zoom_buttons["fullscreenButton"] = _fullscreen_button
 	_exercise_box = VBoxContainer.new()
 	_exercise_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	_exercise_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -925,6 +953,65 @@ func _make_zoom_button(text: String, steps: float) -> Button:
 	# 여기서 바로 등록할 수 없다 — 이름만 기억해 두고 _publish_test_points에서 붙인다.
 	_zoom_buttons["zoomIn" if steps > 0.0 else "zoomOut"] = b
 	return b
+
+## 전체화면 켜고 끄기.
+##
+## 웹에서는 **셸이 실제 요청을 한다**(web/shell.html의 afHotspots) — 브라우저는
+## 전체화면을 사용자 제스처 핸들러 안에서만 허용하고, Godot 버튼의 pressed는
+## 이미 그 제스처를 벗어난 다음 프레임이라 여기서 부르면 거절당한다(키보드
+## focus와 같은 제약). 여기서는 상태 표시만 갱신한다.
+## 웹이 아니면(에디터·데스크톱) DisplayServer로 직접 바꾼다.
+func _on_fullscreen_pressed() -> void:
+	if OS.has_feature("web"):
+		# 셸이 이미 처리했다 — 반영은 fullscreenchange를 통해 온다.
+		# 눌렀는데 아무 표시가 없으면 고장으로 보이므로 한 프레임 뒤 갱신한다.
+		_refresh_fullscreen_button.call_deferred()
+		return
+	var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+	DisplayServer.window_set_mode(
+		DisplayServer.WINDOW_MODE_WINDOWED if full else DisplayServer.WINDOW_MODE_FULLSCREEN)
+	_refresh_fullscreen_button()
+
+## 지금 전체화면인지 읽어 버튼 글자를 맞춘다.
+func _refresh_fullscreen_button() -> void:
+	if _fullscreen_button == null or not is_instance_valid(_fullscreen_button):
+		return
+	if OS.has_feature("web"):
+		var got: Variant = JavaScriptBridge.eval("!!window.afFullscreen", true)
+		_fullscreen_on = bool(got) if got != null else false
+	else:
+		_fullscreen_on = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+	_fullscreen_button.text = "창으로" if _fullscreen_on else "전체화면"
+	if _hooks != null:
+		_hooks.set_state("fullscreen", 1 if _fullscreen_on else 0)
+
+## 전체화면 버튼 영역을 셸에 알린다 — 실제 요청은 셸이 제스처 안에서 한다.
+func _publish_fullscreen_hotspot() -> void:
+	if not OS.has_feature("web") or _fullscreen_button == null:
+		return
+	if not is_instance_valid(_fullscreen_button):
+		return
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var size := vp.get_visible_rect().size
+	if size.x <= 0.0 or size.y <= 0.0:
+		return
+	var r := _fullscreen_button.get_global_rect()
+	if r.size.x <= 0.0:
+		return
+	var pad := 4.0
+	JavaScriptBridge.eval("""
+		(function(){
+			if (!window.afHotspots) window.afHotspots = {};
+			window.afHotspots.fullscreen = [%f, %f, %f, %f, 'fullscreen'];
+		})();
+	""" % [
+		maxf((r.position.x - pad) / size.x, 0.0),
+		maxf((r.position.y - pad) / size.y, 0.0),
+		(r.size.x + pad * 2.0) / size.x,
+		(r.size.y + pad * 2.0) / size.y,
+	], true)
 
 ## +/− 를 누르면 화면 전체(글자·버튼·HUD)가 같이 커지고 작아진다.
 ## content_scale_factor 하나로 처리하므로 레이아웃을 다시 만들 필요가 없다.
@@ -2266,6 +2353,9 @@ func _persist() -> void:
 
 ## 폰을 돌리면(세로↔가로) 뷰포트 비율이 바뀌므로 카메라 size를 다시 계산한다.
 func _on_viewport_resized() -> void:
+	# 전체화면 전환은 크기 변경으로 나타난다 — 버튼 글자를 바로 맞춘다.
+	_refresh_fullscreen_button()
+	_publish_fullscreen_hotspot()
 	if _camera != null:
 		_camera.size = _camera_size_for_screen()
 
@@ -2323,6 +2413,11 @@ func _process(delta: float) -> void:
 		if _hooks != null and _player != null:
 			_hooks.set_state("x", snappedf(_player.position.x, 0.01))
 			_hooks.set_state("z", snappedf(_player.position.z, 0.01))
+		# 전체화면 버튼 영역은 회전·크기 변경으로 움직이므로 계속 알려 준다
+		# (0.25초면 사람이 버튼을 찾아 누르는 사이에 늘 최신이다).
+		_publish_fullscreen_hotspot()
+		# Esc나 브라우저 UI로 전체화면을 빠져나가는 경우도 반영해야 한다.
+		_refresh_fullscreen_button()
 
 	_autosave_timer += delta
 	if _autosave_timer >= AUTOSAVE_INTERVAL_SEC:

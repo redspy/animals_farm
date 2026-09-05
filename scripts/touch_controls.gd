@@ -77,7 +77,7 @@ func _ready() -> void:
 	_hooks = TestHooks.new()
 	add_child(_hooks)
 	# 채팅 버튼 위치를 셸에 알려 iOS에서 키보드가 뜨게 한다(web/shell.html의
-	# afTextHotspots 주석 참고). 웹이 아니면 할 일이 없다.
+	# afHotspots 주석 참고). 웹이 아니면 할 일이 없다.
 	set_process(OS.has_feature("web"))
 	# 조이스틱은 컨트롤이 아니라 영역이므로 대표 지점을 알려준다.
 	var vp := get_viewport().get_visible_rect().size
@@ -116,8 +116,8 @@ func _publish_chat_hotspot() -> void:
 	var pad := 6.0
 	JavaScriptBridge.eval("""
 		(function(){
-			if (!window.afTextHotspots) window.afTextHotspots = {};
-			window.afTextHotspots.chat = [%f, %f, %f, %f, 'af-chat-input'];
+			if (!window.afHotspots) window.afHotspots = {};
+			window.afHotspots.chat = [%f, %f, %f, %f, 'af-chat-input'];
 		})();
 	""" % [
 		maxf((r.position.x - pad) / size.x, 0.0),
