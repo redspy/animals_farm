@@ -143,7 +143,7 @@ var _current_zone_label := ""
 var _zoom_label: Label = null
 var _fullscreen_button: Button = null
 var _fullscreen_on := false
-var _zoom_buttons: Dictionary = {}   # "zoomIn"/"zoomOut" -> Button
+var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화면)
 var _exercise_box: VBoxContainer = null
 var _trick_box: VBoxContainer = null
 var _score: Dictionary = {}
@@ -544,13 +544,18 @@ func _build_hud() -> void:
 	# 데스크톱 24인 이유: 글자 16 + 줄 간격 + 외곽선이라 22로 잡으면 오른쪽
 	# 버튼이 HUD 안내문 줄과 겹쳤다(실측).
 	var line_h := NARROW_LINE_H if narrow else 24.0
-	# **오른쪽 위 버튼들도 HUD 글자 블록 아래에서 시작한다.** 데스크톱 안내문은
-	# 화면 폭을 거의 다 쓰기 때문에, 위쪽에 두면 글자 위에 버튼이 얹힌다.
-	var right_top := HUD_MARGIN + line_h * HUD_STACK_LINES
+	# 오른쪽 위 버튼들은 **연결 상태 라벨 아래 한 줄**에서 시작한다.
+	#
+	# 한때 HUD 글자 블록(4.8줄) 아래로 내렸는데, 그러면 세로 예산을 105px 먹어
+	# 화면 크기를 키우거나 창이 짧을 때 운동 버튼이 화면 밖으로 잘렸다
+	# (리뷰 지적: 논리 높이 450이면 마지막 버튼이 23px 잘림). 대신 데스크톱
+	# 안내문을 짧게 줄여 오른쪽을 비운다(_action_hint 아래 주석).
+	var right_top := HUD_MARGIN + line_h * 1.6
 	var btn_h := UiScale.dim(ZOOM_BTN.y)
 	var fs_top := right_top
 	var zoom_top := fs_top + btn_h + 6.0
-	var boxes_top := zoom_top + btn_h + 10.0
+	# 운동 버튼 열은 HUD 글자 블록과 오른쪽 버튼 두 줄 **둘 다** 아래여야 한다.
+	var boxes_top := maxf(zoom_top + btn_h + 10.0, HUD_MARGIN + line_h * HUD_STACK_LINES)
 
 	# 오른쪽 위는 위에서 아래로 **연결 상태 → 전체화면 → 크기(−/+) → 운동 버튼**
 	# 순서로 쌓는다. 자주 누르지 않는 버튼이라 조작 손가락(아래쪽)에서 먼 자리가
@@ -589,8 +594,8 @@ func _build_hud() -> void:
 	_zoom_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	zoom_box.add_child(_zoom_label)
 	zoom_box.add_child(_make_zoom_button("+", 1.0))
-	_zoom_buttons["zoomLabel"] = _zoom_label
-	_zoom_buttons["fullscreenButton"] = _fullscreen_button
+	_tracked_buttons["zoomLabel"] = _zoom_label
+	_tracked_buttons["fullscreenButton"] = _fullscreen_button
 	_exercise_box = VBoxContainer.new()
 	_exercise_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	_exercise_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
@@ -736,6 +741,10 @@ func _price_of(item_id: String) -> int:
 
 ## 폰 안내문. 좁은 화면에서는 글자를 키우기 때문에 긴 문장이 화면 폭을
 ## 넘어간다 — 꼭 필요한 것만 남긴다(나머지는 눌러 보면 알 수 있는 버튼들이다).
+## 데스크톱 안내문을 짧게 유지하는 이유: 오른쪽 위에 버튼 열(전체화면·크기·운동)
+## 이 있어서, 안내문이 화면 폭을 다 쓰면 그 글자 위에 버튼이 얹힌다. [Q] 버리기는
+## 가방 화면과 터치 버튼에도 있어 여기서 뺐다.
+##
 ## Space가 지금 무엇을 하는지 — 상황에 따라 달라진다.
 func _action_hint() -> String:
 	match _activity:
@@ -767,7 +776,7 @@ func _refresh_hud() -> void:
 	# 없고, 오히려 터치 UI를 못 찾게 만든다.
 	var hint := _touch_hint() \
 		if _touch != null \
-		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기·놀이기구 탑승)  [방향키] 이동  [Space] %s  [I] 가방  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % [
+		else "[클릭] 이동·대상 자동 처리  [방향키] 이동  [Space] %s  [I] 가방  [T] 채팅  [1~%d] 이모티콘" % [
 			_action_hint(), maxi(_emotes.size(), 1)]
 	# 좁은 화면에서는 이름·시각을 한 줄에 두면 오른쪽 상단의 연결 상태와 겹친다
 	# (2026-09-05 폰 실측: "Minsu | 2026-09-05 07:37 (새벽)"이 "서버 연결됨"을
@@ -951,7 +960,7 @@ func _make_zoom_button(text: String, steps: float) -> Button:
 	b.pressed.connect(_on_zoom_pressed.bind(steps))
 	# E2E가 누를 수 있게 위치를 공개한다. _hooks는 _build_hud 뒤에 만들어지므로
 	# 여기서 바로 등록할 수 없다 — 이름만 기억해 두고 _publish_test_points에서 붙인다.
-	_zoom_buttons["zoomIn" if steps > 0.0 else "zoomOut"] = b
+	_tracked_buttons["zoomIn" if steps > 0.0 else "zoomOut"] = b
 	return b
 
 ## 전체화면 켜고 끄기.
@@ -963,9 +972,9 @@ func _make_zoom_button(text: String, steps: float) -> Button:
 ## 웹이 아니면(에디터·데스크톱) DisplayServer로 직접 바꾼다.
 func _on_fullscreen_pressed() -> void:
 	if OS.has_feature("web"):
-		# 셸이 이미 처리했다 — 반영은 fullscreenchange를 통해 온다.
-		# 눌렀는데 아무 표시가 없으면 고장으로 보이므로 한 프레임 뒤 갱신한다.
-		_refresh_fullscreen_button.call_deferred()
+		# 셸이 이미 처리했다(afHotspots). 반영은 fullscreenchange → 0.25초 주기
+		# 갱신, 그리고 크기 변경(_on_viewport_resized)으로 온다 — 여기서 바로
+		# 읽으면 아직 옛 값이다.
 		return
 	var full := DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
 	DisplayServer.window_set_mode(
@@ -973,45 +982,76 @@ func _on_fullscreen_pressed() -> void:
 	_refresh_fullscreen_button()
 
 ## 지금 전체화면인지 읽어 버튼 글자를 맞춘다.
+##
+## 값이 바뀔 때만 손댄다 — 0.25초마다 JS를 부르고 글자를 다시 넣을 이유가 없다.
 func _refresh_fullscreen_button() -> void:
 	if _fullscreen_button == null or not is_instance_valid(_fullscreen_button):
 		return
+	var on := _fullscreen_on
 	if OS.has_feature("web"):
-		var got: Variant = JavaScriptBridge.eval("!!window.afFullscreen", true)
-		_fullscreen_on = bool(got) if got != null else false
+		# **두 값을 비트로 합쳐 받는다.** JavaScriptBridge.eval은 숫자·문자열·
+		# 불리언만 변환하고 배열/객체는 null을 준다 — 배열로 받으려다 분기가
+		# 아예 실행되지 않아 미지원 브라우저에서도 버튼이 남아 있었다(실측).
+		var got: Variant = JavaScriptBridge.eval(
+			"(window.afFullscreen ? 1 : 0) + (window.afFullscreenSupported === false ? 0 : 2)", true)
+		var bits := int(got) if got != null else 2
+		on = (bits & 1) != 0
+		# **지원하지 않는 브라우저에서는 버튼을 숨긴다**(아이폰 사파리에는
+		# Fullscreen API가 없어 눌러도 아무 일이 없다 — 리뷰 지적).
+		var supported := (bits & 2) != 0
+		if _fullscreen_button.visible != supported:
+			_fullscreen_button.visible = supported
+			_publish_fullscreen_hotspot()
 	else:
-		_fullscreen_on = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+		on = DisplayServer.window_get_mode() == DisplayServer.WINDOW_MODE_FULLSCREEN
+	if on == _fullscreen_on and not _fullscreen_button.text.is_empty():
+		return
+	_fullscreen_on = on
 	_fullscreen_button.text = "창으로" if _fullscreen_on else "전체화면"
 	if _hooks != null:
 		_hooks.set_state("fullscreen", 1 if _fullscreen_on else 0)
 
+## 마지막으로 셸에 알린 핫스팟(바뀔 때만 다시 알린다).
+var _fs_hotspot := ""
+
 ## 전체화면 버튼 영역을 셸에 알린다 — 실제 요청은 셸이 제스처 안에서 한다.
+##
+## **모달이 떠 있으면 지운다.** 가방 화면·시트는 화면 전체를 덮는 버튼으로
+## 뒤를 막는데, 핫스팟이 살아 있으면 그 위를 탭할 때 셸이 먼저 전체화면을
+## 토글한다 — "가방 닫으려다 전체화면이 켜지는" 일이 생긴다(리뷰 지적).
+## 채팅 핫스팟은 포커스라 멱등하지만 전체화면은 토글이라 문제가 된다.
 func _publish_fullscreen_hotspot() -> void:
-	if not OS.has_feature("web") or _fullscreen_button == null:
+	if not OS.has_feature("web"):
 		return
-	if not is_instance_valid(_fullscreen_button):
+	var blocked := _fullscreen_button == null \
+		or not is_instance_valid(_fullscreen_button) \
+		or not _fullscreen_button.is_visible_in_tree() \
+		or (_inventory_ui != null and is_instance_valid(_inventory_ui)) \
+		or (_touch != null and _touch.is_sheet_open())
+	var spec := ""
+	if not blocked:
+		var vp := get_viewport()
+		if vp != null:
+			var size := vp.get_visible_rect().size
+			var r := _fullscreen_button.get_global_rect()
+			if size.x > 0.0 and size.y > 0.0 and r.size.x > 0.0:
+				var pad := 4.0
+				spec = "[%f, %f, %f, %f, 'fullscreen']" % [
+					maxf((r.position.x - pad) / size.x, 0.0),
+					maxf((r.position.y - pad) / size.y, 0.0),
+					(r.size.x + pad * 2.0) / size.x,
+					(r.size.y + pad * 2.0) / size.y,
+				]
+	# 값이 그대로면 아무것도 하지 않는다 — 0.25초마다 문자열을 만들고 eval을
+	# 도는 것은 낭비다(같은 파일이 HUD 문자열에도 같은 스로틀을 건다).
+	if spec == _fs_hotspot:
 		return
-	var vp := get_viewport()
-	if vp == null:
+	_fs_hotspot = spec
+	if spec.is_empty():
+		JavaScriptBridge.eval("if (window.afHotspots) delete window.afHotspots.fullscreen;", true)
 		return
-	var size := vp.get_visible_rect().size
-	if size.x <= 0.0 or size.y <= 0.0:
-		return
-	var r := _fullscreen_button.get_global_rect()
-	if r.size.x <= 0.0:
-		return
-	var pad := 4.0
-	JavaScriptBridge.eval("""
-		(function(){
-			if (!window.afHotspots) window.afHotspots = {};
-			window.afHotspots.fullscreen = [%f, %f, %f, %f, 'fullscreen'];
-		})();
-	""" % [
-		maxf((r.position.x - pad) / size.x, 0.0),
-		maxf((r.position.y - pad) / size.y, 0.0),
-		(r.size.x + pad * 2.0) / size.x,
-		(r.size.y + pad * 2.0) / size.y,
-	], true)
+	JavaScriptBridge.eval(
+		"window.afHotspots.fullscreen = %s;" % spec, true)
 
 ## +/− 를 누르면 화면 전체(글자·버튼·HUD)가 같이 커지고 작아진다.
 ## content_scale_factor 하나로 처리하므로 레이아웃을 다시 만들 필요가 없다.
@@ -2201,8 +2241,8 @@ func _publish_test_points() -> void:
 	if _hooks == null or _camera == null:
 		return
 	# 화면 크기 조절 버튼(_build_hud에서 만들어졌고 훅은 그 뒤에 생긴다).
-	for key: String in _zoom_buttons.keys():
-		var c: Control = _zoom_buttons[key]
+	for key: String in _tracked_buttons.keys():
+		var c: Control = _tracked_buttons[key]
 		if c != null and is_instance_valid(c):
 			_hooks.track(key, c)
 	_hooks.set_state("uiZoom", UiScale.zoom())

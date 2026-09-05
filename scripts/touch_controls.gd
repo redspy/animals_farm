@@ -116,8 +116,11 @@ func _publish_chat_hotspot() -> void:
 	var pad := 6.0
 	JavaScriptBridge.eval("""
 		(function(){
-			if (!window.afHotspots) window.afHotspots = {};
-			window.afHotspots.chat = [%f, %f, %f, %f, 'af-chat-input'];
+			// afHotspots는 셸(web/shell.html)이 만든다 — 여기서 만들면 로드
+			// 순서가 뒤집힐 때 두 참조가 갈라진다.
+			if (window.afHotspots) {
+				window.afHotspots.chat = [%f, %f, %f, %f, 'af-chat-input'];
+			}
 		})();
 	""" % [
 		maxf((r.position.x - pad) / size.x, 0.0),

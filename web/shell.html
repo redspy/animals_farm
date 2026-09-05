@@ -164,6 +164,17 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 	window.afTextHotspots = window.afHotspots;
 	window.afFullscreen = false;
 	window.afFullscreenRequests = 0;
+	window.afFullscreenLastError = '';
+	// **아이폰 사파리에는 Fullscreen API가 없다**(비디오 전용
+	// webkitEnterFullscreen만 있다). 게임은 이 값을 보고 버튼을 숨긴다 —
+	// 안 그러면 눌러도 아무 일 없는 "고장난 버튼"이 폰에 남는다.
+	// iframe에 allowfullscreen이 없는 경우도 이 플래그로 같이 걸러진다.
+	window.afFullscreenSupported = !!(
+		document.fullscreenEnabled || document.webkitFullscreenEnabled
+	) && !!(
+		document.documentElement.requestFullscreen
+		|| document.documentElement.webkitRequestFullscreen
+	);
 	document.addEventListener('fullscreenchange', function () {
 		window.afFullscreen = document.fullscreenElement != null;
 	});
@@ -179,8 +190,16 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 	// **전체화면도 사용자 제스처 안에서만 허용된다**(키보드와 같은 제약).
 	// Godot 버튼을 누른 뒤 GDScript에서 요청하면 이미 제스처를 벗어난 다음
 	// 프레임이라 브라우저가 거절한다 — 그래서 여기서 직접 부른다.
+	var lastFullscreenAt = 0;
 	function toggleFullscreen() {
-		window.afFullscreenRequests += 1;
+		// touchend 뒤 합성 click이 오는 브라우저에서 두 번 토글되는 것을 막는다.
+		var now = Date.now();
+		if (now - lastFullscreenAt < 300) return;
+		lastFullscreenAt = now;
+		if (!window.afFullscreenSupported) {
+			window.afFullscreenLastError = 'unsupported';
+			return;
+		}
 		var el = document.documentElement;
 		var active = (document.fullscreenElement || document.webkitFullscreenElement) != null;
 		try {
@@ -189,7 +208,13 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 			} else {
 				(el.requestFullscreen || el.webkitRequestFullscreen).call(el);
 			}
-		} catch (e) { /* 지원하지 않는 브라우저는 무시 */ }
+			// **호출이 실제로 성공한 뒤에** 센다 — try 밖에서 세면 API가 없어
+			// 예외가 나도 카운터가 올라가서, 테스트가 "요청했다"를 못 구분한다.
+			window.afFullscreenRequests += 1;
+			window.afFullscreenLastError = '';
+		} catch (e) {
+			window.afFullscreenLastError = String(e && e.message ? e.message : e);
+		}
 	}
 	function act(spec) {
 		if (spec === 'fullscreen') { toggleFullscreen(); return; }

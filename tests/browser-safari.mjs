@@ -99,18 +99,31 @@ check(chatTyped.length > 0, `채팅 입력창에 글자가 들어간다 (${chatT
 // --- 전체화면도 같은 제약(제스처 안에서만 허용)을 받는다 ---
 await page.keyboard.press('Escape');   // 채팅 닫기
 await page.waitForTimeout(400);
+// **지원 여부에 따라 판정이 갈린다.** 아이폰 사파리에는 Fullscreen API가 없어
+// (비디오 전용 webkitEnterFullscreen만 있다) 눌러도 아무 일이 없다 — 그런
+// 브라우저에서는 버튼을 숨기는 것이 올바른 동작이고, 헤드리스 WebKit도 같은
+// 상태를 보고한다. 그래서 두 경로를 각각 확인한다.
+const fsSupported = await page.evaluate(() => window.afFullscreenSupported === true);
 const fsHotspot = await page.evaluate(() => window.afHotspots?.fullscreen ?? null);
-check(Array.isArray(fsHotspot) && fsHotspot[4] === 'fullscreen',
-  `게임이 전체화면 버튼 영역을 셸에 알린다 (${JSON.stringify(fsHotspot)})`);
-const fsBefore = await page.evaluate(() => window.afFullscreenRequests ?? -1);
-await tapGodot(page, 'fullscreenButton', { touch: true });
-await page.waitForTimeout(600);
-const fsAfter = await page.evaluate(() => window.afFullscreenRequests ?? -1);
-// **판정은 "제스처 안에서 요청했는가"다.** 헤드리스 브라우저가 전체화면을
-// 허용하는지는 환경에 따라 다르고(iOS 사파리는 요소별 정책도 있다), 우리가
-// 지킬 수 있는 것은 요청을 제스처 핸들러 안에서 부르는 것까지다.
-check(fsAfter === fsBefore + 1,
-  `버튼을 탭하면 셸이 제스처 안에서 전체화면을 요청한다 (${fsBefore} → ${fsAfter})`);
+if (!fsSupported) {
+  check(fsHotspot == null,
+    '전체화면을 지원하지 않는 브라우저에서는 버튼(핫스팟)을 내린다 — 눌러도 아무 일 없는 버튼을 남기지 않는다');
+  const hidden = await page.evaluate(() => !window.afTest?.points?.fullscreenButton
+    || window.afTest.points.fullscreenButton[0] < 0);
+  check(hidden || fsHotspot == null, '버튼이 화면에서 사라진다');
+} else {
+  check(Array.isArray(fsHotspot) && fsHotspot[4] === 'fullscreen',
+    `게임이 전체화면 버튼 영역을 셸에 알린다 (${JSON.stringify(fsHotspot)})`);
+  const fsBefore = await page.evaluate(() => window.afFullscreenRequests ?? -1);
+  await tapGodot(page, 'fullscreenButton', { touch: true });
+  await page.waitForTimeout(600);
+  const fsAfter = await page.evaluate(() => window.afFullscreenRequests ?? -1);
+  const fsErr = await page.evaluate(() => window.afFullscreenLastError ?? '');
+  // 판정은 "제스처 안에서 **실제로 호출까지 성공했는가**"다. 브라우저가 그 뒤
+  // 거절하는지는 환경 정책이라 우리가 지킬 수 있는 범위가 아니다.
+  check(fsAfter === fsBefore + 1,
+    `버튼을 탭하면 셸이 제스처 안에서 전체화면을 요청한다 (${fsBefore} → ${fsAfter}${fsErr ? ', 오류: ' + fsErr : ''})`);
+}
 await page.screenshot({ path: 'build/screenshots/safari-채팅.png' }).catch(() => {});
 await browser.close();
 stop();
