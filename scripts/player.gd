@@ -14,6 +14,9 @@ signal move_cancelled
 ## 걷기 애니메이션 자체는 PlayerSprite가 담당하고, 여기서는 이동 방향만 넘긴다.
 
 const SPEED := 4.2
+## 운동 중 이동 속도. data/activities.json이 단일 출처이고 world.gd가 넣어 준다
+## (서버도 같은 파일로 상한을 정한다 — 여기만 빠르면 서버가 계속 되돌린다).
+var speed := SPEED
 ## 캐릭터 반경 — 섬 경계에서 이만큼 안쪽까지만 이동한다.
 const RADIUS := 0.35
 ## 목표에 이만큼 가까워지면 도착으로 본다(월드 단위). 너무 작으면 부동소수
@@ -149,7 +152,7 @@ func _physics_process(delta: float) -> void:
 	if dir != Vector2.ZERO:
 		# 조이스틱은 기울기(0~1)를 주므로 살살 밀면 천천히 걷는다. 키보드는
 		# 항상 1이라 기존 속도와 같다.
-		var step := dir.normalized() * SPEED * delta * clampf(dir.length(), 0.0, 1.0)
+		var step := dir.normalized() * speed * delta * clampf(dir.length(), 0.0, 1.0)
 		position.x = clampf(position.x + step.x, -_half_x, _half_x)
 		position.z = clampf(position.z + step.y, -_half_z, _half_z)
 		# 바위를 통과하지 못하게 표면 밖으로 되돌린다. 이동을 막는 대신 밀어내면

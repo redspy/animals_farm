@@ -57,6 +57,8 @@ var move_vector := Vector2.ZERO   # world/player가 매 프레임 읽는다
 ## 싫거나 탭 이동만으로 충분한 사람이 있다(사용자 요청).
 var joystick_enabled := true
 var _joystick_button: Button
+## 채팅 버튼. iOS 키보드용 핫스팟을 게시하려면 위치를 알아야 한다.
+var _chat_button: Button = null
 
 var _stick_touch_index := -1
 var _stick_origin := Vector2.ZERO
@@ -74,6 +76,9 @@ func setup(emotes: Array, joystick_on: bool = true) -> void:
 func _ready() -> void:
 	_hooks = TestHooks.new()
 	add_child(_hooks)
+	# 채팅 버튼 위치를 셸에 알려 iOS에서 키보드가 뜨게 한다(web/shell.html의
+	# afTextHotspots 주석 참고). 웹이 아니면 할 일이 없다.
+	set_process(OS.has_feature("web"))
 	# 조이스틱은 컨트롤이 아니라 영역이므로 대표 지점을 알려준다.
 	var vp := get_viewport().get_visible_rect().size
 	_hooks.track_point("stickCenter", Vector2(vp.x * 0.25, vp.y * 0.80))
@@ -81,6 +86,45 @@ func _ready() -> void:
 	_build_stick_visual()
 	_build_emote_sheet()
 	_build_sell_sheet()
+
+## 채팅 버튼 영역을 캔버스 비율로 셸에 게시한다.
+##
+## 왜 주기적으로 하는가: 화면 회전·키보드 등장으로 버튼 위치가 바뀌고, 한 번만
+## 게시하면 그때부터 엉뚱한 자리를 누를 때 키보드가 뜬다. 0.5초 간격이면
+## 사람이 버튼을 찾아 누르는 사이에 항상 최신값이 된다.
+const HOTSPOT_INTERVAL := 0.5
+var _hotspot_timer := 0.0
+
+func _process(delta: float) -> void:
+	_hotspot_timer += delta
+	if _hotspot_timer < HOTSPOT_INTERVAL:
+		return
+	_hotspot_timer = 0.0
+	_publish_chat_hotspot()
+
+func _publish_chat_hotspot() -> void:
+	if _chat_button == null or not is_instance_valid(_chat_button):
+		return
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var size := vp.get_visible_rect().size
+	if size.x <= 0.0 or size.y <= 0.0:
+		return
+	var r := _chat_button.get_global_rect()
+	# 손가락이 버튼 경계에 살짝 걸쳐도 키보드가 뜨도록 조금 넓게 잡는다.
+	var pad := 6.0
+	JavaScriptBridge.eval("""
+		(function(){
+			if (!window.afTextHotspots) window.afTextHotspots = {};
+			window.afTextHotspots.chat = [%f, %f, %f, %f, 'af-chat-input'];
+		})();
+	""" % [
+		maxf((r.position.x - pad) / size.x, 0.0),
+		maxf((r.position.y - pad) / size.y, 0.0),
+		(r.size.x + pad * 2.0) / size.x,
+		(r.size.y + pad * 2.0) / size.y,
+	], true)
 
 # ---------------------------------------------------------------------------
 # 버튼
@@ -90,7 +134,8 @@ func _build_buttons() -> void:
 	# 우하단부터 위로 쌓는다 — 엄지에 가까운 자리가 주 액션.
 	_add_button("채집", BTN_MAIN, Vector2(-(MARGIN + BTN_MAIN), -(MARGIN + BTN_MAIN)),
 		func() -> void: action_pressed.emit())
-	_add_button("채팅", BTN_MED, Vector2(-(MARGIN + BTN_MED), -(MARGIN + BTN_MAIN + 12.0 + BTN_MED)),
+	_chat_button = _add_button("채팅", BTN_MED,
+		Vector2(-(MARGIN + BTN_MED), -(MARGIN + BTN_MAIN + 12.0 + BTN_MED)),
 		func() -> void: chat_pressed.emit())
 	_add_button("감정", BTN_MED, Vector2(-(MARGIN + BTN_MAIN + 12.0 + BTN_MED), -(MARGIN + BTN_MED)),
 		func() -> void: _toggle_emote_sheet(true))

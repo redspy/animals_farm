@@ -1,0 +1,33 @@
+{
+  "_comment": "운동 종류. 클라이언트는 버튼·스프라이트에, 서버는 이동 속도 상한과 유효성 검사에 같은 파일을 읽는다 — 두 곳에 숫자를 나눠 두면 '클라이언트에서는 되는데 서버가 되돌리는' 상태가 된다.",
+  "schema_version": 1,
+  "activities": [
+    {
+      "id": "jumprope",
+      "label": "줄넘기",
+      "speed": 1.4,
+      "zone_only": true,
+      "note": "제자리 운동이라 느리다. 기술은 아래 tricks.",
+      "tricks": [
+        { "id": "together", "label": "모아 뛰기" },
+        { "id": "double", "label": "이중 뛰기" },
+        { "id": "toad", "label": "토드" },
+        { "id": "cross", "label": "엇걸어 풀어 뛰기" }
+      ]
+    },
+    { "id": "soccer", "label": "축구", "speed": 4.4, "zone_only": true, "note": "공을 차서 골대에 넣거나 패스한다." },
+    { "id": "bike", "label": "자전거", "speed": 7.6, "zone_only": true, "note": "트랙 바깥(초록) 레인." },
+    { "id": "inline", "label": "인라인", "speed": 6.6, "zone_only": true, "note": "트랙 안쪽(빨강) 레인." },
+    { "id": "kickboard", "label": "킥보드", "speed": 6.0, "zone_only": false, "note": "바퀴 두 개. 운동장 밖에서도 탈 수 있다(사용자 지정)." }
+  ],
+  "soccer": {
+    "_comment": "공 물리는 서버가 소유한다. 값은 실측으로 조정한 것 — 마찰이 크면 패스가 안 가고, 작으면 공이 계속 굴러 골대 뒤로 빠진다.",
+    "kick_range": 1.5,
+    "kick_speed": 11.0,
+    "dribble_range": 0.55,
+    "dribble_speed": 4.5,
+    "friction_per_sec": 0.28,
+    "bounce": 0.55,
+    "kick_min_interval_ms": 260
+  }
+}

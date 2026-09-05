@@ -131,12 +131,18 @@ async function newClient(label) {
 // 파이프라인(입력→서버→상대 화면)이 도는지를 ASCII로 검증한다.
 async function pickSlotAndName(client, name) {
   const { page } = client;
-  await page.locator('canvas').click({ position: { x: 420, y: 182 } });   // 1번 슬롯
-  await page.waitForTimeout(900);
-  await page.locator('canvas').click({ position: { x: 480, y: 182 } });   // 첫 프리셋
-  await page.waitForTimeout(900);
-  await page.locator('canvas').click({ position: { x: 480, y: 218 } });   // 이름 입력창
-  await page.waitForTimeout(200);
+  // 좌표를 박지 않고 **테스트 훅이 알려주는 실제 UI 위치**를 쓴다.
+  // 박아 두면 레이아웃을 조금 바꿀 때마다 깨진다(UiScale 도입 때 실제로 깨졌다).
+  // 또 locator('canvas').click()은 쓰지 않는다: 이름 입력창이 캔버스 위에 겹친
+  // 실제 <input>이라(사파리 키보드 대응) Playwright가 "다른 요소가 가린다"로
+  // 클릭을 거부한다. tapGodot은 좌표로 직접 누른다.
+  await page.waitForFunction(() => window.afTest?.points?.slot1, null, { timeout: 30000 });
+  await tapGodot(page, 'slot1');
+  await page.waitForTimeout(700);
+  await tapGodot(page, 'preset1');
+  await page.waitForTimeout(700);
+  await tapGodot(page, 'nameField');
+  await page.waitForTimeout(250);
   await page.keyboard.type(name, { delay: 60 });
   await page.waitForTimeout(200);
   await page.keyboard.press('Enter');
@@ -228,6 +234,29 @@ async function walkTowardA(maxMs = 12000) {
   }
   if (held) await b.page.keyboard.up(held);
 }
+// A를 스폰 링에서 먼저 떨어뜨린다.
+//
+// 왜: 관찰자(WS 클라이언트)까지 세 명이 반지름 1.3 링에 몰려 있으면 서로 밀어내
+// A-B가 붙을 수 있는 최소 거리가 커진다(실측 1.38 — 판정 기준 1.2를 넘었다).
+// 둘만 남으면 겹침 한계(0.8) 근처까지 붙는다.
+await focusGame(a.page);
+await a.page.keyboard.down('ArrowRight');
+await a.page.waitForTimeout(1500);
+await a.page.keyboard.up('ArrowRight');
+await a.page.waitForTimeout(500);
+
+// 접근·밀어붙이는 동안 **가장 가까웠던 거리**를 직접 샘플링한다.
+//
+// 왜 필요한가: 아래의 "좌표 트레일 짝짓기"는 A와 B의 move 브로드캐스트 **개수가
+// 비슷할 때만** 시간이 맞는다. A가 가만히 있으면 A의 표본이 몇 개뿐이라
+// B의 초반(멀리 있던) 좌표와만 짝지어져, 실제로는 붙었는데 최소 거리가 2.9로
+// 나온다(2026-09-05 실측). 최신 좌표를 주기적으로 보는 쪽이 정확하다.
+let liveMin = Infinity;
+const distSampler = setInterval(() => {
+  const pa = lastPos(tokenA);
+  const pb = lastPos(tokenB);
+  if (pa && pb) liveMin = Math.min(liveMin, Math.hypot(pa.x - pb.x, pa.z - pb.z));
+}, 80);
 await walkTowardA();
 // 닿은 뒤에도 계속 밀어붙여 본다 — 밀림이 없으면 여기서 겹친다.
 const pushKey = ((lastPos(tokenA)?.x ?? 0) > (lastPos(tokenB)?.x ?? 0)) ? 'ArrowRight' : 'ArrowLeft';
@@ -235,6 +264,7 @@ await b.page.keyboard.down(pushKey);
 await b.page.waitForTimeout(2500);
 await b.page.keyboard.up(pushKey);
 await b.page.waitForTimeout(600);
+clearInterval(distSampler);
 await b.page.screenshot({ path: `${OUT}/mp-09-겹침시도.png` });
 
 // 두 캐릭터의 좌표를 시간순으로 짝지어 최소 거리를 구한다.
@@ -257,8 +287,8 @@ const finalDist = Math.hypot(
   (lastPos(tokenA)?.x ?? 0) - (lastPos(tokenB)?.x ?? 0),
   (lastPos(tokenA)?.z ?? 0) - (lastPos(tokenB)?.z ?? 0),
 );
-minDist = Math.min(minDist, finalDist);
-console.log(`  (짝지은 표본 ${steps}개, 최종 거리 ${finalDist.toFixed(2)}, 최소 거리 ${minDist.toFixed(2)} / 기준 ${SEPARATION})`);
+minDist = Math.min(minDist, finalDist, liveMin);
+console.log(`  (짝지은 표본 ${steps}개, 최종 거리 ${finalDist.toFixed(2)}, 실시간 최소 ${liveMin.toFixed(2)}, 판정 ${minDist.toFixed(2)} / 기준 ${SEPARATION})`);
 // 실제로 붙어 본 적이 없으면 이 테스트는 아무것도 검증하지 않는다.
 // 판정은 **최소 거리**로 한다 — 밀어붙이면 상대를 지나쳐 다시 멀어지므로
 // 최종 거리로는 "붙었는지"를 알 수 없다(실측: 최소 0.80인데 최종 3.82).
@@ -310,13 +340,35 @@ console.log('\n[검증] 바위를 만나면 짧은 쪽으로 돌아서 간다');
 const rocks = JSON.parse(readFileSync('data/world.json', 'utf-8')).obstacles ?? [];
 check(rocks.length > 0, 'data/world.json에 바위가 정의돼 있다');
 
-// 바위가 화면에 함께 보이도록 먼저 오른쪽으로 이동한다(카메라가 플레이어를
-// 따라가므로 너무 멀면 목표 지점이 화면 밖으로 나가 클릭할 수 없다).
+// 바위가 화면에 함께 보이도록 먼저 **가장 가까운 바위 근처까지** 걸어간다.
+//
+// 예전에는 "오른쪽으로 두 번" 이동했는데, 운동장이 들어오고 섬이 1.5배가 되면서
+// 바위가 스폰에서 12유닛 이상 떨어졌다 — 카메라가 세로로 ±5.5유닛만 보여
+// 목표 지점이 화면 밖에 있었고, 클릭이 아무 일도 하지 않아 "이동 표본 0개"로
+// 실패했다(2026-09-05). 좌표는 데이터에서 읽어 맵이 또 바뀌어도 따라간다.
 await focusGame(a.page);
-for (let i = 0; i < 2; i++) {
-  const g = await godotPoint(a.page, 'groundRight');
-  await a.page.mouse.click(g.x, g.y);
-  await a.page.waitForTimeout(1600);
+const circleRocks = rocks.filter((r) => (r.shape ?? 'circle') === 'circle');
+{
+  const here = lastPos(tokenA) ?? { x: 0, z: 0 };
+  // **가로로** 붙는다. `beyondNearestRock`은 바위 중심을 지나 반대편으로 3유닛
+  // 더 간 지점이라 플레이어에서 약 7유닛인데, 카메라는 세로로 ±4.75유닛만
+  // 보여 준다 — 위/아래에서 접근하면 그 지점이 화면 밖이라 클릭이 무의미하다.
+  // 또 **다른 바위가 근처에 없는** 바위를 고른다: 훅이 고르는 "가장 가까운
+  // 바위"가 우리가 고른 것과 달라지면 판정이 어긋난다.
+  const isolated = circleRocks.filter((r) =>
+    circleRocks.every((o) => o === r || Math.hypot(o.x - r.x, o.z - r.z) > 8.0));
+  const pool = isolated.length > 0 ? isolated : circleRocks;
+  const target = pool
+    .slice()
+    .sort((r1, r2) => Math.hypot(r1.x - here.x, r1.z - here.z) - Math.hypot(r2.x - here.x, r2.z - here.z))[0];
+  if (target) {
+    const side = here.x <= target.x ? -1 : 1;   // A가 있는 쪽 옆에 선다
+    const stand = { x: target.x + side * 4.2, z: target.z };
+    console.log(`  (바위 ${target.id} (${target.x},${target.z}) 옆 (${stand.x},${stand.z})으로 접근)`);
+    await walkToPoint(a.page, tokenA, stand, 1.8, 50000);
+    const at = lastPos(tokenA);
+    console.log(`  (도착 x=${at?.x} z=${at?.z}, 바위와 거리 ${Math.hypot((at?.x ?? 0) - target.x, (at?.z ?? 0) - target.z).toFixed(1)})`);
+  }
 }
 const beforeRock = lastPos(tokenA);
 console.log(`  (플레이어 x=${(beforeRock?.x ?? 0).toFixed(1)} z=${(beforeRock?.z ?? 0).toFixed(1)} / 바위 ${rocks.length}개)`);

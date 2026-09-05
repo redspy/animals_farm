@@ -52,6 +52,17 @@ const HUD_MARGIN := 18.0
 const NARROW_LINE_H := 28.0        # 글자 21px 한 줄이 차지하는 높이
 const NARROW_STACK_GAP := 6.0
 const NARROW_ROSTER_H := 100.0     # 초상화 62 + 이름 28 + 패널 여백
+## 운동 버튼 크기(px). 좁은 화면에서는 글자가 커지므로 버튼도 함께 키운다
+## (안 키우면 "엇걸어 풀어 뛰기"가 "엇걸어 풀어 뛰"로 잘린다 — 폰 실측).
+## 화면 크기 조절(+/−) 버튼. 자주 누르는 버튼이 아니라 작게 두지만, 터치
+## 하한(44)은 지킨다.
+const ZOOM_BTN := Vector2(40.0, 40.0)
+const EXERCISE_BTN := Vector2(88.0, 44.0)
+const TRICK_BTN := Vector2(152.0, 40.0)
+## HUD 스택(이름·시각·가방·안내문) 아래에서 시작해야 글자와 겹치지 않는다.
+## 4.8인 이유: 본문 3줄 + 안내문 1줄인데 안내문이 한 단계 작아 4.0으로는
+## 안내문 위에 버튼이 얹혔다(폰 실측).
+const HUD_STACK_LINES := 4.8
 ## 월드에 놓인 물건을 주울 수 있는 거리(월드 단위).
 const PICKUP_DISTANCE := 1.6
 ## 드랍 아이템 메시 크기.
@@ -110,6 +121,21 @@ var _net_label: Label
 var _my_extras: AvatarExtras
 ## 탭 이동의 "도착하면 무엇을 할지". kind: ""(그냥 이동) | "gather" | "pickup"
 var _tap_intent := {"kind": "", "id": ""}
+
+# --- 운동장/운동 ---
+var _playground: Playground = null
+## data/activities.json — 버튼 목록·속도·기술의 단일 출처(서버도 같은 파일을 읽는다).
+var _activities: Array = []
+var _activity_by_id: Dictionary = {}
+var _soccer_cfg: Dictionary = {}
+## 내가 하고 있는 운동과 줄넘기 기술("" = 안 함).
+var _activity := ""
+var _trick := ""
+var _zoom_label: Label = null
+var _zoom_buttons: Dictionary = {}   # "zoomIn"/"zoomOut" -> Button
+var _exercise_box: VBoxContainer = null
+var _trick_box: VBoxContainer = null
+var _score: Dictionary = {}
 ## 자동 채집할 대상. "근처에서 아무거나"가 아니라 **탭한 그 대상**만 캔다.
 var _tap_gatherable: Gatherable = null
 var _marker: Node3D
@@ -166,6 +192,12 @@ func _ready() -> void:
 		if typeof(p) == TYPE_DICTIONARY:
 			_presets[String((p as Dictionary).get("id", ""))] = p
 	_emotes = DataFiles.load_dict("res://data/emotes.json").get("emotes", [])
+	var act_cfg := DataFiles.load_dict("res://data/activities.json")
+	_activities = act_cfg.get("activities", [])
+	for a: Variant in _activities:
+		if typeof(a) == TYPE_DICTIONARY:
+			_activity_by_id[String((a as Dictionary).get("id", ""))] = a
+	_soccer_cfg = act_cfg.get("soccer", {})
 	_build_world()
 	_apply_daily_respawn()
 	_refresh_hud()
@@ -215,6 +247,9 @@ func _build_world() -> void:
 	_hooks = TestHooks.new()
 	add_child(_hooks)
 	_publish_test_points()
+	# 존에 들어가기 전에도 한 번은 만들어야 한다 — _check_zone은 "존이 바뀔 때"만
+	# 호출하므로, 처음에는 킥보드 버튼조차 나오지 않는다.
+	_refresh_exercise_ui()
 
 func _build_environment() -> void:
 	# 바다: 맵보다 넓은 평면을 살짝 아래에 깔아 섬이 물 위에 뜬 것처럼 보이게 한다.
@@ -244,6 +279,13 @@ func _build_environment() -> void:
 	sand.material_override = _flat_material(Palette.color("world", "sand"))
 	add_child(sand)
 
+	# 운동장(달걀 트랙 + 축구장). 바위보다 먼저 깔아야 바위가 위에 보인다.
+	var pg_cfg: Dictionary = _world_cfg.get("playground", {})
+	if not pg_cfg.is_empty():
+		_playground = Playground.new()
+		_playground.setup(pg_cfg)
+		add_child(_playground)
+
 	# 바위 조형물 — 통과 불가 장애물.
 	for o: Variant in _obstacles:
 		if typeof(o) != TYPE_DICTIONARY:
@@ -257,6 +299,9 @@ func _build_environment() -> void:
 		if typeof(z) != TYPE_DICTIONARY:
 			continue
 		var zone := z as Dictionary
+		if not String(zone.get("shape", "")).is_empty():
+			# 운동장처럼 제 지형(트랙·축구장)을 가진 존은 노란 원판을 깔지 않는다.
+			continue
 		var disc := MeshInstance3D.new()
 		var disc_mesh := CylinderMesh.new()
 		disc_mesh.top_radius = float(zone.get("radius", 3.0))
@@ -472,6 +517,62 @@ func _build_hud() -> void:
 	_roster_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	roster_panel.add_child(_roster_box)
 
+	# 운동 버튼 — 운동장에 들어가면 나타난다(사용자 요청). 오른쪽 위 여백에
+	# 세로로 쌓는다: 왼쪽 아래는 조이스틱, 오른쪽 아래는 액션 버튼 무리라
+	# 화면에서 비어 있는 자리가 여기뿐이다.
+	# HUD 글자 아래에서 시작한다 — 위에서 시작하면 안내문·날짜 줄과 겹친다
+	# (폰 실측: 기술 버튼이 HUD 두 줄을 덮었다).
+	var line_h := NARROW_LINE_H if narrow else 22.0
+	var boxes_top := HUD_MARGIN + line_h * HUD_STACK_LINES
+
+	# 화면 크기 조절(−/+). 오른쪽 위, 연결 상태 라벨 바로 아래에 둔다 —
+	# 자주 누르지 않는 버튼이라 조작 손가락(아래쪽)에서 먼 자리가 낫고,
+	# 그 줄은 HUD 글자가 왼쪽에만 있어 비어 있다.
+	var zoom_box := HBoxContainer.new()
+	zoom_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	zoom_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	zoom_box.offset_right = -HUD_MARGIN
+	zoom_box.offset_top = HUD_MARGIN + line_h * 1.6
+	zoom_box.add_theme_constant_override("separation", 4)
+	layer.add_child(zoom_box)
+	zoom_box.add_child(_make_zoom_button("−", -1.0))
+	_zoom_label = Label.new()
+	_zoom_label.text = UiScale.zoom_label()
+	_zoom_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_zoom_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_zoom_label.custom_minimum_size = Vector2(UiScale.dim(52.0), UiScale.dim(ZOOM_BTN.y))
+	_zoom_label.add_theme_color_override("font_color", text_color)
+	_zoom_label.add_theme_color_override("font_outline_color", outline_color)
+	_zoom_label.add_theme_constant_override("outline_size", 4)
+	_zoom_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	zoom_box.add_child(_zoom_label)
+	zoom_box.add_child(_make_zoom_button("+", 1.0))
+	_zoom_buttons["zoomLabel"] = _zoom_label
+	_exercise_box = VBoxContainer.new()
+	_exercise_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	_exercise_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+	_exercise_box.offset_right = -HUD_MARGIN
+	_exercise_box.offset_top = boxes_top
+	_exercise_box.add_theme_constant_override("separation", 6)
+	layer.add_child(_exercise_box)
+
+	# 줄넘기 기술 버튼 — 줄넘기 중에만 나타난다.
+	# 아래로 이어 붙이지 않는 이유: 데스크톱 세로 해상도(540)에서 화면을 넘는다.
+	# 폰에서는 **반대쪽(왼쪽)** 에 둔다 — 운동 버튼 옆에 붙이면 두 열이 화면
+	# 가운데의 캐릭터를 덮는다(폰 실측).
+	_trick_box = VBoxContainer.new()
+	if narrow:
+		_trick_box.set_anchors_preset(Control.PRESET_TOP_LEFT)
+		_trick_box.grow_horizontal = Control.GROW_DIRECTION_END
+		_trick_box.offset_left = HUD_MARGIN
+	else:
+		_trick_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+		_trick_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+		_trick_box.offset_right = -(HUD_MARGIN + UiScale.dim(EXERCISE_BTN.x) + 8.0)
+	_trick_box.offset_top = boxes_top
+	_trick_box.add_theme_constant_override("separation", 6)
+	layer.add_child(_trick_box)
+
 	# 채팅 입력은 웹이면 DOM <input>, 아니면 LineEdit — ChatInput이 갈라 준다.
 	_chat = ChatInput.new()
 	_chat.submitted.connect(_on_chat_submitted)
@@ -594,8 +695,10 @@ func _price_of(item_id: String) -> int:
 ## 넘어간다 — 꼭 필요한 것만 남긴다(나머지는 눌러 보면 알 수 있는 버튼들이다).
 func _touch_hint() -> String:
 	if _is_narrow_screen():
-		return "가고 싶은 곳을 탭 · 대상을 탭하면 자동 처리"
-	return "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 가방"
+		if _activity == "soccer":
+			return "공을 탭하면 다가가서 찬다 · 액션 버튼도 차기"
+		return "가고 싶은 곳을 탭 · 대상을 탭하면 자동 처리 · 오른쪽 운동 버튼"
+	return "가고 싶은 곳을 탭 · 나무/물건/사람을 탭하면 다가가서 자동 처리 · 왼쪽 아래를 끌면 직접 이동 · 가방 줄 탭하면 가방 · 오른쪽 운동 버튼"
 
 func _refresh_hud() -> void:
 	var inv: Dictionary = _slot.get("inventory", {})
@@ -608,7 +711,8 @@ func _refresh_hud() -> void:
 	# 없고, 오히려 터치 UI를 못 찾게 만든다.
 	var hint := _touch_hint() \
 		if _touch != null \
-		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기)  [방향키] 이동  [Space] 채집/줍기  [I] 가방  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % maxi(_emotes.size(), 1)
+		else "[클릭] 그 지점으로 이동(대상 탭 시 자동 채집/줍기)  [방향키] 이동  [Space] %s  [I] 가방  [T] 채팅  [1~%d] 이모티콘  [Q] 버리기" % [
+			"공 차기" if _activity == "soccer" else "채집/줍기", maxi(_emotes.size(), 1)]
 	# 좁은 화면에서는 이름·시각을 한 줄에 두면 오른쪽 상단의 연결 상태와 겹친다
 	# (2026-09-05 폰 실측: "Minsu | 2026-09-05 07:37 (새벽)"이 "서버 연결됨"을
 	# 파고들었다). 이름/벨을 첫 줄에, 시각을 그 아래 줄로 내린다.
@@ -780,6 +884,236 @@ func _unhandled_input(event: InputEvent) -> void:
 		_:
 			_try_emote_key((event as InputEventKey).keycode)
 
+## 화면 크기 조절 버튼 하나.
+func _make_zoom_button(text: String, steps: float) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(UiScale.dim(ZOOM_BTN.x), UiScale.dim(ZOOM_BTN.y))
+	b.focus_mode = Control.FOCUS_NONE
+	b.clip_text = true
+	b.add_theme_font_size_override("font_size", UiScale.font(20))
+	b.pressed.connect(_on_zoom_pressed.bind(steps))
+	# E2E가 누를 수 있게 위치를 공개한다. _hooks는 _build_hud 뒤에 만들어지므로
+	# 여기서 바로 등록할 수 없다 — 이름만 기억해 두고 _publish_test_points에서 붙인다.
+	_zoom_buttons["zoomIn" if steps > 0.0 else "zoomOut"] = b
+	return b
+
+## +/− 를 누르면 화면 전체(글자·버튼·HUD)가 같이 커지고 작아진다.
+## content_scale_factor 하나로 처리하므로 레이아웃을 다시 만들 필요가 없다.
+func _on_zoom_pressed(steps: float) -> void:
+	var before := UiScale.zoom()
+	var after := UiScale.nudge_zoom(steps)
+	if is_equal_approx(before, after):
+		_show_toast("더 %s 수 없습니다" % ("키울" if steps > 0.0 else "줄일"))
+		return
+	if _zoom_label != null:
+		_zoom_label.text = UiScale.zoom_label()
+	# 다음 접속에도 유지한다(기기별 취향이라 슬롯이 아니라 세이브 전역).
+	var settings: Dictionary = _save.get("settings", {})
+	settings["ui_zoom"] = after
+	_save["settings"] = settings
+	SaveManager.save(_save)
+	_show_toast("화면 크기 %s" % UiScale.zoom_label())
+	if _hooks != null:
+		_hooks.set_state("uiZoom", after)
+
+# ---------------------------------------------------------------------------
+# 운동(줄넘기·축구·자전거·인라인·킥보드)
+# ---------------------------------------------------------------------------
+
+func _activity_label(id: String) -> String:
+	var a: Dictionary = _activity_by_id.get(id, {})
+	return String(a.get("label", id))
+
+func _zone_only(id: String) -> bool:
+	if id.is_empty():
+		return false
+	var a: Dictionary = _activity_by_id.get(id, {})
+	return bool(a.get("zone_only", true))
+
+func _activity_speed(id: String) -> float:
+	var a: Dictionary = _activity_by_id.get(id, {})
+	return float(a.get("speed", Player.SPEED))
+
+## 지금 화면에 보여야 하는 운동 목록. 운동장 안에서는 전부, 밖에서는
+## zone_only가 아닌 것만(= 킥보드) 보인다.
+func _available_activities() -> Array:
+	var out: Array = []
+	var inside := _current_zone == "playground"
+	for a: Variant in _activities:
+		if typeof(a) != TYPE_DICTIONARY:
+			continue
+		var act := a as Dictionary
+		if inside or not bool(act.get("zone_only", true)):
+			out.append(act)
+	return out
+
+## 버튼을 다시 만든다. 목록이 바뀌는 경우가 (운동장 진입/이탈, 운동 시작/종료)
+## 셋뿐이라 매번 새로 만들어도 부담이 없고, 상태와 화면이 어긋나지 않는다.
+func _refresh_exercise_ui() -> void:
+	if _exercise_box == null:
+		return
+	for c in _exercise_box.get_children():
+		_exercise_box.remove_child(c)
+		c.queue_free()
+	for c in _trick_box.get_children():
+		_trick_box.remove_child(c)
+		c.queue_free()
+	if _hooks != null:
+		for i in 8:
+			_hooks.untrack("exercise%d" % (i + 1))
+			_hooks.untrack("trick%d" % (i + 1))
+
+	var index := 0
+	for a: Variant in _available_activities():
+		var act := a as Dictionary
+		var id := String(act.get("id", ""))
+		index += 1
+		var b := Button.new()
+		# 하고 있는 운동은 "그만두기"로 보인다 — 같은 버튼을 다시 누르면
+		# 원래대로 돌아온다는 걸 글자로 알려 준다(사용자 요청).
+		b.text = "▣ " + String(act.get("label", id)) if id == _activity \
+			else String(act.get("label", id))
+		b.custom_minimum_size = Vector2(UiScale.dim(EXERCISE_BTN.x), UiScale.dim(EXERCISE_BTN.y))
+		b.clip_text = true
+		b.focus_mode = Control.FOCUS_NONE
+		b.add_theme_font_size_override("font_size", UiScale.font(15))
+		b.pressed.connect(_on_exercise_pressed.bind(id))
+		_exercise_box.add_child(b)
+		if _hooks != null:
+			_hooks.track("exercise%d" % index, b)
+
+	# 줄넘기 기술
+	if _activity == "jumprope":
+		var tricks: Array = (_activity_by_id.get("jumprope", {}) as Dictionary).get("tricks", [])
+		var ti := 0
+		for k: Variant in tricks:
+			if typeof(k) != TYPE_DICTIONARY:
+				continue
+			var trick := k as Dictionary
+			var tid := String(trick.get("id", ""))
+			ti += 1
+			var tb := Button.new()
+			tb.text = "▣ " + String(trick.get("label", tid)) if tid == _trick \
+				else String(trick.get("label", tid))
+			tb.custom_minimum_size = Vector2(UiScale.dim(TRICK_BTN.x), UiScale.dim(TRICK_BTN.y))
+			tb.clip_text = true
+			tb.focus_mode = Control.FOCUS_NONE
+			tb.add_theme_font_size_override("font_size", UiScale.font(14))
+			tb.pressed.connect(_on_trick_pressed.bind(tid))
+			_trick_box.add_child(tb)
+			if _hooks != null:
+				_hooks.track("trick%d" % ti, tb)
+
+func _on_exercise_pressed(id: String) -> void:
+	# 같은 버튼을 다시 누르면 그만둔다(사용자 요청: "버튼을 다시 누르면
+	# 원래대로 돌아와").
+	if id == _activity:
+		_stop_activity("")
+		return
+	_start_activity(id, "")
+
+func _on_trick_pressed(tid: String) -> void:
+	if _activity != "jumprope":
+		return
+	# 같은 기술을 다시 누르면 기본 뛰기로 돌아온다.
+	_apply_activity(_activity, "" if tid == _trick else tid, true)
+
+func _start_activity(id: String, trick: String) -> void:
+	if _zone_only(id) and _current_zone != "playground":
+		_show_toast("운동장에서만 할 수 있습니다")
+		return
+	_apply_activity(id, trick, true)
+	_show_toast("%s 시작!" % _activity_label(id))
+
+func _stop_activity(message: String) -> void:
+	if _activity.is_empty():
+		return
+	_apply_activity("", "", true)
+	if not message.is_empty():
+		_show_toast(message)
+
+## 운동 상태를 내 화면에 적용하고(반응성) 서버에도 알린다.
+## broadcast=false면 서버가 보내온 값을 반영하는 경우다(다시 보내지 않는다).
+func _apply_activity(id: String, trick: String, broadcast: bool) -> void:
+	_activity = id
+	_trick = trick
+	if _player != null:
+		_player.speed = _activity_speed(id) if not id.is_empty() else Player.SPEED
+		if _player.sprite != null:
+			_player.sprite.set_activity(id, trick)
+	# 오프라인(서버 미연결)에서도 축구 골대/공이 보이게 한다 — 서버가 없으면
+	# ball 메시지가 오지 않으므로 여기서 켜 준다.
+	if _playground != null and (_net == null or not _net.connected):
+		_playground.set_soccer_visible(id == "soccer")
+	if broadcast and _net != null and _net.connected:
+		_net.send_activity(id, trick)
+	_refresh_exercise_ui()
+	_refresh_hud()
+	if _hooks != null:
+		_hooks.set_state("activity", id)
+		_hooks.set_state("trick", trick)
+
+## 남(또는 나)의 운동 상태가 서버에서 도착했을 때.
+func _on_activity_received(token: String, id: String, trick: String) -> void:
+	if _net != null and token == _net.token:
+		# 내 것이면 서버가 확정한 값으로 맞춘다(거부됐으면 여기서 되돌아온다).
+		if id != _activity or trick != _trick:
+			_apply_activity(id, trick, false)
+		return
+	var remote: RemotePlayer = _remotes.get(token)
+	if remote != null and is_instance_valid(remote):
+		remote.set_activity(id, trick)
+
+func _on_ball_received(ball: Dictionary) -> void:
+	if _playground == null:
+		return
+	if ball.is_empty():
+		_playground.set_soccer_visible(false)
+		return
+	_playground.set_soccer_visible(true)
+	_playground.set_ball(float(ball.get("x", 0.0)), float(ball.get("z", 0.0)))
+	if ball.has("score"):
+		_score = ball.get("score", {})
+
+func _on_goal_scored(side: String, score: Dictionary) -> void:
+	_score = score
+	_show_toast("골! (%s 골대)" % ("왼쪽" if side == "left" else "오른쪽"))
+
+## 공을 찬다. 방향은 바라보는 방향 — 다른 플레이어를 향해 서서 차면 패스가 된다.
+func _kick_ball() -> void:
+	if _activity != "soccer":
+		return
+	var dir := _facing_vector()
+	if _net != null and _net.connected:
+		# **내 좌표를 먼저 확정 전송한다.** 이동은 10Hz로 묶여 나가므로, 공까지
+		# 걸어가 도착한 직후에 차면 서버는 아직 100ms 전 좌표를 갖고 있어
+		# 사거리 검사에서 "공이 너무 멉니다"로 거절됐다(2026-09-05 실측:
+		# 클라이언트 거리 1.24, 서버 판정 거리 1.5 초과).
+		if _player.sprite != null:
+			_net.flush_move(_player.position, _player.sprite.facing())
+		_net.send_kick(dir)
+		return
+	_show_toast("서버에 연결돼 있지 않아 공을 찰 수 없습니다")
+
+func _facing_vector() -> Vector2:
+	var facing := "down"
+	if _player != null and _player.sprite != null:
+		facing = _player.sprite.facing()
+	match facing:
+		"up": return Vector2(0, -1)
+		"left": return Vector2(-1, 0)
+		"right": return Vector2(1, 0)
+		_: return Vector2(0, 1)
+
+## 공이 발 근처에 있는지 — 차기 사거리는 서버가 최종 판정하지만, 탭했을 때
+## "공까지 걸어가서 찬다"를 정하려면 클라이언트도 거리를 알아야 한다.
+func _ball_in_kick_range() -> bool:
+	if _playground == null or not _playground.soccer_visible() or _player == null:
+		return false
+	var range_v := float(_soccer_cfg.get("kick_range", 1.5))
+	return _player.position.distance_to(_playground.ball_position()) <= range_v
+
 ## 숫자키 1~N을 data/emotes.json 순서에 매핑한다(개수는 데이터가 정한다).
 func _try_emote_key(keycode: int) -> void:
 	var index := keycode - KEY_1
@@ -803,6 +1137,11 @@ func _send_emote(emote_id: String) -> void:
 
 ## Space: 주변에 놓인 물건이 있으면 줍고, 없으면 채집한다.
 func _try_interact() -> void:
+	# 축구 중이고 공이 발 근처면 **차기**가 액션이다 — 축구를 하는 중에 액션
+	# 버튼이 채집이면 공을 찰 방법이 없다(폰에는 키보드가 없다).
+	if _activity == "soccer" and _ball_in_kick_range():
+		_kick_ball()
+		return
 	var nearest_drop := _nearest_drop()
 	if not nearest_drop.is_empty():
 		if _net != null and _net.connected:
@@ -900,6 +1239,9 @@ func _start_net() -> void:
 	_net.inventory_received.connect(_on_inventory)
 	_net.sold.connect(_on_sold)
 	_net.rename_received.connect(_on_rename)
+	_net.activity_received.connect(_on_activity_received)
+	_net.ball_received.connect(_on_ball_received)
+	_net.goal_scored.connect(_on_goal_scored)
 	_net.server_error.connect(_on_server_error)
 	_net.system_message.connect(_on_system_message)
 	_net.start(String(_slot.get("token", "")), String(_slot.get("name", "")), String(_slot.get("preset", "")))
@@ -1275,6 +1617,16 @@ func _on_world_tapped(screen_pos: Vector2) -> void:
 		_show_marker(g.global_position)
 		return
 
+	# 공을 탭하면 공까지 가서 찬다(폰에서 공을 다루는 가장 자연스러운 조작).
+	if _activity == "soccer" and _playground != null and _playground.soccer_visible():
+		var ball_pos := _playground.ball_position()
+		if Vector2(point.x - ball_pos.x, point.z - ball_pos.z).length() <= TAP_PICK_RADIUS:
+			_tap_intent = {"kind": "kick", "id": ""}
+			_tap_gatherable = null
+			_player.move_to(_approach_point(ball_pos))
+			_show_marker(ball_pos)
+			return
+
 	var drop_id := _drop_near(point)
 	if not drop_id.is_empty():
 		_tap_intent = {"kind": "pickup", "id": drop_id}
@@ -1375,6 +1727,12 @@ func _on_player_arrived() -> void:
 				_net.send_pickup(id)
 			elif not _drops.has(id):
 				_show_toast("아쉽게도 물건이 사라졌습니다")
+		"kick":
+			# 도착하는 동안 남이 공을 차 갔을 수 있다 — 거리를 다시 본다.
+			if _ball_in_kick_range():
+				_kick_ball()
+			else:
+				_show_toast("공이 멀어졌습니다")
 
 ## 수동 조작으로 목표를 버렸으면 "도착하면 할 일"도 함께 버린다.
 func _on_move_cancelled() -> void:
@@ -1407,19 +1765,46 @@ func _check_zone() -> void:
 		if typeof(z) != TYPE_DICTIONARY:
 			continue
 		var zone := z as Dictionary
-		var c := Vector2(float(zone.get("x", 0.0)), float(zone.get("z", 0.0)))
-		if p.distance_to(c) <= float(zone.get("radius", 3.0)):
+		if _point_in_zone(p, zone):
 			here = String(zone.get("id", ""))
 			label = String(zone.get("label", here))
 			break
 	if here == _current_zone:
 		return
+	var was := _current_zone
 	_current_zone = here
 	if here.is_empty():
 		_zone_label.text = ""
+	elif here == "playground":
+		_zone_label.text = "[%s] 운동을 골라보세요" % label
+		_show_toast("%s에 들어왔습니다" % label)
 	else:
 		_zone_label.text = "[%s] 모임 장소 — 미니게임 준비 중" % label
 		_show_toast("%s에 들어왔습니다" % label)
+	# 운동장을 벗어나면 운동장에서만 할 수 있는 운동은 자동으로 그만둔다 —
+	# 트랙 밖에서 자전거를 타고 섬을 돌아다니는 것은 의도가 아니다(킥보드는
+	# 사용자 지정대로 어디서나 탈 수 있어 계속 유지된다).
+	if was == "playground" and here != "playground" and _zone_only(_activity):
+		_stop_activity("운동장을 벗어나 %s를 그만뒀습니다" % _activity_label(_activity))
+	_refresh_exercise_ui()
+
+## 존 모양: radius(원) / rect(사각형) / ellipse(타원). 운동장은 트랙이 타원,
+## 축구장이 사각형이라 원만으로는 경계를 맞출 수 없다.
+func _point_in_zone(p: Vector2, zone: Dictionary) -> bool:
+	var c := Vector2(float(zone.get("x", 0.0)), float(zone.get("z", 0.0)))
+	match String(zone.get("shape", "circle")):
+		"rect":
+			var half := Vector2(
+				float(zone.get("size_x", 1.0)) * 0.5, float(zone.get("size_z", 1.0)) * 0.5)
+			return absf(p.x - c.x) <= half.x and absf(p.y - c.y) <= half.y
+		"ellipse":
+			var a := maxf(float(zone.get("a", 1.0)), 0.001)
+			var b := maxf(float(zone.get("b", 1.0)), 0.001)
+			var dx := (p.x - c.x) / a
+			var dz := (p.y - c.y) / b
+			return dx * dx + dz * dz <= 1.0
+		_:
+			return p.distance_to(c) <= float(zone.get("radius", 3.0))
 
 ## E2E 테스트가 "나무를 탭"할 수 있도록 가까운 채집물의 화면 좌표를 공개한다.
 ## 월드 좌표만 알아도 화면 좌표를 계산할 수 없어(카메라가 따라다닌다) 테스트가
@@ -1427,6 +1812,22 @@ func _check_zone() -> void:
 func _publish_test_points() -> void:
 	if _hooks == null or _camera == null:
 		return
+	# 화면 크기 조절 버튼(_build_hud에서 만들어졌고 훅은 그 뒤에 생긴다).
+	for key: String in _zoom_buttons.keys():
+		var c: Control = _zoom_buttons[key]
+		if c != null and is_instance_valid(c):
+			_hooks.track(key, c)
+	_hooks.set_state("uiZoom", UiScale.zoom())
+	# 운동 상태는 처음부터 공개한다 — 운동을 시작해야 값이 생기면 테스트가
+	# "아직 안 함"과 "훅이 없음"을 구분할 수 없다.
+	_hooks.set_state("activity", _activity)
+	_hooks.set_state("trick", _trick)
+	# 공을 탭하는 E2E를 위해 화면 좌표를 공개한다(카메라가 따라다녀 좌표를
+	# 테스트가 계산할 수 없다).
+	_hooks.track_dynamic("soccerBall", func() -> Vector2:
+		if _playground == null or not _playground.soccer_visible():
+			return Vector2(-1, -1)
+		return _camera.unproject_position(_playground.ball_position()))
 	_hooks.track_dynamic("nearestGatherable", func() -> Vector2:
 		var g := _nearest_available_gatherable()
 		if g == null:

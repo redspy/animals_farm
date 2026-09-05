@@ -23,6 +23,9 @@ func _ready() -> void:
 	UiScale.apply()
 	get_window().size_changed.connect(UiScale.apply)
 	_save = SaveManager.load_save()
+	# 사용자가 +/− 로 정한 화면 크기를 이어서 쓴다(세이브 전역 설정).
+	var settings: Dictionary = _save.get("settings", {})
+	UiScale.set_zoom(float(settings.get("ui_zoom", 1.0)))
 	_presets = DataFiles.load_dict("res://data/characters.json").get("presets", [])
 	_world_cfg = DataFiles.load_dict("res://data/world.json")
 	if _presets.is_empty():

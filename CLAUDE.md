@@ -5,7 +5,7 @@
 ## 핵심 요약
 
 - **무엇**: 『동물의 숲』 모티브 브라우저 게임. **Godot 4.7.1 표준(non-mono) + GDScript + 웹 export**. mono 빌드는 웹 export 불가.
-- **현재 상태**: 코어 루프 최소 1사이클 프로토타입(채집→가방→판매→자동저장, 그레이박스). 이웃 동물/꾸미기/도감은 미구현.
+- **현재 상태**: 멀티플레이 코어 루프(채집→가방→판매→자동저장) + 채팅·이모티콘·드랍/줍기 + 폰 터치 조작 + **운동장**(트랙/축구장, 운동 5종, 서버 소유 축구공) + 화면 크기 +/− 조절. 섬은 76×42.75. 이웃 동물/꾸미기/도감은 미구현.
 - **빌드/실행** (표준 빌드 경로: `~/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot`, 시스템 `godot`은 mono라 웹 export 불가):
   - `export GODOT_BIN="$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot"`
   - `./scripts/verify-project.sh` → 임포트 + 세이브 마이그레이션 테스트 + 기동

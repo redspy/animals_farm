@@ -2,7 +2,7 @@ import { chromium, devices } from 'playwright';
 import { godotPoint, tapGodot, dragTouch } from './godot-tap.mjs';
 import WebSocket from 'ws';
 import { spawn } from 'child_process';
-import { mkdirSync, existsSync, rmSync } from 'fs';
+import { mkdirSync, existsSync, rmSync, readFileSync } from 'fs';
 
 // 폰 브라우저 터치 조작 테스트.
 // 설계 근거: docs/meetings/2026-09-04-1150-폰-터치-조작-설계.md
@@ -24,7 +24,18 @@ const OBS_TOKEN = '88888888-8888-4888-8888-888888888888';
 // data/gatherables.json에 실제로 있는 나무 좌표(스폰 0,0에서 오른쪽 5칸).
 // 아무 데서나 채집 버튼을 눌러 되기를 기대하면 실패한다 — 데이터에 있는
 // 좌표를 근거로 목표를 잡는다.
-const TREE = { x: 5.0, z: 1.0, item: 'wood' };
+// 조이스틱으로 걸어가 채집할 대상. **좌표를 박지 않고 데이터에서 고른다** —
+// 운동장이 들어오면서 채집물 위치가 바뀌었고(축구장·트랙 자리를 비웠다),
+// 박아 둔 (5,1)에는 더 이상 나무가 없어서 "채집 → 버리기"가 조용히 실패했다
+// (2026-09-05). 조이스틱 이동은 x축만 쓰므로 z가 0에 가까운 것을 고른다.
+const TREE = (() => {
+  const spawns = JSON.parse(readFileSync('data/gatherables.json', 'utf-8')).spawns || [];
+  const near = spawns
+    .filter((s) => Math.abs(Number(s.z)) <= 2.0)
+    .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
+  const pick = near[0] || spawns[0];
+  return { x: Number(pick.x), z: Number(pick.z), item: String(pick.item) };
+})();
 
 if (!existsSync('build/web/index.html')) {
   console.error('ERROR: build/web/index.html이 없습니다 — 먼저 ./scripts/build-web.sh를 실행하세요.');
@@ -261,7 +272,18 @@ await page.screenshot({ path: `${OUT}/9-탭이동.png` });
 // (2) 채집물 탭 → 다가가서 자동 채집. 채집이 서버 가방에 들어갔는지는
 //     이어지는 버리기(item_add)로 확인한다 — gather는 브로드캐스트되지 않는다.
 const seenBefore = seen.length;
-const treePt = await godotPoint(page, 'nearestGatherable');
+let treePt = await godotPoint(page, 'nearestGatherable');
+// 대상이 **조이스틱 영역(왼쪽 아래)** 에 있으면 탭이 조이스틱에 먹힌다 —
+// 게임이 그렇게 만들어져 있다(그 영역은 조이스틱이 쓴다). 조이스틱을 끄면
+// 그 영역도 평범한 월드 탭이 되므로 그 경로로 확인한다. 운동장이 섬 가운데를
+// 차지한 뒤 가까운 채집물이 이 영역에 오는 일이 흔해졌다(2026-09-05).
+const stickArea = treePt.x < size.width * 0.5 && treePt.y > size.height * 0.45;
+if (stickArea) {
+  await tapGodot(page, 'joystickToggle', { touch: true });
+  await page.waitForTimeout(500);
+  treePt = await godotPoint(page, 'nearestGatherable');
+  check(true, '대상이 조이스틱 영역에 있어 조이스틱을 끄고 탭한다(스틱 OFF 경로)');
+}
 await page.touchscreen.tap(treePt.x, treePt.y);
 await page.waitForTimeout(4000);          // 접근 + 자동 채집
 await page.screenshot({ path: `${OUT}/10-대상탭-자동채집.png` });

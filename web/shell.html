@@ -145,6 +145,48 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 	});
 })();
 
+// [animals_farm 수정] **iOS 사파리에서 키보드를 띄우려면 focus()가 사용자
+// 제스처(터치) 핸들러 안에서 호출돼야 한다.** 게임의 채팅 버튼은 캔버스 안에
+// 그려진 것이라, 탭 → Godot 신호 → GDScript가 focus()를 부르는 경로는 이미
+// 제스처를 벗어난 다음 프레임이다. 안드로이드 크롬은 그래도 키보드를 띄우지만
+// 사파리는 무시한다(사용자 보고 2026-09-05: "사파리에서 텍스트 입력할 때
+// 키보드가 안나와").
+//
+// 그래서 게임이 "여기를 누르면 글자를 입력한다"는 영역을 캔버스 비율(0~1)로
+// 알려주고(window.afTextHotspots), 여기서 **터치 핸들러 안에서 직접** 입력창에
+// 포커스를 준다. 비율로 주는 이유는 DPR·스트레치 배율을 셸이 몰라도 되게
+// 하려는 것이다.
+(function () {
+	window.afTextHotspots = {};
+	function focusInput(id) {
+		var el = document.getElementById(id);
+		if (!el) return;
+		if (el.style.display === 'none') el.style.display = 'block';
+		try { el.focus(); } catch (e) { /* 포커스 불가 상태는 무시 */ }
+	}
+	function onGesture(ev) {
+		var canvas = document.querySelector('canvas');
+		if (!canvas) return;
+		var rect = canvas.getBoundingClientRect();
+		if (!(rect.width > 0 && rect.height > 0)) return;
+		var pt = (ev.changedTouches && ev.changedTouches[0]) || ev;
+		if (typeof pt.clientX !== 'number') return;
+		var fx = (pt.clientX - rect.left) / rect.width;
+		var fy = (pt.clientY - rect.top) / rect.height;
+		for (var key in window.afTextHotspots) {
+			var h = window.afTextHotspots[key];
+			if (!h || h.length < 5) continue;
+			if (fx >= h[0] && fx <= h[0] + h[2] && fy >= h[1] && fy <= h[1] + h[3]) {
+				focusInput(h[4]);
+				return;
+			}
+		}
+	}
+	// capture 단계에서 받는다 — 엔진이 이벤트를 소비해도 우리가 먼저 본다.
+	document.addEventListener('touchend', onGesture, true);
+	document.addEventListener('click', onGesture, true);
+})();
+
 // [animals_farm 수정] 입력창에 포커스가 가면 브라우저가 그걸 보이게 하려고
 // 페이지를 스크롤한다. 캔버스가 화면에 고정돼 있어야 HUD가 잘리지 않으므로,
 // 스크롤이 생기면 즉시 되돌린다.

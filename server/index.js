@@ -234,6 +234,8 @@ wss.on('connection', (ws) => {
     sockets.delete(ws.token);
     const leaving = world.players.get(ws.token);
     world.leave(ws.token);
+    // 축구하던 사람이 마지막이었으면 공도 치운다.
+    if (world.refreshBall()) broadcastBall(true);
     broadcast({ t: 'leave', token: ws.token });
     if (leaving) {
       broadcast({ t: 'system', text: `${leaving.name} 님이 나갔습니다`, kind: 'leave', token: ws.token });
@@ -273,7 +275,13 @@ function handle(ws, msg) {
       world: { size_x: world.sizeX, size_z: world.sizeZ },
     });
     sendTo(ws, { t: 'snapshot', ...world.snapshot() });
-    broadcast({ t: 'join', player: { token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir } }, p.token);
+    broadcast({
+      t: 'join',
+      player: {
+        token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir,
+        activity: p.activity || '', trick: p.trick || '',
+      },
+    }, p.token);
     // 입퇴장은 **서버가 알린다.** 예전에는 각 클라이언트가 join/leave를 보고
     // 자기 화면에만 문구를 넣어서, 알림 문구가 클라이언트마다 갈릴 수 있었다.
     // 본인에게는 보내지 않는다 — 자기 입장 알림은 "서버에 접속했습니다"와 겹친다.
@@ -353,6 +361,22 @@ function handle(ws, msg) {
       broadcast({ t: 'item_remove', id: r.item.id, by: ws.token });
       break;
     }
+    case 'activity': {
+      // 운동 상태(줄넘기·축구·자전거·인라인·킥보드)와 줄넘기 기술.
+      // 남들 화면에도 같은 모습이 보여야 하므로 서버를 거친다.
+      const r = world.activity(ws.token, msg.activity, msg.trick);
+      if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      broadcast({ t: 'activity', ...r.activity });
+      if (r.ballChanged) broadcastBall(true);
+      break;
+    }
+    case 'kick': {
+      const r = world.kick(ws.token, { dx: msg.dx, dz: msg.dz });
+      if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      if (r.throttled) break;
+      broadcastBall(true);
+      break;
+    }
     case 'rename': {
       const r = world.join({ token: ws.token, name: msg.name, preset: msg.preset });
       if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
@@ -364,12 +388,39 @@ function handle(ws, msg) {
   }
 }
 
+/**
+ * 공 위치를 알린다. force면 상태가 바뀐 순간(차기·등장·퇴장)이라 무조건 보낸다.
+ * 그 외에는 **움직였을 때만** 보낸다 — 멈춘 공을 10Hz로 계속 알릴 이유가 없다.
+ */
+let lastBallSent = null;
+function broadcastBall(force = false) {
+  const b = world.ballState();
+  if (b == null) {
+    if (lastBallSent !== null || force) broadcast({ t: 'ball', ball: null });
+    lastBallSent = null;
+    return;
+  }
+  const same = lastBallSent && lastBallSent.x === b.x && lastBallSent.z === b.z;
+  if (!force && same) return;
+  lastBallSent = { x: b.x, z: b.z };
+  broadcast({ t: 'ball', ball: b });
+}
+
 // 이동은 10Hz로 묶어 브로드캐스트한다 — 개별 전송하면 N명이 동시에 움직일 때
 // 메시지 수가 N²로 늘어난다.
 const TICK_MS = 100;
 setInterval(() => {
   const moves = world.takeMoves();
   if (moves.length > 0) broadcast({ t: 'move', moves });
+  // 공 물리도 같은 틱에서 돈다 — 별도 타이머를 두면 이동과 공의 시간이 갈린다.
+  const goal = world.tickBall(TICK_MS / 1000);
+  if (goal) {
+    broadcast({ t: 'goal', side: goal.side, score: goal.score });
+    broadcast({ t: 'system', text: '골! 공을 중앙으로 돌려놓습니다', kind: 'goal' });
+    broadcastBall(true);
+  } else {
+    broadcastBall(false);
+  }
 }, TICK_MS);
 
 // 죽은 연결 정리 — 브라우저 탭이 그냥 사라지면 close 이벤트가 안 올 수 있다.

@@ -17,7 +17,17 @@
     "rock": "#8c8f96",
     "rock_dark": "#6b6e75",
     "wall": "#9a9186",
-    "wall_dark": "#7c7469"
+    "wall_dark": "#7c7469",
+    "track_bike": "#3f9e4d",
+    "track_inline": "#c0392b",
+    "track_infield": "#7cb86a",
+    "track_line": "#f2f2f0",
+    "field_grass": "#5aa04a",
+    "field_line": "#f4f7f4",
+    "goal_post": "#eef1f2",
+    "goal_net": "#ffffff59",
+    "ball": "#fbfbf7",
+    "ball_dark": "#2f3336"
   },
   "ui": {
     "hud_text": "#ffffff",
@@ -55,6 +65,13 @@
     "outfit_yellow": "#e8c14a",
     "outfit_purple": "#9b6bd1",
     "outfit_blue": "#3399cc",
-    "outfit_green": "#4faa62"
+    "outfit_green": "#4faa62",
+    "rope": "#e8d24a",
+    "bike_frame": "#2c7be5",
+    "bike_wheel": "#2b2f33",
+    "skate_boot": "#e9eef2",
+    "skate_wheel": "#f0a12e",
+    "board_deck": "#4b5563",
+    "board_bar": "#9aa3ad"
   }
 }

@@ -29,6 +29,12 @@ signal server_error(code: String, message: String)
 signal system_message(text: String, kind: String)
 signal rename_received(token: String, name: String)
 
+## 운동 상태(줄넘기·축구·자전거·인라인·킥보드)와 줄넘기 기술.
+signal activity_received(token: String, activity: String, trick: String)
+## 축구공. ball이 비어 있으면 "공이 없다"(아무도 축구를 하지 않는다).
+signal ball_received(ball: Dictionary)
+signal goal_scored(side: String, score: Dictionary)
+
 ## 내 위치는 10Hz로만 보낸다(서버 레이트 리밋과 같은 간격).
 const MOVE_SEND_INTERVAL := 0.1
 ## 재연결 대기 시간(초). 실패할수록 늘려서 서버가 죽어 있을 때 재시도로
@@ -160,6 +166,16 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			)
 		"rename":
 			rename_received.emit(String(msg.get("token", "")), String(msg.get("name", "")))
+		"activity":
+			activity_received.emit(
+				String(msg.get("token", "")), String(msg.get("activity", "")),
+				String(msg.get("trick", ""))
+			)
+		"ball":
+			var ball: Variant = msg.get("ball", null)
+			ball_received.emit(ball if typeof(ball) == TYPE_DICTIONARY else {})
+		"goal":
+			goal_scored.emit(String(msg.get("side", "")), msg.get("score", {}))
 		"system":
 			system_message.emit(String(msg.get("text", "")), String(msg.get("kind", "")))
 		"error":
@@ -228,6 +244,14 @@ func send_sell(item_id: String = "") -> void:
 
 func send_chat(text: String) -> void:
 	_send({"t": "chat", "text": text})
+
+## 운동 시작/변경/그만두기. activity가 빈 문자열이면 원래 모습으로 돌아온다.
+func send_activity(activity_id: String, trick_id: String = "") -> void:
+	_send({"t": "activity", "activity": activity_id, "trick": trick_id})
+
+## 공 차기. 방향은 클라이언트가 정하고 **사거리는 서버가 검사한다**.
+func send_kick(dir: Vector2) -> void:
+	_send({"t": "kick", "dx": snappedf(dir.x, 0.01), "dz": snappedf(dir.y, 0.01)})
 
 func send_emote(emote_id: String) -> void:
 	_send({"t": "emote", "emote": emote_id})

@@ -33,6 +33,9 @@ func setup(player: Dictionary, preset: Dictionary) -> void:
 
 	extras = AvatarExtras.new()
 	add_child(extras)
+	# 운동 중인 캐릭터가 이미 있을 수 있다(내가 나중에 들어온 경우) — 스냅샷/
+	# join에 실려 오는 activity를 그대로 반영한다.
+	set_activity(String(player.get("activity", "")), String(player.get("trick", "")))
 	# AvatarExtras가 _ready 전 호출도 받아 두므로 순서를 신경 쓰지 않아도 된다.
 	set_display_name(String(player.get("name", "")))
 
@@ -47,6 +50,17 @@ func set_display_name(text: String) -> void:
 ## 표시 문자열에 의존하게 되므로 값을 따로 들고 있는다.
 func display_name() -> String:
 	return _display_name
+
+## 남의 운동 모습. 서버가 브로드캐스트한 값을 그대로 스프라이트에 넘긴다.
+func set_activity(kind: String, trick: String) -> void:
+	_activity = kind
+	if sprite != null:
+		sprite.set_activity(kind, trick)
+
+func activity() -> String:
+	return _activity
+
+var _activity := ""
 
 func apply_move(x: float, z: float, dir: String) -> void:
 	_target = Vector3(x, 0.0, z)

@@ -61,6 +61,40 @@ export class WorldState {
     // 월드 크기·아이템·이모티콘은 클라이언트와 같은 data/*.json을 읽는다 —
     // 서버가 자기 사본을 갖고 있으면 둘이 갈려서 경계가 어긋난다.
     const worldCfg = readJson(join(dataDir, 'world.json'), {});
+    // 운동(활동)과 운동장 — 클라이언트와 **같은 파일**을 읽는다. 활동별 이동
+    // 속도 상한이 서버에만 다르게 있으면 "자전거를 탔는데 서버가 계속
+    // 되돌리는" 상태가 된다.
+    const actCfg = readJson(join(dataDir, 'activities.json'), {});
+    this.activities = new Map();
+    for (const a of actCfg.activities || []) {
+      if (!a || !a.id) continue;
+      this.activities.set(String(a.id), {
+        speed: Number(a.speed) || LIMITS.MAX_SPEED,
+        zoneOnly: a.zone_only !== false,
+        tricks: new Set((a.tricks || []).map((k) => String(k.id))),
+      });
+    }
+    this.soccerCfg = {
+      kickRange: Number(actCfg.soccer?.kick_range) || 1.5,
+      kickSpeed: Number(actCfg.soccer?.kick_speed) || 11,
+      dribbleRange: Number(actCfg.soccer?.dribble_range) || 0.55,
+      dribbleSpeed: Number(actCfg.soccer?.dribble_speed) || 4.5,
+      friction: Number(actCfg.soccer?.friction_per_sec) || 0.28,
+      bounce: Number(actCfg.soccer?.bounce) || 0.55,
+      kickInterval: Number(actCfg.soccer?.kick_min_interval_ms) || 260,
+    };
+    this.playground = worldCfg.playground || {};
+    this.field = this.playground.field || null;
+    // 공 상태. active는 "축구를 하는 사람이 있다"는 뜻이다 — 아무도 없으면
+    // 물리를 돌리지 않고 브로드캐스트도 하지 않는다.
+    this.ball = {
+      active: false,
+      x: this.field ? Number(this.field.x) : 0,
+      z: this.field ? Number(this.field.z) : 0,
+      vx: 0,
+      vz: 0,
+    };
+    this.score = { left: 0, right: 0 };
     this.sizeX = Number(worldCfg.size_x) || 50.7;
     this.sizeZ = Number(worldCfg.size_z) || 28.5;
     this.spawn = worldCfg.spawn || { x: 0, z: 0 };
@@ -216,6 +250,10 @@ export class WorldState {
         lastEmoteAt: 0,
         lastGatherAt: 0,
         lastSellAt: 0,
+        // 운동 상태. 남들 화면에도 보여야 하므로 서버가 갖는다.
+        activity: '',
+        trick: '',
+        lastKickAt: 0,
       };
       this.players.set(token, p);
       this._markDirty();
@@ -244,6 +282,7 @@ export class WorldState {
   }
 
   leave(token) {
+    // 나간 사람이 축구 중이었다면 공을 치울지 다시 판단해야 한다.
     const p = this.players.get(token);
     if (!p) return;
     p.online = false;
@@ -260,7 +299,7 @@ export class WorldState {
     const dt = Math.max(LIMITS.SPEED_MIN_DT_MS, now - (p.lastMoveAt || now)) / 1000;
     const target = this.clampPos(x, z);
     const dist = Math.hypot(target.x - p.x, target.z - p.z);
-    const maxDist = LIMITS.MAX_SPEED * dt;
+    const maxDist = this.speedCapOf(p) * dt;
     if (dist > maxDist) {
       // 상한을 넘으면 거부하지 않고 상한까지만 이동시킨다 — 거부하면 지터가
       // 큰 클라이언트가 영구히 뒤처지고, 그대로 받으면 순간이동이 된다.
@@ -279,8 +318,167 @@ export class WorldState {
     if (typeof dir === 'string' && ['up', 'down', 'left', 'right'].includes(dir)) p.dir = dir;
     p.lastMoveAt = now;
     p.moved = true;
+    // 축구 중에 공에 닿으면 밀어낸다(드리블). 차기는 별도 조작이지만, 걸어가
+    // 부딪혔는데 공이 가만히 있으면 공처럼 보이지 않는다.
+    this.dribble(p);
     this._markDirty();
     return { player: p };
+  }
+
+  /** 활동별 이동 속도 상한(초당 유닛). 지터 여유는 MAX_SPEED와 같은 비율로 준다. */
+  speedCapOf(p) {
+    const base = 4.2;
+    const act = this.activities.get(p.activity || '');
+    const speed = act ? act.speed : base;
+    // LIMITS.MAX_SPEED가 base*1.6이므로 같은 여유 비율을 활동 속도에도 적용한다.
+    return speed * (LIMITS.MAX_SPEED / base);
+  }
+
+  /**
+   * 운동 상태 변경. 남들 화면에 보여야 하므로 서버를 거친다.
+   * kind가 빈 문자열이면 "그만두기"(원래 모습으로).
+   */
+  activity(token, kind, trick = '') {
+    const p = this.players.get(token);
+    if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
+    const id = String(kind || '');
+    if (id && !this.activities.has(id)) {
+      return { error: { code: 'bad_activity', message: '알 수 없는 운동' } };
+    }
+    let t = String(trick || '');
+    if (id && t && !this.activities.get(id).tricks.has(t)) t = '';
+    p.activity = id;
+    p.trick = id ? t : '';
+    // 축구하는 사람이 생기면 공을 내보내고, 아무도 없으면 치운다.
+    const changed = this.refreshBall();
+    this._markDirty();
+    return { activity: { token, activity: p.activity, trick: p.trick }, ballChanged: changed };
+  }
+
+  /** 축구 중인 사람이 있는지에 따라 공을 켜고 끈다. 상태가 바뀌면 true. */
+  refreshBall() {
+    let any = false;
+    for (const p of this.players.values()) {
+      if (p.online && p.activity === 'soccer') { any = true; break; }
+    }
+    if (any === this.ball.active) return false;
+    this.ball.active = any;
+    if (any) this.resetBall();
+    return true;
+  }
+
+  resetBall() {
+    this.ball.x = this.field ? Number(this.field.x) : 0;
+    this.ball.z = this.field ? Number(this.field.z) : 0;
+    this.ball.vx = 0;
+    this.ball.vz = 0;
+  }
+
+  /** 걸어가 공에 닿으면 살짝 밀어낸다. */
+  dribble(p) {
+    if (!this.ball.active || p.activity !== 'soccer') return;
+    const dx = this.ball.x - p.x;
+    const dz = this.ball.z - p.z;
+    const d = Math.hypot(dx, dz);
+    if (d > this.soccerCfg.dribbleRange) return;
+    // 겹쳐 있으면(거리 0) 바라보는 방향으로 밀어낸다.
+    const dir = d > 0.001
+      ? { x: dx / d, z: dz / d }
+      : WorldState.dirVector(p.dir);
+    this.ball.vx = dir.x * this.soccerCfg.dribbleSpeed;
+    this.ball.vz = dir.z * this.soccerCfg.dribbleSpeed;
+  }
+
+  /**
+   * 공 차기. 방향은 클라이언트가 보내되(바라보는 방향 또는 조준 방향),
+   * **사거리와 활동 상태는 서버가 검사한다** — 그러지 않으면 맵 밖에서
+   * 공을 골대에 넣을 수 있다.
+   */
+  kick(token, { dx, dz }, now = Date.now()) {
+    const p = this.players.get(token);
+    if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
+    if (!this.ball.active) return { error: { code: 'no_ball', message: '공이 없습니다' } };
+    if (p.activity !== 'soccer') {
+      return { error: { code: 'not_soccer', message: '축구 중에만 공을 찰 수 있습니다' } };
+    }
+    if (now - (p.lastKickAt || 0) < this.soccerCfg.kickInterval) {
+      return { throttled: true };
+    }
+    const dist = Math.hypot(this.ball.x - p.x, this.ball.z - p.z);
+    if (dist > this.soccerCfg.kickRange) {
+      return { error: { code: 'too_far', message: '공이 너무 멉니다' } };
+    }
+    let vx = Number(dx);
+    let vz = Number(dz);
+    const len = Math.hypot(vx, vz);
+    if (!Number.isFinite(len) || len < 0.001) {
+      const v = WorldState.dirVector(p.dir);
+      vx = v.x; vz = v.z;
+    } else {
+      vx /= len; vz /= len;
+    }
+    p.lastKickAt = now;
+    this.ball.vx = vx * this.soccerCfg.kickSpeed;
+    this.ball.vz = vz * this.soccerCfg.kickSpeed;
+    return { kicked: { token, x: this.ball.x, z: this.ball.z, vx: this.ball.vx, vz: this.ball.vz } };
+  }
+
+  static dirVector(dir) {
+    switch (dir) {
+      case 'up': return { x: 0, z: -1 };
+      case 'left': return { x: -1, z: 0 };
+      case 'right': return { x: 1, z: 0 };
+      default: return { x: 0, z: 1 };
+    }
+  }
+
+  /**
+   * 공 물리 한 스텝. 서버가 소유하는 이유: 각 클라이언트가 자기 화면에서
+   * 굴리면 기기마다 공 위치가 달라져 "내 화면에서는 골"이 된다.
+   * 반환값이 있으면 골이 들어간 것이다.
+   */
+  tickBall(dt) {
+    if (!this.ball.active || !this.field) return null;
+    const b = this.ball;
+    if (Math.abs(b.vx) < 0.01 && Math.abs(b.vz) < 0.01) { b.vx = 0; b.vz = 0; return null; }
+    b.x += b.vx * dt;
+    b.z += b.vz * dt;
+    // 마찰: 초당 friction 비율로 줄인다.
+    const damp = Math.pow(this.soccerCfg.friction, dt);
+    b.vx *= damp;
+    b.vz *= damp;
+
+    const cx = Number(this.field.x);
+    const cz = Number(this.field.z);
+    const hx = Number(this.field.size_x) / 2;
+    const hz = Number(this.field.size_z) / 2;
+    const gw = Number(this.field.goal_width) / 2;
+
+    // 골 판정: 골라인을 넘었고 골대 폭 안이면 골.
+    if (Math.abs(b.z - cz) <= gw) {
+      if (b.x < cx - hx) return this.scoreGoal('left');
+      if (b.x > cx + hx) return this.scoreGoal('right');
+    }
+    // 나머지 경계는 튕긴다 — 공이 섬 밖으로 나가면 주우러 갈 수 없다.
+    if (b.x < cx - hx) { b.x = cx - hx; b.vx = Math.abs(b.vx) * this.soccerCfg.bounce; }
+    if (b.x > cx + hx) { b.x = cx + hx; b.vx = -Math.abs(b.vx) * this.soccerCfg.bounce; }
+    if (b.z < cz - hz) { b.z = cz - hz; b.vz = Math.abs(b.vz) * this.soccerCfg.bounce; }
+    if (b.z > cz + hz) { b.z = cz + hz; b.vz = -Math.abs(b.vz) * this.soccerCfg.bounce; }
+    b.x = Math.round(b.x * 100) / 100;
+    b.z = Math.round(b.z * 100) / 100;
+    return null;
+  }
+
+  scoreGoal(side) {
+    // side는 **공이 들어간 골대**다. 왼쪽 골대에 넣으면 오른쪽 팀 득점이라는
+    // 팀 개념은 아직 없으므로, 골대별 누적만 센다.
+    this.score[side] += 1;
+    this.resetBall();
+    return { side, score: { ...this.score } };
+  }
+
+  ballState() {
+    return this.ball.active ? { x: this.ball.x, z: this.ball.z } : null;
   }
 
   chat(token, text, now = Date.now()) {
@@ -457,10 +655,17 @@ export class WorldState {
     const players = [];
     for (const p of this.players.values()) {
       if (!p.online) continue;
-      players.push({ token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir });
+      players.push({
+        token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir,
+        activity: p.activity || '', trick: p.trick || '',
+      });
     }
     return {
       players,
+      // 공은 축구를 하는 사람이 있을 때만 의미가 있다.
+      ball: this.ball.active
+        ? { x: this.ball.x, z: this.ball.z, score: { ...this.score } }
+        : null,
       items: [...this.items.values()].map((i) => ({ id: i.id, item: i.item, x: i.x, z: i.z })),
       // 이미 캔 채집물을 새로 들어온 사람 화면에도 숨겨야 한다.
       gatherables: this.gatherableStates(),

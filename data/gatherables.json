@@ -11,170 +11,282 @@
     {
       "kind": "tree",
       "item": "wood",
-      "x": -21.0,
-      "z": -11.0,
+      "x": -31.5,
+      "z": -16.5,
       "respawn_sec": 30
     },
     {
       "kind": "tree",
       "item": "fruit",
-      "x": -15.0,
-      "z": -9.0,
+      "x": -22.5,
+      "z": -13.5,
       "respawn_sec": 45
     },
     {
       "kind": "weed",
       "item": "weed",
-      "x": -18.0,
-      "z": -6.0,
+      "x": -29.31,
+      "z": -11.77,
       "respawn_sec": 20
     },
     {
       "kind": "tree",
       "item": "wood",
-      "x": -8.0,
-      "z": -11.0,
+      "x": -12.0,
+      "z": -16.5,
       "respawn_sec": 30
     },
     {
       "kind": "shell",
       "item": "shell",
-      "x": -3.0,
-      "z": -12.0,
+      "x": -4.5,
+      "z": -18.0,
       "respawn_sec": 60
     },
     {
       "kind": "tree",
       "item": "fruit",
-      "x": 2.0,
-      "z": -9.0,
+      "x": 3.0,
+      "z": -13.5,
       "respawn_sec": 45
     },
     {
       "kind": "weed",
       "item": "weed",
-      "x": 7.0,
-      "z": -11.0,
+      "x": 10.5,
+      "z": -16.5,
       "respawn_sec": 20
     },
     {
       "kind": "tree",
       "item": "wood",
-      "x": 14.0,
-      "z": -10.0,
+      "x": 21.0,
+      "z": -15.0,
       "respawn_sec": 30
     },
     {
       "kind": "tree",
       "item": "fruit",
-      "x": 20.0,
-      "z": -8.0,
+      "x": 30.0,
+      "z": -12.0,
       "respawn_sec": 45
     },
     {
       "kind": "tree",
       "item": "wood",
-      "x": -20.0,
-      "z": -1.0,
+      "x": -35.62,
+      "z": -3.72,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "weed",
+      "item": "weed",
+      "x": -13.07,
+      "z": 12.87,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "tree",
+      "item": "fruit",
+      "x": -1.16,
+      "z": -4.59,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "tree",
+      "item": "wood",
+      "x": 1.65,
+      "z": 1.5,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "weed",
+      "item": "weed",
+      "x": 16.5,
+      "z": -11.13,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "tree",
+      "item": "fruit",
+      "x": 27.0,
+      "z": 11.13,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "shell",
+      "item": "shell",
+      "x": -33.0,
+      "z": 13.5,
+      "respawn_sec": 60
+    },
+    {
+      "kind": "tree",
+      "item": "wood",
+      "x": -21.0,
+      "z": 16.5,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "weed",
+      "item": "weed",
+      "x": -10.5,
+      "z": 12.0,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "tree",
+      "item": "fruit",
+      "x": 1.5,
+      "z": 16.5,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "shell",
+      "item": "shell",
+      "x": 12.0,
+      "z": 18.0,
+      "respawn_sec": 60
+    },
+    {
+      "kind": "tree",
+      "item": "wood",
+      "x": 24.0,
+      "z": 13.5,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "weed",
+      "item": "weed",
+      "x": 33.0,
+      "z": 16.5,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "shell",
+      "item": "shell",
+      "x": 35.62,
+      "z": 6.0,
+      "respawn_sec": 60
+    },
+    {
+      "kind": "tree",
+      "item": "fruit",
+      "x": -3.0,
+      "z": 7.5,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "tree",
+      "item": "wood",
+      "x": -2.4,
+      "z": 4.8,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "weed",
+      "item": "weed",
+      "x": 2.7,
+      "z": 6.3,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "tree",
+      "item": "fruit",
+      "x": 2.85,
+      "z": -5.1,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "weed",
+      "item": "weed",
+      "x": -2.85,
+      "z": -3.3,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "tree",
+      "item": "wood",
+      "x": -30.0,
+      "z": -16.0,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "tree",
+      "item": "fruit",
+      "x": -22.0,
+      "z": -18.5,
       "respawn_sec": 30
     },
     {
       "kind": "weed",
       "item": "weed",
       "x": -12.0,
-      "z": 2.0,
+      "z": -17.0,
       "respawn_sec": 20
-    },
-    {
-      "kind": "tree",
-      "item": "fruit",
-      "x": -5.0,
-      "z": -2.0,
-      "respawn_sec": 45
     },
     {
       "kind": "tree",
       "item": "wood",
-      "x": 5.0,
-      "z": 1.0,
-      "respawn_sec": 30
-    },
-    {
-      "kind": "weed",
-      "item": "weed",
-      "x": 11.0,
-      "z": -2.0,
-      "respawn_sec": 20
-    },
-    {
-      "kind": "tree",
-      "item": "fruit",
-      "x": 18.0,
-      "z": 2.0,
-      "respawn_sec": 45
-    },
-    {
-      "kind": "shell",
-      "item": "shell",
-      "x": -22.0,
-      "z": 9.0,
-      "respawn_sec": 60
-    },
-    {
-      "kind": "tree",
-      "item": "wood",
-      "x": -14.0,
-      "z": 11.0,
-      "respawn_sec": 30
-    },
-    {
-      "kind": "weed",
-      "item": "weed",
-      "x": -7.0,
-      "z": 8.0,
-      "respawn_sec": 20
-    },
-    {
-      "kind": "tree",
-      "item": "fruit",
-      "x": 1.0,
-      "z": 11.0,
-      "respawn_sec": 45
-    },
-    {
-      "kind": "shell",
-      "item": "shell",
       "x": 8.0,
-      "z": 12.0,
-      "respawn_sec": 60
+      "z": -18.0,
+      "respawn_sec": 30
     },
     {
       "kind": "tree",
-      "item": "wood",
-      "x": 16.0,
-      "z": 9.0,
+      "item": "fruit",
+      "x": 22.0,
+      "z": -17.0,
       "respawn_sec": 30
     },
     {
       "kind": "weed",
       "item": "weed",
-      "x": 22.0,
-      "z": 11.0,
+      "x": 31.0,
+      "z": -14.0,
       "respawn_sec": 20
     },
     {
-      "kind": "shell",
-      "item": "shell",
-      "x": 23.0,
-      "z": 4.0,
-      "respawn_sec": 60
+      "kind": "tree",
+      "item": "wood",
+      "x": -28.0,
+      "z": 16.5,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "weed",
+      "item": "weed",
+      "x": -14.0,
+      "z": 18.0,
+      "respawn_sec": 20
     },
     {
       "kind": "tree",
       "item": "fruit",
-      "x": -2.0,
-      "z": 5.0,
-      "respawn_sec": 45
+      "x": 6.0,
+      "z": 18.5,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "tree",
+      "item": "wood",
+      "x": 24.0,
+      "z": 17.0,
+      "respawn_sec": 30
+    },
+    {
+      "kind": "shell",
+      "item": "shell",
+      "x": 34.0,
+      "z": 8.0,
+      "respawn_sec": 40
+    },
+    {
+      "kind": "shell",
+      "item": "shell",
+      "x": -34.0,
+      "z": -6.0,
+      "respawn_sec": 40
     }
   ]
 }

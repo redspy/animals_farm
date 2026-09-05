@@ -44,6 +44,9 @@ npm run test:browser                 # 브라우저 스모크 (build/web 필요)
 npm run test:server                  # 서버 규칙 유닛 테스트 (소켓 불필요)
 npm run test:multiplayer             # 2탭 + WS 옵저버로 실시간 동기화 검증
 npm run test:mobile                  # 폰 터치 에뮬레이션(조이스틱·버튼·DOM 채팅)
+npm run test:playground              # 운동장(운동 버튼·모습·속도·줄넘기 기술·축구공)
+npm run test:safari                  # 사파리(WebKit) 텍스트 입력 — 첫 실행 전 `npx playwright install webkit`
+npm run test:insecure                # http(비보안 컨텍스트)에서도 실행되는지
 npm run capture:chat                 # 채팅 UI 상태별 캡쳐(문서용)
 node server/index.js                 # 정적 + WebSocket 서버 (기본 3001)
 GODOT_BIN=<표준빌드> ./scripts/build-web.sh   # 웹 export → build/web/

@@ -31,6 +31,16 @@ const NARROW_FONT_SCALE := 1.35
 ## 테마 기본 글자 크기. Label/Button이 따로 지정하지 않으면 이 값을 쓴다.
 const BASE_FONT_SIZE := 16
 
+## 사용자가 화면 크기를 직접 조절하는 배율(+/− 버튼). 화면과 눈이 사람마다
+## 다르므로 자동 보정만으로는 부족하다는 요청이었다.
+## 1.0이 "1 UI 단위 = 1 CSS 픽셀"이고, 0.7이면 더 많은 월드가 보이는 대신
+## 글자가 작아진다. 상·하한은 실용 범위로 자른다 — 0.5는 폰에서 못 읽고,
+## 2.0을 넘으면 버튼 몇 개가 화면을 다 덮는다.
+const ZOOM_MIN := 0.7
+const ZOOM_MAX := 1.8
+const ZOOM_STEP := 0.1
+static var _zoom := 1.0
+
 ## 캐시. `is_narrow()`/`font()`/`dim()`은 HUD 갱신·접속자 바 재구성 때 수십 번
 ## 불리는데, DPR을 매번 재려면 JS eval + getBoundingClientRect(브라우저 레이아웃
 ## 강제 플러시)가 따라온다 — 같은 파일의 다른 코드가 "HUD 문자열을 매 프레임
@@ -92,6 +102,26 @@ static func _measure_pixel_ratio() -> float:
 	var scale := DisplayServer.screen_get_scale()
 	return scale if scale > 0.05 else 1.0
 
+static func zoom() -> float:
+	return _zoom
+
+## 사용자 배율을 바꾸고 즉시 적용한다. 실제로 적용된 값을 돌려준다(상·하한 클램프).
+static func set_zoom(value: float) -> float:
+	var next := clampf(snappedf(value, 0.01), ZOOM_MIN, ZOOM_MAX)
+	if is_equal_approx(next, _zoom):
+		return _zoom
+	_zoom = next
+	apply()
+	return _zoom
+
+## +/− 버튼용. 한 단계 올리고 내린다.
+static func nudge_zoom(steps: float) -> float:
+	return set_zoom(_zoom + ZOOM_STEP * steps)
+
+## 화면에 보여줄 문자열("100%").
+static func zoom_label() -> String:
+	return "%d%%" % int(round(_zoom * 100.0))
+
 ## 창이 만들어진 뒤/크기가 바뀔 때마다 부른다. main.gd가 연결한다.
 static func apply() -> void:
 	var win := _window()
@@ -116,7 +146,9 @@ static func apply() -> void:
 	# 목표: stretch * csf == DPR (1 UI 단위 = 1 CSS 픽셀).
 	# max(1.0)인 이유: 데스크톱을 지금보다 작게 만들지 않는다 — 현재 크기에는
 	# 불만이 없었고, 줄이면 멀쩡한 화면이 망가진다.
-	var target := maxf(1.0, pixel_ratio() / maxf(stretch, 0.001))
+	# 자동 보정(1 UI 단위 = 1 CSS 픽셀)에 사용자 배율을 곱한다. 사용자가 줄이면
+	# 자동 보정보다 작아질 수 있어야 하므로 max는 자동 보정에만 적용한다.
+	var target := maxf(1.0, pixel_ratio() / maxf(stretch, 0.001)) * _zoom
 	var wanted_font := font(BASE_FONT_SIZE)
 	# 이미 맞으면 손대지 않는다. content_scale_factor 대입은 값이 같아도 뷰포트를
 	# 다시 계산해서 size_changed를 또 쏘고, 그러면 apply()가 재진입한다(수렴하긴

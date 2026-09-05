@@ -22,6 +22,18 @@ var _save: Dictionary = {}
 var _presets: Array = []
 var _spawn := Vector2.ZERO
 
+## 이름 입력용 DOM 요소 id.
+##
+## 왜 DOM인가: Godot `LineEdit`은 웹에서 OS 키보드를 띄우지 못한다. 안드로이드
+## 크롬은 엔진의 가상 키보드 우회가 어느 정도 통하지만 **iOS 사파리에서는
+## 키보드가 아예 뜨지 않아 이름을 입력할 수 없었다**(사용자 보고 2026-09-05).
+## 실제 `<input>`을 필드 위에 겹쳐 두면 사용자가 그것을 직접 탭하게 되므로,
+## 브라우저가 제스처를 그대로 인정해 키보드가 뜬다(채팅 입력과 같은 이유).
+const NAME_DOM_ID := "af-name-input"
+var _name_edit: LineEdit = null
+var _name_dom := false
+var _js_name_submit: JavaScriptObject = null
+
 var _root: VBoxContainer
 ## E2E 테스트가 탭할 지점(슬롯/프리셋/이름칸/시작 버튼). 테스트 seam 설명은
 ## scripts/test_hooks.gd 참고.
@@ -60,6 +72,10 @@ func _panel_width() -> float:
 	return UiScale.panel_width(PANEL_WIDTH)
 
 func _clear_root() -> void:
+	# 화면이 바뀌면 겹쳐 둔 DOM 입력도 치운다 — 안 치우면 슬롯 목록 위에
+	# 입력창이 남는다.
+	_hide_name_dom()
+	_name_edit = null
 	# queue_free는 프레임 끝에 처리되므로 자식이 즉시 사라지지 않는다 — 이 상태로
 	# 새 화면을 만들면 get_child_count()가 이전 화면 노드까지 세서 인덱스가 밀린다
 	# (테스트 훅의 preset1 키가 preset8로 밀려 나갔다, 2026-09-04 실측).
@@ -250,6 +266,127 @@ func _preset_portrait(preset: Dictionary) -> Texture2D:
 		push_warning("프리셋 %s의 초상화를 만들지 못했다" % String(preset.get("id", "")))
 	return tex
 
+# ---------------------------------------------------------------------------
+# 이름 입력용 DOM <input> (웹 전용)
+# ---------------------------------------------------------------------------
+
+func _use_name_dom() -> bool:
+	return OS.has_feature("web") and JavaScriptBridge.get_interface("document") != null
+
+func _setup_name_dom() -> void:
+	_name_dom = true
+	_js_name_submit = JavaScriptBridge.create_callback(_on_name_dom_submit)
+	var win := JavaScriptBridge.get_interface("window")
+	win.afNameSubmit = _js_name_submit
+	JavaScriptBridge.eval("""
+		(function(){
+			var el = document.getElementById('%s');
+			if (!el) {
+				el = document.createElement('input');
+				el.id = '%s';
+				el.type = 'text';
+				el.autocomplete = 'off';
+				el.autocapitalize = 'off';
+				el.maxLength = %d;
+				el.addEventListener('keydown', function(ev){
+					if (ev.key === 'Enter') {
+						// IME 조합 중의 Enter는 조합 확정이다 — 전송하면 한글이 잘린다.
+						if (ev.isComposing) return;
+						ev.preventDefault();
+						window.afNameSubmit(el.value);
+					}
+					ev.stopPropagation();
+				});
+				el.addEventListener('keyup', function(ev){ ev.stopPropagation(); });
+				el.addEventListener('keypress', function(ev){ ev.stopPropagation(); });
+				document.body.appendChild(el);
+			}
+			el.value = '';
+			el.placeholder = '이름';
+			// 16px 미만이면 iOS가 포커스 시 화면을 확대해 레이아웃이 어긋난다.
+			el.style.cssText = [
+				'position:fixed', 'display:block', 'box-sizing:border-box',
+				'padding:6px 10px', 'font-size:17px', 'border:2px solid rgba(255,255,255,0.55)',
+				'border-radius:8px', 'background:rgba(18,38,31,0.96)', 'color:#fff',
+				'z-index:2147483646', 'outline:none', 'text-align:center'
+			].join(';');
+		})();
+	""" % [NAME_DOM_ID, NAME_DOM_ID, SaveManager.NAME_MAX_LEN], true)
+	_place_name_dom()
+
+## LineEdit 자리에 DOM 입력을 겹쳐 둔다. 화면 회전·창 크기 변경으로 자리가
+## 바뀌므로 _process에서 계속 맞춘다 — 한 번만 놓으면 회전 후 엉뚱한 곳에 남는다.
+func _place_name_dom() -> void:
+	if not _name_dom or _name_edit == null or not is_instance_valid(_name_edit):
+		return
+	var vp := get_viewport()
+	if vp == null:
+		return
+	var size := vp.get_visible_rect().size
+	if size.x <= 0.0 or size.y <= 0.0:
+		return
+	var r := _name_edit.get_global_rect()
+	if r.size.x <= 0.0:
+		return
+	JavaScriptBridge.eval("""
+		(function(){
+			var el = document.getElementById('%s');
+			var c = document.querySelector('canvas');
+			if (!el || !c) return;
+			var b = c.getBoundingClientRect();
+			if (!(b.width > 0)) return;
+			el.style.left = (b.left + %f * b.width) + 'px';
+			el.style.top = (b.top + %f * b.height) + 'px';
+			el.style.width = (%f * b.width) + 'px';
+			el.style.height = (%f * b.height) + 'px';
+		})();
+	""" % [
+		NAME_DOM_ID,
+		r.position.x / size.x, r.position.y / size.y,
+		r.size.x / size.x, r.size.y / size.y,
+	], true)
+
+func _process(_delta: float) -> void:
+	if _name_dom:
+		_place_name_dom()
+
+func _name_dom_value() -> String:
+	var got: Variant = JavaScriptBridge.eval("""
+		(function(){
+			var el = document.getElementById('%s');
+			return el ? el.value : '';
+		})();
+	""" % NAME_DOM_ID, true)
+	return String(got) if got != null else ""
+
+func _set_name_dom_placeholder(text: String) -> void:
+	if not _name_dom:
+		return
+	JavaScriptBridge.eval("""
+		(function(){
+			var el = document.getElementById('%s');
+			if (el) el.placeholder = '%s';
+		})();
+	""" % [NAME_DOM_ID, text], true)
+
+func _hide_name_dom() -> void:
+	if not _name_dom:
+		return
+	_name_dom = false
+	JavaScriptBridge.eval("""
+		(function(){
+			var el = document.getElementById('%s');
+			if (el) { el.blur(); el.style.display = 'none'; }
+		})();
+	""" % NAME_DOM_ID, true)
+
+func _on_name_dom_submit(_args: Array) -> void:
+	if _name_edit != null and is_instance_valid(_name_edit):
+		_on_name_confirmed(_name_edit)
+
+func _exit_tree() -> void:
+	_hide_name_dom()
+
 func _on_preset_pressed(preset_id: String) -> void:
 	_pending_preset = preset_id
 	_show_name_input()
@@ -263,7 +400,14 @@ func _show_name_input() -> void:
 	edit.max_length = SaveManager.NAME_MAX_LEN
 	edit.placeholder_text = "이름"
 	_root.add_child(edit)
-	edit.grab_focus()
+	_name_edit = edit
+	if _use_name_dom():
+		# 웹에서는 이 LineEdit은 **자리와 모양만** 잡는다(위에 실제 <input>이
+		# 덮인다). 편집 가능하게 두면 두 곳에 글자가 따로 들어간다.
+		edit.editable = false
+		_setup_name_dom()
+	else:
+		edit.grab_focus()
 	_mark("nameField", edit)
 
 	var hint := Label.new()
@@ -280,6 +424,7 @@ func _show_name_input() -> void:
 	_mark("startButton", ok)
 
 	# 엔터로도 확정되게 — 이름 입력 후 마우스로 버튼을 찾아가는 건 번거롭다.
+	# (웹에서는 DOM 입력의 keydown이 같은 경로를 부른다.)
 	edit.text_submitted.connect(func(_t: String) -> void: _on_name_confirmed(edit))
 
 	var back := Button.new()
@@ -289,10 +434,13 @@ func _show_name_input() -> void:
 	_root.add_child(back)
 
 func _on_name_confirmed(edit: LineEdit) -> void:
-	var name_text := SaveManager.sanitize_name(edit.text)
+	var raw := _name_dom_value() if _name_dom else edit.text
+	var name_text := SaveManager.sanitize_name(raw)
 	if name_text.is_empty():
 		edit.placeholder_text = "이름을 한 자 이상 입력하세요"
+		_set_name_dom_placeholder("이름을 한 자 이상 입력하세요")
 		return
+	_hide_name_dom()
 
 	var slots := SaveManager.slots_view(_save)
 	var slot: Dictionary = slots[_pending_index]
