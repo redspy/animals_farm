@@ -249,7 +249,13 @@ function handle(ws, msg) {
   const type = String(msg.t || '');
 
   if (type === 'join') {
-    const result = world.join({ token: msg.token, name: msg.name, preset: msg.preset });
+    // 같은 토큰의 **다른 소켓**이면 새 접속이다 — 그 판단은 소켓을 아는
+    // 여기서 한다(world.join의 resetActivity 주석 참고).
+    const prevSocket = sockets.get(String(msg.token || ''));
+    const result = world.join({
+      token: msg.token, name: msg.name, preset: msg.preset,
+      resetActivity: prevSocket !== ws,
+    });
     if (result.error) {
       sendTo(ws, { t: 'error', ...result.error });
       return;
@@ -257,7 +263,7 @@ function handle(ws, msg) {
     const p = result.player;
     // 같은 토큰의 기존 연결은 끊는다 — 두 기기가 한 캐릭터를 동시에 움직이면
     // 위치가 튀고 어느 쪽이 진짜인지 정할 수 없다.
-    const prev = sockets.get(p.token);
+    const prev = prevSocket;
     if (prev && prev !== ws) {
       sendTo(prev, { t: 'error', code: 'replaced', message: '다른 기기에서 이 캐릭터로 접속했습니다' });
       prev.close();
@@ -302,6 +308,12 @@ function handle(ws, msg) {
   switch (type) {
     case 'move': {
       const r = world.move(ws.token, msg);
+      // 운동장을 벗어나 서버가 운동을 해제했으면 모두에게 알린다(본인도 포함 —
+      // 클라이언트가 스스로 해제하지 않은 경우 화면을 맞춰야 한다).
+      if (r && r.dismounted) {
+        broadcast({ t: 'activity', ...r.dismounted });
+        if (world.refreshBall()) broadcastBall(true);
+      }
       if (r.error) sendTo(ws, { t: 'error', ...r.error });
       // 성공한 이동은 개별 브로드캐스트하지 않고 tick에서 묶어 보낸다.
       break;
@@ -371,7 +383,20 @@ function handle(ws, msg) {
       // 남들 화면에도 같은 모습이 보여야 하므로 서버를 거친다.
       const r = world.activity(ws.token, msg.activity, msg.trick);
       if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
-      if (r.throttled) break;
+      if (r.throttled) {
+        // **거부했으면 권위 상태를 되돌려 준다.** 클라이언트는 반응성을 위해
+        // 먼저 로컬에 적용하므로(world.gd _apply_activity), 아무 응답도 안
+        // 보내면 "내 화면은 이중 뛰기인데 남들 화면은 기본 줄넘기"로 갈리고
+        // 속도 상한까지 어긋나 이동이 고무줄이 된다(리뷰 지적).
+        const me = world.players.get(ws.token);
+        if (me) {
+          sendTo(ws, {
+            t: 'activity', token: ws.token,
+            activity: me.activity || '', trick: me.trick || '',
+          });
+        }
+        break;
+      }
       broadcast({ t: 'activity', ...r.activity });
       if (r.ballChanged) broadcastBall(true);
       break;

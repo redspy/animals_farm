@@ -22,11 +22,12 @@ export const LIMITS = {
   // 클라이언트 이동속도(player.gd SPEED=4.2)의 1.6배. 정확한 시뮬레이션이
   // 아니라 순간이동/속도핵 완화용 상한이다.
   // 걷기 속도. 클라이언트(Player.SPEED)·활동 속도 폴백·상한이 모두 이 값에서
-  // 파생돼야 한다 — 세 곳에 4.2를 따로 적어 두면 하나만 고쳐도 알 수 없다.
+  // 파생돼야 한다 — 여러 곳에 4.2를 따로 적어 두면 하나만 고쳐도 알 수 없다.
   WALK_SPEED: 4.2,
   // 지터 여유 1.6배. 활동 속도에도 같은 비율을 적용한다(speedCapOf).
   SPEED_TOLERANCE: 1.6,
-  MAX_SPEED: 4.2 * 1.6,
+  // 걷기 상한(= 아무 운동도 하지 않을 때). 리터럴로 두면 WALK_SPEED와 갈린다.
+  get MAX_SPEED() { return this.WALK_SPEED * this.SPEED_TOLERANCE; },
   MOVE_MIN_INTERVAL_MS: 80,   // 10Hz + 여유
   ACTIVITY_MIN_INTERVAL_MS: 250,   // 운동 전환은 전원 브로드캐스트라 도배를 막는다
   GATHER_MIN_INTERVAL_MS: 250,  // 초당 4건 — 연타 채집 도배 방지
@@ -94,14 +95,33 @@ export class WorldState {
     // 운동장처럼 "그 안에서만 되는" 활동을 서버도 판정할 수 있어야 한다 —
     // 클라이언트만 막으면 변조한 클라이언트가 섬 전역에서 자전거 속도를 쓴다.
     this.zones = (worldCfg.zones || []).filter((z) => z && z.id);
+    // 축구 값도 유효범위를 강제한다(밸런스 데이터 규칙 — items의 price_range,
+    // gatherables의 respawn_sec에 이미 있는 처리다).
+    //
+    // 특히 friction: 음수면 Math.pow(음수, 0.1)이 **NaN**이 되고, 그 NaN이 공
+    // 좌표로 퍼져 JSON에서 null로 직렬화된다 — 공이 화면에서 사라지고 서버를
+    // 재시작할 때까지 복구되지 않는다. 1 이상이면 감쇠가 아니라 가속이라
+    // 공이 영원히 멈추지 않는다.
+    const s = actCfg.soccer || {};
+    const num = (value, fallback, min, max) => {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < min || n > max) {
+        if (value !== undefined) {
+          console.warn(`[animals_farm] activities.json soccer 값이 범위를 벗어나 기본값으로 대체: ${value} (허용 ${min}~${max})`);
+        }
+        return fallback;
+      }
+      return n;
+    };
     this.soccerCfg = {
-      kickRange: Number(actCfg.soccer?.kick_range) || 1.5,
-      kickSpeed: Number(actCfg.soccer?.kick_speed) || 11,
-      dribbleRange: Number(actCfg.soccer?.dribble_range) || 0.55,
-      dribbleSpeed: Number(actCfg.soccer?.dribble_speed) || 4.5,
-      friction: Number(actCfg.soccer?.friction_per_sec) || 0.28,
-      bounce: Number(actCfg.soccer?.bounce) || 0.55,
-      kickInterval: Number(actCfg.soccer?.kick_min_interval_ms) || 260,
+      kickRange: num(s.kick_range, 1.5, 0.2, 6),
+      kickSpeed: num(s.kick_speed, 13, 1, 40),
+      dribbleRange: num(s.dribble_range, 0.55, 0.1, 3),
+      dribbleSpeed: num(s.dribble_speed, 4.5, 0.5, 20),
+      // 개구간 (0,1): 0이면 즉시 정지, 1 이상이면 가속.
+      friction: num(s.friction_per_sec, 0.28, 0.001, 0.999),
+      bounce: num(s.bounce, 0.55, 0, 1),
+      kickInterval: num(s.kick_min_interval_ms, 260, 0, 5000),
     };
     this.playground = worldCfg.playground || {};
     this.field = this.playground.field || null;
@@ -244,7 +264,14 @@ export class WorldState {
 
   // ---- 플레이어 ----
 
-  join({ token, name, preset }) {
+  /**
+   * resetActivity: 운동 상태를 비울지. **소켓 동일성을 아는 쪽(전송 계층)이
+   * 정한다** — 여기서 `p.online`으로 추측하면 안 된다: 폰이 절전으로 끊길 때
+   * close가 늦게 오거나 오지 않아, 그 전에 재접속하면 online이 아직 true여서
+   * 초기화를 건너뛴다. 그러면 새 클라이언트(운동 없음)와 서버(자전거)가
+   * 어긋난 채 브로드캐스트가 돌아와 **다시 자전거를 태운다**(리뷰 지적).
+   */
+  join({ token, name, preset, resetActivity = false }) {
     if (!WorldState.validToken(token)) {
       return { error: { code: 'bad_token', message: '토큰 형식이 올바르지 않습니다' } };
     }
@@ -287,8 +314,8 @@ export class WorldState {
       // 않는 상태로 시작하므로, 서버가 옛 상태를 들고 있으면 남들 화면에는
       // 계속 자전거를 탄 모습이 보이고 **서버 이동 상한도 자전거로 열려 있다**
       // (같은 버튼을 두 번 눌러야 겨우 복구됐다). rename도 이 함수를 쓰므로
-      // **접속이 끊겼던 경우에만** 초기화한다.
-      if (!p.online) {
+      // 호출자가 "새 접속인가"를 알려 준다(resetActivity).
+      if (resetActivity || !p.online) {
         p.activity = '';
         p.trick = '';
       }
@@ -348,11 +375,24 @@ export class WorldState {
     if (typeof dir === 'string' && ['up', 'down', 'left', 'right'].includes(dir)) p.dir = dir;
     p.lastMoveAt = now;
     p.moved = true;
+    // **운동장을 벗어나면 서버도 운동을 해제한다.**
+    //
+    // 시작할 때만 검사하면 변조한 클라이언트가 운동장 안에서 자전거를 켜고
+    // 나가서 섬 전역을 자전거 상한으로 돌아다닐 수 있다 — 검사가 왕복 한 번을
+    // 추가한 것에 그친다(리뷰 지적). 정직한 클라이언트도 같은 시점에 스스로
+    // 해제하므로(world.gd의 _check_zone) 눈에 보이는 차이는 없다.
+    let dismounted = null;
+    const act = this.activities.get(p.activity || '');
+    if (act && act.zoneOnly && !this.inZone(p.x, p.z, 'playground', LIMITS.ZONE_PAD)) {
+      p.activity = '';
+      p.trick = '';
+      dismounted = { token, activity: '', trick: '' };
+    }
     // 축구 중에 공에 닿으면 밀어낸다(드리블). 차기는 별도 조작이지만, 걸어가
     // 부딪혔는데 공이 가만히 있으면 공처럼 보이지 않는다.
     this.dribble(p);
     this._markDirty();
-    return { player: p };
+    return { player: p, dismounted };
   }
 
   /** 활동별 이동 속도 상한(초당 유닛). 지터 여유는 걷기와 같은 비율로 준다. */
@@ -550,7 +590,8 @@ export class WorldState {
 
   ballState() {
     // 점수를 함께 싣는다 — docs/protocol.md가 `ball`을 {x, z, score}로 적고
-    // 클라이언트도 그렇게 읽는데, 실제로는 snapshot/goal로만 오고 있었다.
+    // 클라이언트는 이 값을 존 라벨에 "0 : 0"으로 보여 준다(골 토스트는 지나가
+    // 버려서, 지금 몇 대 몇인지 알 방법이 그것뿐이다).
     return this.ball.active
       ? { x: this.ball.x, z: this.ball.z, score: { ...this.score } }
       : null;

@@ -275,6 +275,11 @@ func _use_name_dom() -> bool:
 
 func _setup_name_dom() -> void:
 	_name_dom = true
+	# 화면 크기가 바뀌면(회전, 창 조절, 화면 크기 +/−) 자리가 즉시 달라진다 —
+	# 주기 갱신(0.4초)만 믿으면 그 사이 탭이 캔버스로 새어 포커스가 안 걸린다.
+	var vp := get_viewport()
+	if vp != null and not vp.size_changed.is_connected(_on_viewport_resized_for_name):
+		vp.size_changed.connect(_on_viewport_resized_for_name)
 	_js_name_submit = JavaScriptBridge.create_callback(_on_name_dom_submit)
 	var win := JavaScriptBridge.get_interface("window")
 	win.afNameSubmit = _js_name_submit
@@ -396,6 +401,9 @@ func _process(delta: float) -> void:
 	if again.size.x > 0.0 and not again.is_equal_approx(_name_dom_rect):
 		_name_dom_rect = again
 		_name_dom_stable = 0
+
+func _on_viewport_resized_for_name() -> void:
+	_name_dom_stable = 0
 
 func _name_dom_value() -> String:
 	var got: Variant = JavaScriptBridge.eval("""

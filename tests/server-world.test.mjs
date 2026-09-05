@@ -523,7 +523,8 @@ test('운동장 밖에서는 운동장 전용 운동을 서버가 거부한다',
   // 스폰(0,0)은 운동장 밖이다.
   assert.equal(w.activity(TOKEN_A, 'bike').error.code, 'not_in_zone',
     '클라이언트만 막으면 변조한 클라이언트가 어디서나 자전거 속도를 쓴다');
-  assert.equal(w.activity(TOKEN_A, 'kickboard', '', Date.now() + 400).activity.activity, 'kickboard',
+  // 위 호출은 거부돼 레이트 리밋을 소모하지 않으므로 시간을 미룰 필요가 없다.
+  assert.equal(w.activity(TOKEN_A, 'kickboard').activity.activity, 'kickboard',
     '킥보드는 어디서나 탈 수 있다(사용자 지정)');
 });
 
@@ -579,4 +580,62 @@ test('중앙에서 한 번 차면 공이 골라인까지 간다', () => {
   for (let i = 0; i < 80 && !goal; i++) goal = w.tickBall(0.1);
   assert.ok(goal,
     '중앙에서 한 번 차서 골라인에 닿지 않으면 킥오프마다 드리블로 밀고 가야 한다(kick_speed 확인)');
+});
+
+
+test('운동장을 벗어나면 서버가 운동을 해제한다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  p.x = Number(w.field.x);
+  p.z = Number(w.field.z);
+  w.activity(TOKEN_A, 'bike');
+  assert.ok(w.speedCapOf(p) > 10, '자전거 상한이 열렸다');
+
+  // 시작할 때만 검사하면, 운동장 안에서 켜고 나가 섬 전역을 자전거 상한으로
+  // 돌아다닐 수 있다 — 이동할 때마다 다시 봐야 한다.
+  let now = Date.now();
+  let dismounted = null;
+  for (let i = 0; i < 40 && !dismounted; i++) {
+    now += 120;
+    dismounted = w.move(TOKEN_A, { x: p.x, z: p.z + 1.2 }, now).dismounted;
+  }
+  assert.ok(dismounted, `운동장을 벗어났는데 해제되지 않았다 (z=${p.z})`);
+  assert.equal(p.activity, '');
+  assert.ok(w.speedCapOf(p) < 7, `상한도 걷기로 돌아와야 한다 (${w.speedCapOf(p)})`);
+});
+
+test('킥보드는 운동장을 벗어나도 유지된다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  w.activity(TOKEN_A, 'kickboard');
+  let now = Date.now();
+  for (let i = 0; i < 20; i++) {
+    now += 120;
+    w.move(TOKEN_A, { x: p.x + 1.2, z: p.z }, now);
+  }
+  assert.equal(p.activity, 'kickboard', '어디서나 탈 수 있는 운동은 해제되지 않는다');
+});
+
+test('close 없이 같은 토큰으로 다시 들어오면(기기 교체) 운동 상태가 초기화된다', () => {
+  const w = fresh();
+  const p = w.join({ token: TOKEN_A, name: '가', preset: 'f1' }).player;
+  p.x = Number(w.field.x);
+  p.z = Number(w.field.z);
+  w.activity(TOKEN_A, 'bike');
+  // leave()를 부르지 않는다 — 폰이 절전으로 끊길 때 close가 늦게 오거나 오지
+  // 않는 경우다. 전송 계층이 "다른 소켓"이라고 알려 주면 초기화해야 한다.
+  const again = w.join({
+    token: TOKEN_A, name: '가', preset: 'f1', resetActivity: true,
+  }).player;
+  assert.equal(again.activity, '');
+  assert.ok(w.speedCapOf(again) < 7);
+});
+
+test('축구 설정이 범위를 벗어나면 기본값으로 대체한다', () => {
+  // friction이 음수면 Math.pow(음수, 0.1)이 NaN이 되고 공 좌표가 NaN으로
+  // 퍼진다 — 공이 화면에서 사라지고 서버 재시작까지 복구되지 않는다.
+  const w = fresh();
+  assert.ok(w.soccerCfg.friction > 0 && w.soccerCfg.friction < 1);
+  assert.ok(w.soccerCfg.kickSpeed > 0);
+  assert.ok(w.soccerCfg.dribbleRange > 0);
 });

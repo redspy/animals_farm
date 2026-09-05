@@ -1082,10 +1082,35 @@ func _on_ball_received(ball: Dictionary) -> void:
 	_playground.set_ball(float(ball.get("x", 0.0)), float(ball.get("z", 0.0)))
 	if ball.has("score"):
 		_score = ball.get("score", {})
+		_refresh_zone_label()
 
 func _on_goal_scored(side: String, score: Dictionary) -> void:
 	_score = score
 	_show_toast("골! (%s 골대)" % ("왼쪽" if side == "left" else "오른쪽"))
+	_refresh_zone_label()
+
+## 존 라벨. 축구 중이면 점수를 함께 보여 준다 — 골 토스트는 지나가 버려서
+## 지금 몇 대 몇인지 알 방법이 없었다.
+func _refresh_zone_label() -> void:
+	if _zone_label == null:
+		return
+	if _current_zone.is_empty():
+		_zone_label.text = ""
+		return
+	var label := _zone_label_of(_current_zone)
+	if _current_zone == "playground":
+		var line := "[%s] 운동을 골라보세요" % label
+		if _playground != null and _playground.soccer_visible() and not _score.is_empty():
+			line = "[%s] %d : %d" % [label, int(_score.get("left", 0)), int(_score.get("right", 0))]
+		_zone_label.text = line
+		return
+	_zone_label.text = "[%s] 모임 장소 — 미니게임 준비 중" % label
+
+func _zone_label_of(id: String) -> String:
+	for z: Variant in _zones:
+		if typeof(z) == TYPE_DICTIONARY and String((z as Dictionary).get("id", "")) == id:
+			return String((z as Dictionary).get("label", id))
+	return id
 
 ## 공을 찬다. 방향은 바라보는 방향 — 다른 플레이어를 향해 서서 차면 패스가 된다.
 func _kick_ball() -> void:
@@ -1780,13 +1805,8 @@ func _check_zone() -> void:
 		return
 	var was := _current_zone
 	_current_zone = here
-	if here.is_empty():
-		_zone_label.text = ""
-	elif here == "playground":
-		_zone_label.text = "[%s] 운동을 골라보세요" % label
-		_show_toast("%s에 들어왔습니다" % label)
-	else:
-		_zone_label.text = "[%s] 모임 장소 — 미니게임 준비 중" % label
+	_refresh_zone_label()
+	if not here.is_empty():
 		_show_toast("%s에 들어왔습니다" % label)
 	# 운동장을 벗어나면 운동장에서만 할 수 있는 운동은 자동으로 그만둔다 —
 	# 트랙 밖에서 자전거를 타고 섬을 돌아다니는 것은 의도가 아니다(킥보드는
