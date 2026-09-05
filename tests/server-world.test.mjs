@@ -559,15 +559,31 @@ test('이름만 바꿀 때는 운동 상태를 잃지 않는다', () => {
 test('운동 전환은 레이트 리밋이 있다 (단, 그만두기는 예외)', () => {
   const w = fresh();
   w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  intoPlayground(w, TOKEN_A);
   const t0 = Date.now();
-  assert.ok(w.activity(TOKEN_A, 'kickboard', '', t0).activity);
-  assert.equal(w.activity(TOKEN_A, 'kickboard', '', t0 + 50).throttled, true,
+  // **값이 실제로 바뀌는** 연속 전환으로 확인한다(같은 값은 no-op으로 걸러진다).
+  assert.ok(w.activity(TOKEN_A, 'bike', '', t0).activity);
+  assert.equal(w.activity(TOKEN_A, 'inline', '', t0 + 50).throttled, true,
     '전원 브로드캐스트 + 스프라이트 재생성을 유발하므로 도배를 막아야 한다');
   // **그만두기는 스로틀하지 않는다.** 클라이언트가 운동장을 벗어나 스스로
   // 해제를 보낼 때 거부되면, 스로틀 응답이 옛 상태를 되돌려 보내 다시
   // 운동을 켜 버린다(경계에서 껐다 켜졌다 한다).
   assert.ok(w.activity(TOKEN_A, '', '', t0 + 60).activity,
     '해제는 즉시 받아들여야 한다');
+  // 간격이 지나면 다시 시작할 수 있어야 한다(복구 경로).
+  assert.ok(w.activity(TOKEN_A, 'kickboard', '', t0 + 400).activity);
+});
+
+test('아무것도 바뀌지 않는 운동 요청은 조용히 버린다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const t0 = Date.now();
+  assert.ok(w.activity(TOKEN_A, 'kickboard', '', t0).activity);
+  // 같은 값을 다시 보내면 no-op — 전원 브로드캐스트를 유발할 이유가 없다.
+  assert.equal(w.activity(TOKEN_A, 'kickboard', '', t0 + 500).noop, true);
+  // 해제도 두 번째부터는 no-op이라, 스로틀을 면제해도 도배 통로가 되지 않는다.
+  assert.ok(w.activity(TOKEN_A, '', '', t0 + 600).activity);
+  assert.equal(w.activity(TOKEN_A, '', '', t0 + 610).noop, true);
 });
 
 test('중앙에서 한 번 차면 공이 골라인까지 간다', () => {

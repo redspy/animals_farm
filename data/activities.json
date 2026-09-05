@@ -1,24 +1,97 @@
 {
-  "_comment": "운동 종류. 클라이언트는 버튼·스프라이트에, 서버는 이동 속도 상한과 유효성 검사에 같은 파일을 읽는다 — 두 곳에 숫자를 나눠 두면 '클라이언트에서는 되는데 서버가 되돌리는' 상태가 된다.",
+  "_comment": "운동/놀이 종류. 클라이언트는 버튼·스프라이트에, 서버는 이동 속도 상한과 유효성 검사에 같은 파일을 읽는다 — 두 곳에 숫자를 나눠 두면 '클라이언트에서는 되는데 서버가 되돌리는' 상태가 된다. zone은 그 활동을 할 수 있는 존 id이며(없으면 어디서나), locked는 '타고 있는 동안 직접 조작할 수 없다'는 뜻이다(놀이기구가 위치를 정한다). seats가 있으면 자리를 서버가 배정한다(trick에 자리 번호가 들어간다).",
   "schema_version": 1,
   "activities": [
     {
       "id": "jumprope",
       "label": "줄넘기",
       "speed": 1.4,
-      "zone_only": true,
       "note": "제자리 운동이라 느리다. 기술은 아래 tricks.",
       "tricks": [
-        { "id": "together", "label": "모아 뛰기" },
-        { "id": "double", "label": "이중 뛰기" },
-        { "id": "toad", "label": "토드" },
-        { "id": "cross", "label": "엇걸어 풀어 뛰기" }
-      ]
+        {
+          "id": "together",
+          "label": "모아 뛰기"
+        },
+        {
+          "id": "double",
+          "label": "이중 뛰기"
+        },
+        {
+          "id": "toad",
+          "label": "토드"
+        },
+        {
+          "id": "cross",
+          "label": "엇걸어 풀어 뛰기"
+        }
+      ],
+      "zone": "playground"
     },
-    { "id": "soccer", "label": "축구", "speed": 4.4, "zone_only": true, "note": "공을 차서 골대에 넣거나 패스한다." },
-    { "id": "bike", "label": "자전거", "speed": 7.6, "zone_only": true, "note": "트랙 바깥(초록) 레인." },
-    { "id": "inline", "label": "인라인", "speed": 6.6, "zone_only": true, "note": "트랙 안쪽(빨강) 레인." },
-    { "id": "kickboard", "label": "킥보드", "speed": 6.0, "zone_only": false, "note": "바퀴 두 개. 운동장 밖에서도 탈 수 있다(사용자 지정)." }
+    {
+      "id": "soccer",
+      "label": "축구",
+      "speed": 4.4,
+      "note": "공을 차서 골대에 넣거나 패스한다.",
+      "zone": "playground"
+    },
+    {
+      "id": "bike",
+      "label": "자전거",
+      "speed": 7.6,
+      "note": "트랙 바깥(초록) 레인.",
+      "zone": "playground"
+    },
+    {
+      "id": "inline",
+      "label": "인라인",
+      "speed": 6.6,
+      "note": "트랙 안쪽(빨강) 레인.",
+      "zone": "playground"
+    },
+    {
+      "id": "kickboard",
+      "label": "킥보드",
+      "speed": 6.0,
+      "note": "바퀴 두 개. 운동장 밖에서도 탈 수 있다(사용자 지정)."
+    },
+    {
+      "id": "slide",
+      "label": "미끄럼틀",
+      "speed": 9.0,
+      "zone": "park",
+      "locked": true,
+      "note": "사다리로 올라가 정해진 경로로 내려온다. 속도는 내려가는 구간에서 쓴다."
+    },
+    {
+      "id": "swing",
+      "label": "그네",
+      "speed": 0.8,
+      "zone": "park",
+      "locked": true,
+      "seats": 2,
+      "free_trick": true,
+      "note": "trick은 '자리:진폭'(예: 0:2). 진폭은 액션 버튼으로 올린다. 흔들림은 시간 함수라 동기화가 필요 없다."
+    },
+    {
+      "id": "carousel",
+      "label": "뺑뺑이",
+      "speed": 0.8,
+      "zone": "park",
+      "locked": true,
+      "seats": 4,
+      "free_trick": true,
+      "note": "논리 위치는 테두리 슬롯에 고정하고 보이는 위치만 돈다 — 접선 속도가 걷기보다 빨라 서버 상한에 걸린다."
+    },
+    {
+      "id": "seesaw",
+      "label": "시소",
+      "speed": 0.8,
+      "zone": "park",
+      "locked": true,
+      "seats": 2,
+      "free_trick": true,
+      "note": "기울기는 서버가 소유한다(축구공과 같은 구조). 액션 버튼으로 자기 쪽을 누른다."
+    }
   ],
   "soccer": {
     "_comment": "공 물리는 서버가 소유한다. 값은 실측으로 조정한 것 — 마찰이 크면 패스가 안 가고, 작으면 공이 계속 굴러 골대 뒤로 빠진다. kick_speed는 **중앙에서 한 번 차서 골라인(10유닛)에 닿는 값**이어야 한다: 총 이동 거리 ≈ kick_speed × tick(0.1) ÷ (1 − friction^0.1) 이므로 11.0이면 9.2유닛으로 0.8 부족했다(리뷰 지적).",
@@ -29,5 +102,21 @@
     "friction_per_sec": 0.28,
     "bounce": 0.55,
     "kick_min_interval_ms": 260
+  },
+  "park": {
+    "_comment": "놀이기구 물리·연출 값. 시소는 서버가 기울기를 적분하고, 그네·뺑뺑이는 시간 함수다.",
+    "seesaw_gravity": 2.6,
+    "seesaw_push": 2.2,
+    "seesaw_damping": 0.55,
+    "seesaw_max_angle": 0.42,
+    "seesaw_push_min_interval_ms": 400,
+    "swing_period_sec": 2.2,
+    "swing_amp_steps": [
+      0.28,
+      0.55,
+      0.85
+    ],
+    "slide_climb_sec": 0.9,
+    "carousel_push_min_interval_ms": 500
   }
 }

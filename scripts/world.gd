@@ -1639,13 +1639,19 @@ func _on_world_tapped(screen_pos: Vector2) -> void:
 		return
 	var hit: Variant = _screen_to_ground(screen_pos)
 	if hit == null:
+		if _hooks != null:
+			_hooks.set_state("tapBranch", "no_ground")
 		return
 	var point: Vector3 = hit
+	if _hooks != null:
+		_hooks.set_state("tapBranch", "ground:%.1f,%.1f" % [point.x, point.z])
 
 	# 탭한 지점 근처에 대상이 있으면 그 대상을 향한다 — 단순히 좌표로만 가면
 	# "나무 옆 정확한 자리에 서기"를 사람이 해야 하고, 그게 폰에서 가장 번거롭다.
 	var g := _gatherable_near(point)
 	if g != null:
+		if _hooks != null:
+			_hooks.set_state("tapBranch", "gather")
 		_tap_intent = {"kind": "gather", "id": ""}
 		_tap_gatherable = g
 		_player.move_to(_approach_point(g.global_position))
@@ -1664,6 +1670,8 @@ func _on_world_tapped(screen_pos: Vector2) -> void:
 
 	var drop_id := _drop_near(point)
 	if not drop_id.is_empty():
+		if _hooks != null:
+			_hooks.set_state("tapBranch", "pickup")
 		_tap_intent = {"kind": "pickup", "id": drop_id}
 		_tap_gatherable = null
 		_player.move_to(_approach_point((_drops[drop_id] as Node3D).position))
@@ -1679,6 +1687,8 @@ func _on_world_tapped(screen_pos: Vector2) -> void:
 		return
 
 	_clear_tap_intent()
+	if _hooks != null:
+		_hooks.set_state("tapBranch", "move:%.1f,%.1f" % [point.x, point.z])
 	_player.move_to(point)
 	_show_marker(point)
 
@@ -1804,7 +1814,10 @@ func _check_zone() -> void:
 			here = String(zone.get("id", ""))
 			label = String(zone.get("label", here))
 			break
-	if here == _current_zone:
+	if here == _current_zone and label == _current_zone_label:
+		# 같은 존이면 할 일이 없다. 라벨까지 비교하는 이유: 운동장은 같은 id를
+		# 가진 존이 둘(트랙·축구장)이라, 두 존이 닿게 되면 id만 보고 넘겨서는
+		# 라벨이 옛 이름으로 굳는다.
 		return
 	var was := _current_zone
 	_current_zone = here

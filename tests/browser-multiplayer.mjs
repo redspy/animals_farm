@@ -464,20 +464,32 @@ async function tapWorldPoint(page, key, tries = 4) {
   }
   return false;
 }
-// **가로로 긴 벽**을 고른다. 세로로 긴 벽은 건너편 지점이 화면 세로 시야
-// (직교 size 9.5 → ±4.75)를 넘어가 클릭할 수 없다(실측).
-const nearWall = walls
-  .filter((wl) => wl.size_x >= wl.size_z)
+// **세로로 긴 벽**을 고르고 **옆(가로)에서** 접근한다.
+//
+// 화면 시야가 가로 ±8.45, 세로 ±4.75(직교 size 9.5)로 비대칭이라, 벽을
+// 세로로 건너는 구도에서는 "건너편" 지점이 세로 한계에 겨우 걸려 실행마다
+// 통과/실패가 갈렸다(실측). 세로로 긴 벽을 옆에서 넘으면 그 지점이 가로
+// 방향이 되어 여유가 두 배가 된다. 바위 테스트도 같은 이유로 옆에서 접근한다.
+const wallPool = walls.filter((wl) => wl.size_z > wl.size_x);
+const nearWall = (wallPool.length > 0 ? wallPool : walls)
   .map((wl) => ({ wl, d: Math.hypot(wl.x - (lastPos(tokenA)?.x ?? 0), wl.z - (lastPos(tokenA)?.z ?? 0)) }))
   .sort((x, y) => x.d - y.d)[0].wl;
+const wallSide = (lastPos(tokenA)?.x ?? 0) <= nearWall.x ? -1 : 1;
+console.log(`  (석벽 ${nearWall.id} (${nearWall.x},${nearWall.z}) 옆에서 접근)`);
 // 벽에 충분히 붙어야 건너편 지점이 화면에 들어온다.
-await walkToPoint(a.page, tokenA, { x: nearWall.x, z: nearWall.z + nearWall.size_z / 2 + 2.0 }, 2.2);
+await walkToPoint(
+  a.page, tokenA,
+  { x: nearWall.x + wallSide * (nearWall.size_x / 2 + 2.0), z: nearWall.z },
+  2.2, 45000);
 // 건너편 지점이 화면에 들어올 때까지 조금 더 붙는다 — 접근 위치가 실행마다
 // 조금씩 달라 경계를 넘나들면서 테스트가 취약해졌다(실측: 같은 검증이 실행에
 // 따라 통과/실패).
 let wallClicked = await tapWorldPoint(a.page, 'beyondNearestWall');
 for (let i = 0; i < 2 && !wallClicked; i++) {
-  await walkToPoint(a.page, tokenA, { x: nearWall.x, z: nearWall.z + nearWall.size_z / 2 + 1.2 }, 1.2);
+  await walkToPoint(
+    a.page, tokenA,
+    { x: nearWall.x + wallSide * (nearWall.size_x / 2 + 1.2), z: nearWall.z },
+    1.2, 30000);
   wallClicked = await tapWorldPoint(a.page, 'beyondNearestWall');
 }
 check(wallClicked, '석벽 건너편 지점을 화면에서 찾아 클릭했다');
@@ -588,7 +600,10 @@ await tapGodot(a.page, 'invClose');
 await a.page.waitForTimeout(400);
 
 console.log('\n[검증] 채팅 열린 상태에서 맵 클릭 → 닫히며 이동');
+// 석벽 시험이 끝나면 A가 벽 모서리에 붙어 있다 — 그 자리에서 옆으로 클릭하면
+// 벽에 막혀 거의 못 움직여서 이 검증이 오해를 산다(실측). 열린 곳으로 옮긴다.
 await focusGame(a.page);
+await walkToPoint(a.page, tokenA, { x: 0, z: -10 }, 2.5, 40000);
 await a.page.keyboard.press('KeyT');
 await a.page.waitForTimeout(600);
 const chatOpen = await a.page.evaluate(() => {
@@ -608,7 +623,10 @@ const movedByClick = Math.hypot(
   (afterChatClick?.x ?? 0) - (beforeChatClick?.x ?? 0),
   (afterChatClick?.z ?? 0) - (beforeChatClick?.z ?? 0),
 );
-console.log(`  (입력창 ${chatOpen} → ${chatAfter}, 이동 거리 ${movedByClick.toFixed(2)})`);
+const tapDiag = await a.page.evaluate(() => ({
+  branch: window.afTest?.state?.tapBranch, taps: window.afTest?.state?.worldTaps,
+  x: window.afTest?.state?.x, z: window.afTest?.state?.z }));
+console.log(`  (입력창 ${chatOpen} → ${chatAfter}, 이동 거리 ${movedByClick.toFixed(2)}, 진단 ${JSON.stringify(tapDiag)})`);
 check(chatAfter === 'none', '맵을 클릭하면 채팅 입력창이 닫힌다');
 check(movedByClick > 0.8, `클릭한 지점으로 이동한다(거리 ${movedByClick.toFixed(2)})`);
 

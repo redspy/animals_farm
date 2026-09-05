@@ -108,6 +108,15 @@ func move_to(target: Vector3) -> void:
 		clampf(target.z, -_half_z, _half_z)
 	)
 	_path = PathPlanner.plan(position, clamped, _obstacles, RADIUS)
+	# **우회 경로를 못 찾아도 목표를 향해 출발한다.**
+	#
+	# 실측(2026-09-05): 석벽 모서리와 섬 경계 사이에 끼면 어느 쪽으로 돌아도
+	# 막힌 것으로 판정돼 경로가 비고, 그러면 탭해도 **아무 일도 일어나지 않아**
+	# 조작이 고장 난 것처럼 보인다. 그럴 때는 직선 목표를 그대로 넣는다 —
+	# 매 프레임 push_out이 표면을 따라 미끄러뜨리므로(수동 이동과 같은 처리)
+	# 벽을 따라 빠져나가거나, 최소한 벽에 붙어 서기라도 한다.
+	if _path.is_empty() and not position.is_equal_approx(clamped):
+		_path = [clamped]
 
 func cancel_move_to() -> void:
 	_path.clear()

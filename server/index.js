@@ -249,21 +249,7 @@ function handle(ws, msg) {
   const type = String(msg.t || '');
 
   if (type === 'join') {
-    // 한 소켓이 **다른 토큰으로** 다시 join하면 옛 토큰을 정리해야 한다.
-    // 안 하면 sockets에 옛 토큰이 이 소켓을 가리킨 채 남고, close에서는
-    // 현재 토큰만 확인하므로 옛 캐릭터가 영원히 접속 중으로 남아 스냅샷에
-    // 뜨고 남들을 밀어낸다(pushOutPlayers).
     const oldToken = ws.token;
-    if (oldToken && oldToken !== String(msg.token || '')) {
-      if (sockets.get(oldToken) === ws) sockets.delete(oldToken);
-      const gone = world.players.get(oldToken);
-      world.leave(oldToken);
-      broadcast({ t: 'leave', token: oldToken });
-      if (gone) {
-        broadcast({ t: 'system', text: `${gone.name} 님이 나갔습니다`, kind: 'leave', token: oldToken });
-      }
-      ws.token = null;
-    }
     // 같은 토큰의 **다른 소켓**이면 새 접속이다 — 그 판단은 소켓을 아는
     // 여기서 한다(world.join의 resetActivity 주석 참고).
     const prevSocket = sockets.get(String(msg.token || ''));
@@ -285,8 +271,31 @@ function handle(ws, msg) {
     }
     ws.token = p.token;
     sockets.set(p.token, ws);
-    // 재접속으로 운동 상태가 초기화됐을 수 있다(world.join) — 축구를 하던
-    // 사람이 그렇게 빠지면 공을 치워야 한다.
+
+    // 한 소켓이 **다른 토큰으로** 다시 join했으면 옛 토큰을 정리한다.
+    // 안 하면 sockets에 옛 토큰이 이 소켓을 가리킨 채 남고, close에서는 현재
+    // 토큰만 확인하므로 옛 캐릭터가 영원히 접속 중으로 남아 스냅샷에 뜨고
+    // 남들을 밀어낸다(pushOutPlayers).
+    //
+    // **소유권 검사가 정리 전체를 감싸야 한다.** delete만 검사하고 leave를
+    // 무조건 하면, 그 토큰을 이미 다른 소켓이 이어받은 경우 **남의 살아 있는
+    // 세션을 죽인다** — close 핸들러가 주석까지 달아 막아 둔 그 버그를 join
+    // 경로에 다시 내는 셈이다(2026-09-05 "나갔다가 들어왔는데 보이지 않아").
+    //
+    // 또 join **성공 뒤**에 정리한다: 앞에서 하면 이름 검증 실패로 되돌아갈 때
+    // 옛 캐릭터만 내보내고 공 정리(refreshBall)는 지나쳐, 아무도 축구를 하지
+    // 않는데 공이 남는다.
+    if (oldToken && oldToken !== p.token && sockets.get(oldToken) === ws) {
+      sockets.delete(oldToken);
+      const gone = world.players.get(oldToken);
+      world.leave(oldToken);
+      broadcast({ t: 'leave', token: oldToken });
+      if (gone) {
+        broadcast({ t: 'system', text: `${gone.name} 님이 나갔습니다`, kind: 'leave', token: oldToken });
+      }
+    }
+    // 재접속·토큰 교체로 운동 상태가 초기화됐을 수 있다 — 축구를 하던 사람이
+    // 그렇게 빠지면 공을 치워야 한다.
     if (world.refreshBall()) broadcastBall(true);
 
     sendTo(ws, {
@@ -299,6 +308,7 @@ function handle(ws, msg) {
       world: { size_x: world.sizeX, size_z: world.sizeZ },
     });
     sendTo(ws, { t: 'snapshot', ...world.snapshot() });
+    lastParkSent = null;   // 새 접속자에게 다음 변화가 반드시 가도록
     broadcast({
       t: 'join',
       player: {
@@ -371,6 +381,7 @@ function handle(ws, msg) {
         resync: true,
       });
       sendTo(ws, { t: 'snapshot', ...world.snapshot() });
+    lastParkSent = null;   // 새 접속자에게 다음 변화가 반드시 가도록
       break;
     }
     case 'sell': {
@@ -398,6 +409,9 @@ function handle(ws, msg) {
       // 남들 화면에도 같은 모습이 보여야 하므로 서버를 거친다.
       const r = world.activity(ws.token, msg.activity, msg.trick);
       if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      // 아무것도 바뀌지 않는 요청은 조용히 버린다 — 전원 브로드캐스트를
+      // 유발할 이유가 없다(도배 방어의 실질적인 지점이다).
+      if (r.noop) break;
       if (r.throttled) {
         // **거부했으면 권위 상태를 되돌려 준다.** 클라이언트는 반응성을 위해
         // 먼저 로컬에 적용하므로(world.gd _apply_activity), 아무 응답도 안
@@ -414,6 +428,14 @@ function handle(ws, msg) {
       }
       broadcast({ t: 'activity', ...r.activity });
       if (r.ballChanged) broadcastBall(true);
+      break;
+    }
+    case 'push': {
+      // 놀이기구 밀기(시소·뺑뺑이). 타고 있는 사람만 밀 수 있다.
+      const r = world.pushRide(ws.token, String(msg.what || ''));
+      if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      if (r.throttled) break;
+      broadcastPark(true);
       break;
     }
     case 'kick': {
@@ -452,6 +474,19 @@ function broadcastBall(force = false) {
   broadcast({ t: 'ball', ball: b });
 }
 
+/**
+ * 놀이기구 상태(시소 기울기·뺑뺑이 각도)를 알린다. 움직이는 동안만 보낸다 —
+ * 멈춘 기구를 10Hz로 계속 알릴 이유가 없다(공과 같은 규칙).
+ */
+let lastParkSent = null;
+function broadcastPark(force = false) {
+  const s = world.parkState();
+  const key = `${s.seesaw}|${s.carousel}|${s.carouselSpeed}`;
+  if (!force && lastParkSent === key) return;
+  lastParkSent = key;
+  broadcast({ t: 'park', park: s });
+}
+
 // 이동은 10Hz로 묶어 브로드캐스트한다 — 개별 전송하면 N명이 동시에 움직일 때
 // 메시지 수가 N²로 늘어난다.
 const TICK_MS = 100;
@@ -467,6 +502,8 @@ setInterval(() => {
   } else {
     broadcastBall(false);
   }
+  // 놀이기구 물리도 같은 틱에서 돈다.
+  if (world.tickPark(TICK_MS / 1000)) broadcastPark(false);
 }, TICK_MS);
 
 // 죽은 연결 정리 — 브라우저 탭이 그냥 사라지면 close 이벤트가 안 올 수 있다.

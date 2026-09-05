@@ -138,7 +138,7 @@
       "kind": "tree",
       "item": "fruit",
       "x": 1.5,
-      "z": 16.5,
+      "z": 7.6,
       "respawn_sec": 45
     },
     {
@@ -264,7 +264,7 @@
       "kind": "tree",
       "item": "fruit",
       "x": 6.0,
-      "z": 18.5,
+      "z": 7.6,
       "respawn_sec": 30
     },
     {

@@ -72,16 +72,20 @@ export class WorldState {
     // 서버가 자기 사본을 갖고 있으면 둘이 갈려서 경계가 어긋난다.
     const worldCfg = readJson(join(dataDir, 'world.json'), {});
     /** 범위를 벗어난 데이터는 기본값으로 대체하고 알린다(밸런스 데이터 규칙). */
-    const num = (value, fallback, min, max) => {
+    const num = (value, fallback, min, max, key = '값') => {
       const n = Number(value);
       if (!Number.isFinite(n) || n < min || n > max) {
         if (value !== undefined) {
-          console.warn(`[animals_farm] 설정값이 범위를 벗어나 기본값으로 대체: ${value} (허용 ${min}~${max})`);
+          // 어느 파일 어느 키인지 없으면 찾을 수 없다 — 키를 함께 찍는다.
+          console.warn(`[animals_farm] ${key}이(가) 범위를 벗어나 기본값(${fallback})으로 대체: ${value} (허용 ${min}~${max})`);
         }
         return fallback;
       }
       return n;
     };
+    // 섬 크기는 축구장 좌표 검증에 쓰므로 먼저 읽는다.
+    const islandX = Number(worldCfg.size_x) || 50.7;
+    const islandZ = Number(worldCfg.size_z) || 28.5;
     // 운동(활동)과 운동장 — 클라이언트와 **같은 파일**을 읽는다. 활동별 이동
     // 속도 상한이 서버에만 다르게 있으면 "자전거를 탔는데 서버가 계속
     // 되돌리는" 상태가 된다.
@@ -99,7 +103,14 @@ export class WorldState {
       }
       this.activities.set(String(a.id), {
         speed: valid ? speed : LIMITS.WALK_SPEED,
-        zoneOnly: a.zone_only !== false,
+        // 그 활동을 할 수 있는 존 id. 없으면 어디서나(킥보드).
+        zone: a.zone ? String(a.zone) : '',
+        // 타고 있는 동안 직접 조작할 수 없다 — 놀이기구가 위치를 정한다.
+        locked: a.locked === true,
+        // 자리가 있으면 **서버가 배정한다**(같은 자리에 둘이 앉는 것을 막는다).
+        seats: Number.isFinite(Number(a.seats)) ? Math.max(0, Math.floor(Number(a.seats))) : 0,
+        // 미리 정한 목록이 아닌 값을 trick에 담는 활동(그네의 '자리:진폭' 등).
+        freeTrick: a.free_trick === true,
         tricks: new Set((a.tricks || []).map((k) => String(k.id))),
       });
     }
@@ -115,15 +126,33 @@ export class WorldState {
     // 공이 영원히 멈추지 않는다.
     const s = actCfg.soccer || {};
     this.soccerCfg = {
-      kickRange: num(s.kick_range, 1.5, 0.2, 6),
-      kickSpeed: num(s.kick_speed, 13, 1, 40),
-      dribbleRange: num(s.dribble_range, 0.55, 0.1, 3),
-      dribbleSpeed: num(s.dribble_speed, 4.5, 0.5, 20),
+      kickRange: num(s.kick_range, 1.5, 0.2, 6, 'soccer.kick_range'),
+      kickSpeed: num(s.kick_speed, 13, 1, 40, 'soccer.kick_speed'),
+      dribbleRange: num(s.dribble_range, 0.55, 0.1, 3, 'soccer.dribble_range'),
+      dribbleSpeed: num(s.dribble_speed, 4.5, 0.5, 20, 'soccer.dribble_speed'),
       // 개구간 (0,1): 0이면 즉시 정지, 1 이상이면 가속.
-      friction: num(s.friction_per_sec, 0.28, 0.001, 0.999),
-      bounce: num(s.bounce, 0.55, 0, 1),
-      kickInterval: num(s.kick_min_interval_ms, 260, 0, 5000),
+      friction: num(s.friction_per_sec, 0.28, 0.001, 0.999, 'soccer.friction_per_sec'),
+      bounce: num(s.bounce, 0.55, 0, 1, 'soccer.bounce'),
+      kickInterval: num(s.kick_min_interval_ms, 260, 0, 5000, 'soccer.kick_min_interval_ms'),
     };
+    // 놀이터(park) — 놀이기구 물리 값과 기구 좌표.
+    const pk = actCfg.park || {};
+    this.parkCfg = {
+      seesawGravity: num(pk.seesaw_gravity, 2.6, 0.1, 20, 'park.seesaw_gravity'),
+      seesawPush: num(pk.seesaw_push, 2.2, 0.1, 20, 'park.seesaw_push'),
+      seesawDamping: num(pk.seesaw_damping, 0.55, 0.01, 0.999, 'park.seesaw_damping'),
+      seesawMaxAngle: num(pk.seesaw_max_angle, 0.42, 0.05, 1.4, 'park.seesaw_max_angle'),
+      seesawPushInterval: num(pk.seesaw_push_min_interval_ms, 400, 0, 5000, 'park.seesaw_push_min_interval_ms'),
+      carouselPushInterval: num(pk.carousel_push_min_interval_ms, 500, 0, 5000, 'park.carousel_push_min_interval_ms'),
+    };
+    this.park = worldCfg.park || {};
+    // 시소 기울기는 **서버가 소유한다**(축구공과 같은 이유: 각자 계산하면
+    // 기기마다 다르게 기울어 누가 위에 있는지가 갈린다).
+    // 뺑뺑이는 각도를 서버가 적분해 방송한다 — 밀 때마다 속도가 바뀌므로
+    // 시간 함수로는 맞출 수 없다.
+    this.seesaw = { angle: 0, vel: 0 };
+    this.carousel = { angle: 0, speed: 0 };
+
     this.playground = worldCfg.playground || {};
     // 축구장 값도 정규화한다 — size_x가 없거나 오타면 hx가 NaN이 되어 골 판정과
     // 경계 반사가 모두 false가 되고, 공이 섬 밖으로 무한히 굴러간다(friction과
@@ -131,12 +160,13 @@ export class WorldState {
     const rawField = this.playground.field || null;
     this.field = rawField
       ? {
-        x: num(rawField.x, 0, -1000, 1000),
-        z: num(rawField.z, 0, -1000, 1000),
-        size_x: num(rawField.size_x, 20, 2, 500),
-        size_z: num(rawField.size_z, 12, 2, 500),
-        goal_width: num(rawField.goal_width, 4.4, 0.5, 100),
-        goal_depth: num(rawField.goal_depth, 1.1, 0.1, 50),
+        // 범위는 섬 안이어야 한다 — 섬 밖 축구장은 통과시키면 안 된다.
+        x: num(rawField.x, 0, -islandX / 2, islandX / 2, 'playground.field.x'),
+        z: num(rawField.z, 0, -islandZ / 2, islandZ / 2, 'playground.field.z'),
+        size_x: num(rawField.size_x, 20, 2, islandX, 'playground.field.size_x'),
+        size_z: num(rawField.size_z, 12, 2, islandZ, 'playground.field.size_z'),
+        goal_width: num(rawField.goal_width, 4.4, 0.5, islandZ, 'playground.field.goal_width'),
+        goal_depth: num(rawField.goal_depth, 1.1, 0.1, 20, 'playground.field.goal_depth'),
       }
       : null;
     // 공 상태. active는 "축구를 하는 사람이 있다"는 뜻이다 — 아무도 없으면
@@ -316,6 +346,7 @@ export class WorldState {
         trick: '',
         lastKickAt: 0,
         lastActivityAt: 0,
+        lastPushAt: 0,
       };
       this.players.set(token, p);
       this._markDirty();
@@ -397,7 +428,7 @@ export class WorldState {
     // 해제하므로(world.gd의 _check_zone) 눈에 보이는 차이는 없다.
     let dismounted = null;
     const act = this.activities.get(p.activity || '');
-    if (act && act.zoneOnly && !this.inZone(p.x, p.z, 'playground', LIMITS.ZONE_PAD)) {
+    if (act && act.zone && !this.inZone(p.x, p.z, act.zone, LIMITS.ZONE_PAD)) {
       p.activity = '';
       p.trick = '';
       dismounted = { token, activity: '', trick: '' };
@@ -457,27 +488,62 @@ export class WorldState {
     // 받는 쪽은 처음 보는 (운동, 기술) 조합마다 스프라이트 프레임을 새로
     // 만들기까지 한다(PlayerSprite) — 남의 클라이언트에 프레임 스파이크를 준다.
     const id = String(kind || '');
-    // **그만두기는 스로틀하지 않는다.** 클라이언트가 운동장을 벗어나 스스로
-    // 해제를 보낼 때 그게 거부되면, 스로틀 응답이 권위 상태(자전거)를 되돌려
-    // 보내 클라이언트가 다시 자전거를 탄다 — 경계에서 껐다 켜졌다 한다
-    // (리뷰 지적). 해제는 상태를 줄이는 방향이라 도배 위험도 낮다.
-    if (id !== '' && now - (p.lastActivityAt || 0) < LIMITS.ACTIVITY_MIN_INTERVAL_MS) {
-      return { throttled: true };
-    }
     if (id && !this.activities.has(id)) {
       return { error: { code: 'bad_activity', message: '알 수 없는 운동' } };
     }
+    const act = id ? this.activities.get(id) : null;
+    let wanted = String(trick || '');
+    if (act && wanted) {
+      if (act.freeTrick) {
+        // 자유 형식이지만 그대로 방송하므로 형태를 좁힌다(자리:진폭 같은 값).
+        wanted = /^[0-9:]{1,5}$/.test(wanted) ? wanted : '';
+      } else if (!act.tricks.has(wanted)) {
+        wanted = '';
+      }
+    }
+    // 자리가 있는 기구는 **서버가 빈 자리를 배정한다.** 클라이언트가 고른 자리가
+    // 이미 찼으면 다른 빈 자리로 옮기고, 없으면 거절한다 — 그러지 않으면 두
+    // 사람이 같은 좌석에 겹쳐 앉는다.
+    if (act && act.seats > 0) {
+      const taken = new Set();
+      for (const other of this.players.values()) {
+        if (other.token === token || !other.online || other.activity !== id) continue;
+        taken.add(String(other.trick || '').split(':')[0]);
+      }
+      const parts = wanted.split(':');
+      const rest = parts.length > 1 ? parts.slice(1).join(':') : '';
+      let seat = Number.parseInt(parts[0], 10);
+      if (!Number.isInteger(seat) || seat < 0 || seat >= act.seats || taken.has(String(seat))) {
+        seat = -1;
+        for (let i = 0; i < act.seats; i += 1) {
+          if (!taken.has(String(i))) { seat = i; break; }
+        }
+      }
+      if (seat < 0) {
+        return { error: { code: 'seat_taken', message: '빈 자리가 없습니다' } };
+      }
+      wanted = rest ? `${seat}:${rest}` : String(seat);
+    }
+    // **아무것도 바뀌지 않으면 조용히 끝낸다.** 도배를 막는 실질적인 지점이
+    // 여기다(같은 값을 최대 속도로 보내도 브로드캐스트가 나가지 않는다).
+    if (id === (p.activity || '') && wanted === (p.trick || '')) {
+      return { noop: true };
+    }
+    // **그만두기는 스로틀하지 않는다.** 클라이언트가 운동장을 벗어나 스스로
+    // 해제를 보낼 때 그게 거부되면, 스로틀 응답이 권위 상태(자전거)를 되돌려
+    // 보내 클라이언트가 다시 자전거를 탄다 — 경계에서 껐다 켜졌다 한다
+    // (리뷰 지적). 해제는 상태를 줄이는 방향이고, 위 no-op 검사가 반복을 막는다.
+    if (id !== '' && now - (p.lastActivityAt || 0) < LIMITS.ACTIVITY_MIN_INTERVAL_MS) {
+      return { throttled: true };
+    }
     // 운동장에서만 하는 운동은 **서버도** 위치를 본다. 클라이언트만 막으면
     // 변조한 클라이언트가 어디서나 자전거 속도 상한을 받는다.
-    if (id && this.activities.get(id).zoneOnly
-        && !this.inZone(p.x, p.z, 'playground', LIMITS.ZONE_PAD)) {
-      return { error: { code: 'not_in_zone', message: '운동장에서만 할 수 있습니다' } };
+    if (act && act.zone && !this.inZone(p.x, p.z, act.zone, LIMITS.ZONE_PAD)) {
+      return { error: { code: 'not_in_zone', message: '그 장소에서만 할 수 있습니다' } };
     }
     p.lastActivityAt = now;
-    let t = String(trick || '');
-    if (id && t && !this.activities.get(id).tricks.has(t)) t = '';
     p.activity = id;
-    p.trick = id ? t : '';
+    p.trick = id ? wanted : '';
     // 축구하는 사람이 생기면 공을 내보내고, 아무도 없으면 치운다.
     const changed = this.refreshBall();
     this._markDirty();
@@ -550,6 +616,84 @@ export class WorldState {
     this.ball.vx = vx * this.soccerCfg.kickSpeed;
     this.ball.vz = vz * this.soccerCfg.kickSpeed;
     return { kicked: { token, x: this.ball.x, z: this.ball.z, vx: this.ball.vx, vz: this.ball.vz } };
+  }
+
+  /**
+   * 놀이기구를 민다(액션 버튼). what: 'seesaw' | 'carousel'.
+   * **타고 있는 사람만** 밀 수 있다 — 지나가면서 남의 기구를 흔들 수는 없다.
+   */
+  pushRide(token, what, now = Date.now()) {
+    const p = this.players.get(token);
+    if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
+    if (p.activity !== what) {
+      return { error: { code: 'not_riding', message: '타고 있을 때만 밀 수 있습니다' } };
+    }
+    if (what === 'seesaw') {
+      if (now - (p.lastPushAt || 0) < this.parkCfg.seesawPushInterval) return { throttled: true };
+      p.lastPushAt = now;
+      // 자리 0은 -각, 자리 1은 +각 방향으로 누른다.
+      const seat = Number.parseInt(String(p.trick || '0').split(':')[0], 10) || 0;
+      this.seesaw.vel += (seat === 0 ? 1 : -1) * this.parkCfg.seesawPush;
+      return { pushed: 'seesaw' };
+    }
+    if (what === 'carousel') {
+      if (now - (p.lastPushAt || 0) < this.parkCfg.carouselPushInterval) return { throttled: true };
+      p.lastPushAt = now;
+      this.carousel.speed = Math.min(this.carousel.speed + 1.4, 5.0);
+      return { pushed: 'carousel' };
+    }
+    return { error: { code: 'bad_ride', message: '알 수 없는 놀이기구' } };
+  }
+
+  /** 타고 있는 사람이 있는지. 아무도 없으면 물리를 돌리지 않는다. */
+  hasRider(kind) {
+    for (const p of this.players.values()) {
+      if (p.online && p.activity === kind) return true;
+    }
+    return false;
+  }
+
+  /**
+   * 놀이기구 물리 한 스텝. 바뀐 값이 있으면 돌려준다(없으면 null).
+   * 시소는 중력으로 수평으로 돌아오고, 뺑뺑이는 마찰로 느려진다.
+   */
+  tickPark(dt) {
+    const before = { seesaw: this.seesaw.angle, carousel: this.carousel.angle };
+    const cfg = this.parkCfg;
+    // 시소: 스프링-감쇠. 아무도 안 타면 수평으로 돌려놓는다.
+    if (this.hasRider('seesaw') || Math.abs(this.seesaw.angle) > 0.001 || Math.abs(this.seesaw.vel) > 0.001) {
+      this.seesaw.vel -= this.seesaw.angle * cfg.seesawGravity * dt;
+      this.seesaw.vel *= Math.pow(cfg.seesawDamping, dt);
+      this.seesaw.angle += this.seesaw.vel * dt;
+      if (this.seesaw.angle > cfg.seesawMaxAngle) {
+        this.seesaw.angle = cfg.seesawMaxAngle;
+        this.seesaw.vel = -Math.abs(this.seesaw.vel) * 0.3;
+      } else if (this.seesaw.angle < -cfg.seesawMaxAngle) {
+        this.seesaw.angle = -cfg.seesawMaxAngle;
+        this.seesaw.vel = Math.abs(this.seesaw.vel) * 0.3;
+      }
+      if (!this.hasRider('seesaw') && Math.abs(this.seesaw.angle) < 0.01 && Math.abs(this.seesaw.vel) < 0.05) {
+        this.seesaw.angle = 0;
+        this.seesaw.vel = 0;
+      }
+    }
+    // 뺑뺑이: 밀면 빨라지고 마찰로 느려진다.
+    if (this.carousel.speed > 0.001) {
+      this.carousel.angle = (this.carousel.angle + this.carousel.speed * dt) % (Math.PI * 2);
+      this.carousel.speed *= Math.pow(0.55, dt);
+      if (this.carousel.speed < 0.05) this.carousel.speed = 0;
+    }
+    const changed = Math.abs(before.seesaw - this.seesaw.angle) > 0.0005
+      || Math.abs(before.carousel - this.carousel.angle) > 0.0005;
+    return changed ? this.parkState() : null;
+  }
+
+  parkState() {
+    return {
+      seesaw: Math.round(this.seesaw.angle * 1000) / 1000,
+      carousel: Math.round(this.carousel.angle * 1000) / 1000,
+      carouselSpeed: Math.round(this.carousel.speed * 100) / 100,
+    };
   }
 
   static dirVector(dir) {
@@ -796,6 +940,8 @@ export class WorldState {
     }
     return {
       players,
+      // 놀이기구 상태(시소 기울기·뺑뺑이 각도). 새로 들어온 사람도 맞춰야 한다.
+      park: this.parkState(),
       // 공은 축구를 하는 사람이 있을 때만 의미가 있다.
       ball: this.ball.active
         ? { x: this.ball.x, z: this.ball.z, score: { ...this.score } }

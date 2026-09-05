@@ -27,7 +27,18 @@
     "goal_post": "#eef1f2",
     "goal_net": "#ffffff59",
     "ball": "#fbfbf7",
-    "ball_dark": "#2f3336"
+    "ball_dark": "#2f3336",
+    "park_sand": "#e0c48c",
+    "park_edge": "#c9a86a",
+    "slide_frame": "#d94f4f",
+    "slide_surface": "#f2c14e",
+    "swing_frame": "#4f8fd9",
+    "swing_seat": "#5b4636",
+    "swing_rope": "#9aa3ad",
+    "carousel_deck": "#3fa96b",
+    "carousel_bar": "#e8e8e0",
+    "seesaw_plank": "#e07b39",
+    "seesaw_pivot": "#7c6f63"
   },
   "ui": {
     "hud_text": "#ffffff",
