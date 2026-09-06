@@ -102,7 +102,6 @@ const state = async () => await page.evaluate(() => ({
   x: Number(window.afTest?.state?.x ?? 0),
   z: Number(window.afTest?.state?.z ?? 0),
   act: String(window.afTest?.state?.activity ?? ''),
-  trick: String(window.afTest?.state?.trick ?? ''),
   zone: String(window.afTest?.state?.zone ?? ''),
   fishing: String(window.afTest?.state?.fishing ?? ''),
   bag: Number(window.afTest?.state?.bagCount ?? 0),
@@ -178,45 +177,100 @@ async function clickWorld(x, z) {
 
 
 // ---------------------------------------------------------------------------
-// 낚시터까지 걸어가 낚시를 해 본다.
+// 낚시터 세 곳에서 각각 다른 시나리오를 확인한다.
+//
+// **시나리오마다 다른 낚시터를 쓴다.** 한 곳을 공유하면 앞 시나리오가 그 자리를
+// 소모(20초 쿨다운)하거나 그 판정이 다음 시나리오에 섞여, 실패가 "왜 그런지 알 수
+// 없는" 간헐 실패가 된다(실측: 헛챔질 시나리오가 물기 순간과 겹쳐 물고기를 잡아
+// 버리고, 다음 단계의 가방 비교가 어긋났다).
 // ---------------------------------------------------------------------------
 import { readFileSync } from 'node:fs';
 
 const gcfg = JSON.parse(readFileSync('data/gatherables.json', 'utf-8'));
 const fishCfg = JSON.parse(readFileSync('data/activities.json', 'utf-8')).fishing;
-// 스폰(0,0)에서 가장 가까운 낚시터를 고른다 — 좌표를 박으면 데이터를 고칠 때
-// 조용히 엉뚱한 자리를 탭한다.
-const spot = gcfg.spawns
-  .map((s, index) => ({ ...s, index }))
-  .filter((s) => s.kind === 'fishing')
-  .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))[0];
-console.log(`\n[검증] 낚시 — 목표 낚시터 (${spot.x}, ${spot.z}) index=${spot.index}`);
-
-// z를 먼저 맞추고 x를 맞춘다(대각선으로 가면 바위·벽에 걸려 멈춘다).
-await walkTo('z', spot.z + 1.2);
-await walkTo('x', spot.x);
-const near = await state();
-const dist = Math.hypot(near.x - spot.x, near.z - spot.z);
-check(dist < 3.0, `낚시터 근처까지 이동 (거리 ${dist.toFixed(2)})`);
-
-// (1) 낚시터를 탭하면 다가가서 낚시가 켜진다.
-await clickWorld(spot.x, spot.z);
-const casting = await waitState((s) => s.fishing === 'wait', 12000);
-check(casting.fishing === 'wait', `낚시터를 탭하면 낚시가 시작된다 (fishing=${casting.fishing})`);
-check(casting.act === 'fishing', `활동이 낚시로 바뀐다 (act=${casting.act})`);
-await page.screenshot({ path: `${OUT}/1-낚시-대기.png` }).catch(() => {});
-
-// (2) 물기 전에 누르면 헛챔질 — 가방은 늘지 않는다.
-const bagBefore = (await state()).bag;
-await page.keyboard.press('Space');
-const early = await waitState((s) => s.fishing === 'off', 3000);
-check(early.fishing === 'off', '물기 전에 누르면 낚시가 끝난다(헛챔질)');
-check(early.bag === bagBefore, `헛챔질로는 가방이 늘지 않는다 (${bagBefore} → ${early.bag})`);
-
-// (3) 다시 던지고 **물 때까지** 기다렸다가 누르면 잡힌다.
-await clickWorld(spot.x, spot.z);
-await waitState((s) => s.fishing === 'wait', 12000);
 const maxWait = Number(fishCfg.wait_max_sec) * 1000 + 3000;
+
+// 남쪽 해안선에서 **두 곳**만 쓴다. 좌표를 박지 않고 데이터에서 고른다 —
+// 동쪽으로 가면 x≈7.5의 석벽에, 서쪽 끝(-34)으로 가면 wall_west 근처에서 걷기가
+// 막힌다(실측: 목표까지 16유닛을 남기고 멈췄다).
+//
+// 소모되는 시나리오(성공)만 두 번째 낚시터에서 하고, 소모되지 않는 것(헛챔질·
+// 놓침·우회 차단)은 첫 낚시터에서 한다 — 쿨다운이 다음 시나리오에 섞이지 않는다.
+const spots = gcfg.spawns
+  .map((s, index) => ({ ...s, index }))
+  .filter((s) => s.kind === 'fishing' && s.z < -10 && s.x <= 5 && s.x >= -20)
+  .sort((a, b) => b.x - a.x)
+  .slice(0, 2);
+if (spots.length < 2) throw new Error(`쓸 수 있는 낚시터가 2곳 미만이다(${spots.length}) — 테스트 전제가 깨졌다`);
+
+/** 낚시터 근처로 걸어간다. */
+async function approach(spot) {
+  await walkTo('z', spot.z + 1.2);
+  await walkTo('x', spot.x);
+  const near = await state();
+  const dist = Math.hypot(near.x - spot.x, near.z - spot.z);
+  check(dist < 3.0, `낚시터(${spot.x}, ${spot.z}) 근처까지 이동 (거리 ${dist.toFixed(2)})`);
+  return dist;
+}
+
+/** 탭해서 낚시를 시작하고, 시작된 상태를 돌려준다.
+ *  낚시 상태는 전이할 때 즉시 게시되므로(world.gd의 _publish_fish_state) 여기서
+ *  보는 값은 지연 없는 값이다 — 그래야 "물기 전"이라는 전제가 성립한다. */
+async function cast(spot) {
+  await clickWorld(spot.x, spot.z);
+  const t0 = Date.now();
+  let s = await state();
+  let retried = false;
+  while (Date.now() - t0 < 12000 && s.fishing !== 'wait') {
+    if (!retried && Date.now() - t0 > 5000) { retried = true; await clickWorld(spot.x, spot.z); }
+    await page.waitForTimeout(40);
+    s = await state();
+  }
+  return s;
+}
+
+// --- (1) 물기 전에 누르면 헛챔질 (자리를 소모하지 않는다) ---
+console.log(`\n[검증] 헛챔질 — 낚시터 (${spots[0].x}, ${spots[0].z})`);
+await approach(spots[0]);
+const early = await cast(spots[0]);
+check(early.fishing === 'wait', `낚시터를 탭하면 낚시가 시작된다 (fishing=${early.fishing})`);
+check(early.act === 'fishing', `활동이 낚시로 바뀐다 (act=${early.act})`);
+const seenFishing = await waitFor((m) => m.t === 'activity' && m.activity === 'fishing');
+check(!!seenFishing, '낚시 활동이 다른 기기로 전달된다(activity 브로드캐스트)');
+await page.screenshot({ path: `${OUT}/1-낚시-대기.png` }).catch(() => {});
+await page.keyboard.press('Space');
+const afterEarly = await waitState((s) => s.fishing === 'off', 3000);
+check(afterEarly.fishing === 'off', '물기 전에 누르면 낚시가 끝난다(헛챔질)');
+check(afterEarly.bag === early.bag,
+  `헛챔질로는 가방이 늘지 않는다 (${early.bag} → ${afterEarly.bag})`);
+
+// --- (2) 액션 버튼으로 낚시를 우회할 수 없다 ---
+// 회귀 방지: _try_gather는 종류를 보지 않고 사거리 안 가장 가까운 것을 캐므로,
+// 낚시터 옆에서 버튼만 눌러도 대기·타이밍을 건너뛰고 물고기가 나왔다.
+console.log('\n[검증] 우회 차단 — 같은 낚시터에서 액션 버튼만 누른다');
+const beforeBypass = await state();
+await page.keyboard.press('Space');
+const bypass = await waitState((s) => s.fishing === 'wait', 3000);
+check(bypass.fishing === 'wait',
+  `낚시터 옆에서 액션을 누르면 채집이 아니라 낚시가 시작된다 (fishing=${bypass.fishing})`);
+check(bypass.bag === beforeBypass.bag,
+  `그 순간 가방이 늘지 않는다 (${beforeBypass.bag} → ${bypass.bag})`);
+
+// --- (3) 물었는데 안 누르면 놓친다 (역시 자리를 소모하지 않는다) ---
+console.log('\n[검증] 놓침 — 같은 낚시터, 물었지만 누르지 않는다');
+const bitMiss = await waitState((s) => s.fishing === 'bite', maxWait);
+check(bitMiss.fishing === 'bite', `기다리면 물고기가 문다 (fishing=${bitMiss.fishing})`);
+const bagAtMiss = bitMiss.bag;
+await page.waitForTimeout(Number(fishCfg.bite_sec) * 1000 + 900);
+const missed = await state();
+check(missed.fishing === 'off', `놓치면 낚시가 끝난다 (fishing=${missed.fishing})`);
+check(missed.bag === bagAtMiss, `놓치면 가방이 늘지 않는다 (${bagAtMiss} → ${missed.bag})`);
+
+// --- (4) 제한 시간 안에 채면 잡힌다 (이 자리는 소모된다) ---
+console.log(`\n[검증] 성공 — 낚시터 (${spots[1].x}, ${spots[1].z})`);
+await approach(spots[1]);
+const cast2 = await cast(spots[1]);
+check(cast2.fishing === 'wait', `두 번째 낚시터에서 낚시가 시작된다 (fishing=${cast2.fishing})`);
 const bit = await waitState((s) => s.fishing === 'bite', maxWait);
 check(bit.fishing === 'bite', `기다리면 물고기가 문다 (fishing=${bit.fishing})`);
 await page.screenshot({ path: `${OUT}/2-낚시-물기.png` }).catch(() => {});
@@ -224,48 +278,15 @@ const bagAtBite = bit.bag;
 await page.keyboard.press('Space');
 const caught = await waitState((s) => s.bag > bagAtBite, 6000);
 check(caught.bag > bagAtBite, `제한 시간 안에 채면 잡힌다 (가방 ${bagAtBite} → ${caught.bag})`);
-// 가방 개수(inventory 메시지)와 획득 아이템(gathered 브로드캐스트)은 **다른
-// 메시지**라 훅 게시(0.25초)가 그 사이에 끼면 lastGather가 아직 비어 있다 —
-// 개수만 보고 단정하면 간헐 실패가 된다.
+// 가방 개수(inventory)와 획득 아이템(gathered)은 **다른 메시지**라 훅 게시가
+// 그 사이에 끼면 lastGather가 아직 비어 있다 — 개수만 보고 단정하면 안 된다.
 const named = await waitState((s) => s.last.length > 0, 4000);
 const fishIds = new Set(gcfg.catch_tables.fishing.map((r) => r.item));
 check(fishIds.has(named.last), `잡힌 것이 낚시 테이블의 항목이다 (${named.last})`);
 check(caught.fishing === 'off', '잡으면 낚시가 끝난다');
+const seenGathered = await waitFor((m) => m.t === 'gathered' && m.index === spots[1].index);
+check(!!seenGathered, `캔 낚시터가 다른 기기에도 전달된다 (item=${seenGathered && seenGathered.item})`);
 await page.screenshot({ path: `${OUT}/3-낚시-성공.png` }).catch(() => {});
-
-// (4) 물었는데 놓치면 가방이 늘지 않고 상태만 풀린다.
-//     낚시터는 방금 잡아서 쿨다운(respawn_sec)이라, 다른 낚시터를 쓴다.
-// **서쪽 낚시터를 고른다.** 동쪽으로 가면 x≈7.5의 석벽(z −20.5~−15.5)에 막혀
-// 걷다가 멈추고, 그러면 탭 지점이 화면 밖이라 낚시가 시작되지 않는다(실측).
-const others = gcfg.spawns
-  .map((s, index) => ({ ...s, index }))
-  .filter((s) => s.kind === 'fishing' && s.index !== spot.index);
-const westward = others.filter((s) => s.x < caught.x - 3.0);
-const other = (westward.length ? westward : others)
-  .sort((a, b) => Math.hypot(a.x - caught.x, a.z - caught.z) - Math.hypot(b.x - caught.x, b.z - caught.z))[0];
-console.log(`   두 번째 낚시터 (${other.x}, ${other.z})`);
-await walkTo('x', other.x);
-await walkTo('z', other.z + 1.2);
-const near2 = await state();
-console.log(`   도착 위치 (${near2.x.toFixed(1)}, ${near2.z.toFixed(1)}) — 목표까지 ${Math.hypot(near2.x - other.x, near2.z - other.z).toFixed(2)}`);
-await clickWorld(other.x, other.z);
-let cast2 = await waitState((s) => s.fishing === 'wait', 12000);
-if (cast2.fishing !== 'wait') {
-  // 한 번 더 시도한다 — 도착 판정과 탭이 한 프레임 어긋나면 놓친다.
-  await clickWorld(other.x, other.z);
-  cast2 = await waitState((s) => s.fishing === 'wait', 8000);
-}
-if (cast2.fishing === 'wait') {
-  const bit2 = await waitState((s) => s.fishing === 'bite', maxWait);
-  const bagAtBite2 = bit2.bag;
-  // 아무 것도 누르지 않고 제한 시간을 넘긴다.
-  await page.waitForTimeout(Number(fishCfg.bite_sec) * 1000 + 900);
-  const missed = await state();
-  check(missed.fishing === 'off', `놓치면 낚시가 끝난다 (fishing=${missed.fishing})`);
-  check(missed.bag === bagAtBite2, `놓치면 가방이 늘지 않는다 (${bagAtBite2} → ${missed.bag})`);
-} else {
-  check(false, `두 번째 낚시터에서 낚시가 시작되지 않았다 (fishing=${cast2.fishing})`);
-}
 
 check(errors.length === 0, `브라우저 오류·서버 거절 0건 (실제 ${errors.length}건)`);
 if (errors.length) console.log(errors.slice(0, 6).join('\n'));
@@ -281,4 +302,4 @@ if (failed.length) {
   for (const f of failed) console.error(`  - ${f.label}`);
   process.exit(1);
 }
-console.log('✅ 낚시 테스트 통과 — 낚시터 탭 → 대기 → 물기 → 채기 흐름과 헛챔질·놓침 처리');
+console.log('✅ 낚시 테스트 통과 — 헛챔질·우회 차단·놓침·성공을 낚시터 두 곳에서 확인');

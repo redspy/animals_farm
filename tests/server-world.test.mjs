@@ -945,12 +945,23 @@ test('밤 전용 물고기는 낮에 안 나오고 밤에 나온다', () => {
     '실러캔스가 겨울 밤에 안 나온다');
 });
 
-test('겨울 밤에는 벌레가 아무것도 없어 채집이 거부된다(쿨다운도 안 걸린다)', () => {
-  const w = fresh();
-  const winterNight = new Date(2026, 0, 15, 2, 0).getTime();
-  assert.equal(w.catchableEntries('bug', winterNight).length, 0);
+test('조건에 맞는 것이 없으면 거부하고 쿨다운도 걸지 않는다', () => {
+  // **실제 데이터로는 이 상황이 없어야 한다**(모든 월·시각에 최소 1종 — 위
+  // 테스트). 그래서 조건을 좁힌 임시 데이터로 **거절 경로 자체**를 확인한다.
+  // 예전에는 진짜 데이터의 "겨울 밤 벌레 0종"으로 이걸 검증했는데, 그러면
+  // 콘텐츠 공백(스폿 10곳이 6개월간 죽는 것)을 정상으로 고정해 버린다.
+  const dir = mkdtempSync(join(tmpdir(), 'af-nocatch-'));
+  const src = JSON.parse(readFileSync('data/gatherables.json', 'utf-8'));
+  src.catch_tables.bug = [{ item: 'butterfly', weight: 10, months: [7] }];
+  writeFileSync(join(dir, 'gatherables.json'), JSON.stringify(src));
+  for (const name of ['world.json', 'items.json', 'activities.json', 'emotes.json', 'characters.json', 'palette.json']) {
+    try { writeFileSync(join(dir, name), readFileSync(join('data', name))); } catch { /* 없는 파일은 건너뜀 */ }
+  }
+  const w = new WorldState({ dataDir: dir, persist: false });
+  const january = new Date(2026, 0, 15, 12, 0).getTime();
+  assert.equal(w.catchableEntries('bug', january).length, 0);
   const g = standAtSpawn(w, TOKEN_A, 'bug');
-  const r = w.gather(TOKEN_A, g.index, winterNight);
+  const r = w.gather(TOKEN_A, g.index, january);
   assert.equal(r.error.code, 'nothing_here');
   assert.equal(g.availableAt, 0, '잡을 수 없는 자리에 재생 쿨다운이 걸렸다');
 });
@@ -1008,4 +1019,37 @@ test('빈 확률 테이블은 경고만 하고 서버는 뜬다', () => {
   const w = new WorldState({ dataDir: dir, persist: false });
   assert.equal(w.catchTables.fishing.length, 0);
   assert.equal(w.rollCatch('fishing', Date.now()), '');
+});
+
+test('낚시·벌레 테이블은 모든 월·시각에 최소 1종을 낸다', () => {
+  // 회귀 방지: 벌레 테이블이 계절 한정 3종뿐이라 9~2월에 스폿 10곳이 통째로
+  // 죽었고, 밤 구간을 [19,5)로 둬서 05시대에는 낚시도 2종만 남았다. 그 상태를
+  // "겨울 밤 거절" 테스트가 정상으로 고정해 회귀로 잡히지 않았다.
+  const w = fresh();
+  const holes = [];
+  for (let month = 1; month <= 12; month++) {
+    for (let hour = 0; hour < 24; hour++) {
+      const ts = new Date(2026, month - 1, 15, hour, 30).getTime();
+      for (const kind of Object.keys(w.catchTables)) {
+        if (w.catchableEntries(kind, ts).length === 0) holes.push(`${month}월 ${hour}시 ${kind}`);
+      }
+    }
+  }
+  assert.equal(holes.length, 0, `잡을 것이 없는 시간대: ${holes.slice(0, 8).join(', ')}`);
+});
+
+test('낮·밤 시간 구간이 24시간을 빈틈없이 덮는다(데이터 린트)', () => {
+  const raw = JSON.parse(readFileSync('data/gatherables.json', 'utf-8'));
+  for (const [kind, rows] of Object.entries(raw.catch_tables || {})) {
+    const covered = new Set();
+    for (const r of rows) {
+      if (!r.hours) { for (let h = 0; h < 24; h++) covered.add(h); continue; }
+      const [from, to] = r.hours;
+      for (let h = 0; h < 24; h++) {
+        const inRange = from <= to ? (h >= from && h < to) : (h >= from || h < to);
+        if (inRange) covered.add(h);
+      }
+    }
+    assert.equal(covered.size, 24, `catch_tables.${kind}가 덮지 않는 시각이 있다(${24 - covered.size}시간)`);
+  }
 });

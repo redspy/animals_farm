@@ -746,6 +746,10 @@ func _apply_daily_respawn() -> void:
 func _on_gathered(item_id: String) -> void:
 	if _net != null and _net.connected:
 		return
+	# 빈 아이템은 가방에 넣지 않는다 — 이름 없는 물건이 세이브에 남고, 가격
+	# 조회가 매 갱신마다 경고를 내며 판매로도 지울 수 없다(리뷰 지적).
+	if item_id.is_empty():
+		return
 	var inv: Dictionary = _slot.get("inventory", {})
 	inv[item_id] = int(inv.get(item_id, 0)) + 1
 	_slot["inventory"] = inv
@@ -2287,6 +2291,10 @@ func _fish_strike() -> void:
 	_show_toast("너무 일렀다…")
 
 ## 낚시 상태를 E2E가 볼 수 있게 공개한다(브라우저 테스트의 유일한 판정 수단).
+##
+## **즉시 게시한다.** 훅은 기본 0.25초 주기로 올리는데, 낚시는 최소 대기가 1.5초
+## 이고 물기 창이 1.2초라 그 지연이 판정을 흔든다 — 테스트가 "아직 대기 중"으로
+## 읽고 누르는 순간 이미 물어 있어서, 헛챔질 시나리오가 물고기를 잡아 버렸다.
 func _publish_fish_state() -> void:
 	if _hooks == null:
 		return
@@ -2297,6 +2305,7 @@ func _publish_fish_state() -> void:
 			_hooks.set_state("fishing", "bite")
 		_:
 			_hooks.set_state("fishing", "off")
+	_hooks.publish_now()
 
 ## 낚시 타이머. 대기 → 물기(제한 시간) → 놓침.
 func _update_fishing(delta: float) -> void:
@@ -2335,6 +2344,19 @@ func _try_gather() -> void:
 			nearest = g
 	if nearest == null:
 		_show_toast("주변에 채집할 것이 없습니다")
+		return
+	# **낚시터는 그냥 캘 수 없다.** 이 함수는 kind를 보지 않고 사거리 안에서
+	# 가장 가까운 것을 캐므로, 낚시터 옆에서 액션 버튼만 누르면 대기·타이밍을
+	# 전부 건너뛰고 물고기를 얻을 수 있었다(리뷰 지적). 탭 경로와 같은 분기로
+	# 넘겨 낚시를 시작한다.
+	if nearest.kind == "fishing":
+		_start_fishing(nearest)
+		return
+	# 확률 테이블이 아이템을 정하는 자리(낚시터·벌레)는 **오프라인에서 캘 수
+	# 없다.** 클라이언트는 무엇이 잡히는지 모르고(서버가 굴린다), 빈 문자열
+	# 아이템을 가방에 넣으면 이름 없는 물건이 세이브에 남아 팔 수도 없다.
+	if nearest.table_driven and (_net == null or not _net.connected):
+		_show_toast("서버에 연결돼 있지 않아 잡을 수 없습니다")
 		return
 	if _net != null and _net.connected:
 		# 서버가 사거리·재생 상태를 검증하고, 성공하면 gathered 브로드캐스트로
@@ -2517,6 +2539,10 @@ func _on_player_arrived() -> void:
 					_start_fishing(target)
 				elif _net != null and _net.connected:
 					_net.send_gather(target.index)
+				elif target.table_driven:
+					# 오프라인에서는 무엇이 잡히는지 알 수 없다(서버가 굴린다).
+					# 그대로 캐면 빈 문자열 아이템이 가방·세이브에 남는다.
+					_show_toast("서버에 연결돼 있지 않아 잡을 수 없습니다")
 				else:
 					target.gather()
 			elif target != null:

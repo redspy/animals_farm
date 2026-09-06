@@ -97,6 +97,22 @@
         10,
         2000
       ]
+    },
+    "ladybug": {
+      "label": "무당벌레",
+      "sell_price": 60,
+      "price_range": [
+        10,
+        500
+      ]
+    },
+    "spider": {
+      "label": "거미",
+      "sell_price": 110,
+      "price_range": [
+        10,
+        800
+      ]
     }
   }
 }

@@ -12,6 +12,8 @@ const INTERACT_DISTANCE := 1.6
 
 var item_id: String = "wood"
 var kind: String = "tree"
+## 아이템을 확률 테이블(서버)이 정하는 종류인지 — 오프라인 채집을 막는 데 쓴다.
+var table_driven := false
 var respawn_sec: float = 30.0
 ## data/gatherables.json에서의 순서. 서버가 채집물을 식별하는 열쇠다
 ## (docs/protocol.md의 gather) — 서버와 클라이언트가 같은 데이터를 같은 순서로
@@ -20,6 +22,10 @@ var index := -1
 
 var _available := true
 var _timer := 0.0
+## 지금 시간·월에 잡을 것이 있는지(테이블 구동 종류만 의미가 있다).
+var _in_season := true
+var _season_timer := 0.0
+const SEASON_CHECK_SEC := 5.0
 var _grown: Node3D = null    # 채집 가능할 때 보이는 부분(나무 몸통은 항상 보임)
 
 ## limits는 data/gatherables.json의 "limits"를 그대로 받는다 — 유효범위를
@@ -28,17 +34,23 @@ func setup(spawn: Dictionary, limits: Dictionary = {}, spawn_index: int = -1) ->
 	index = spawn_index
 	kind = String(spawn.get("kind", "tree"))
 	# 낚시터·벌레 스폿은 item이 없다 — 무엇이 잡히는지는 **서버가** 확률
-	# 테이블로 정한다(data/gatherables.json의 catch_tables). 여기서 기본값을
-	# 넣으면 오프라인 채집이 엉뚱한 아이템(나무)을 만든다.
-	item_id = String(spawn.get("item", "" if kind in ["fishing", "bug"] else "wood"))
+	# 테이블로 정한다(data/gatherables.json의 catch_tables). 종류 목록을
+	# 하드코딩하지 않는 이유: 서버는 catch_tables의 키를 단일 출처로 쓰므로,
+	# 여기에 ["fishing","bug"]를 박으면 세 번째 종류를 추가하는 순간 서버는
+	# item을 비우고 클라이언트는 "wood"를 넣어 갈린다.
+	table_driven = CatchTable.is_table_kind(kind)
+	item_id = String(spawn.get("item", "" if table_driven else "wood"))
 	respawn_sec = Balance.clamp_value(
 		float(spawn.get("respawn_sec", 30.0)),
 		limits.get("respawn_sec", null),
-		"%s.respawn_sec" % item_id,
+		# 라벨에 kind와 순번을 쓴다 — item_id는 테이블 구동 스폰에서 비어 있어서
+		# 데이터 오타 경고가 ".respawn_sec"가 되고 어느 스폰인지 알 수 없었다.
+		"%s[%d].respawn_sec" % [kind, spawn_index],
 		"duration_sec"
 	)
 	position = Vector3(float(spawn.get("x", 0.0)), 0.0, float(spawn.get("z", 0.0)))
 	_build_mesh()
+	_refresh_season_visibility()
 
 func _build_mesh() -> void:
 	match kind:
@@ -159,19 +171,31 @@ func _build_mesh() -> void:
 				blade.material_override = _material(weed_color)
 				_grown.add_child(blade)
 
+## 색이 같으면 머티리얼을 **공유한다**.
+##
+## 왜: 호출마다 새로 만들면 채집물 58곳 × 메시 2~7개 = 머티리얼 100개가 넘고,
+## 웹(GL Compatibility)에서 머티리얼은 곧 상태 변경/드로우콜이라 폰 프레임에
+## 보인다(리뷰 지적). 색 종류는 10개 미만이다.
+static var _mat_cache: Dictionary = {}
+
 func _material(color: Color) -> StandardMaterial3D:
+	var key := color.to_rgba32()
+	var cached: Variant = _mat_cache.get(key)
+	if cached != null:
+		return cached
 	var m := StandardMaterial3D.new()
 	m.albedo_color = color
 	# 웹(GL Compatibility)에서 가볍게 유지 — 스페큘러를 끄고 확산광만 쓴다.
 	m.specular_mode = BaseMaterial3D.SPECULAR_DISABLED
 	m.roughness = 1.0
+	_mat_cache[key] = m
 	return m
 
 func is_available() -> bool:
 	return _available
 
 func can_interact(from: Vector3) -> bool:
-	if not _available:
+	if not _available or not _in_season:
 		return false
 	# 높이 차이는 무시하고 바닥 평면(XZ)에서만 거리를 잰다.
 	var a := Vector2(from.x, from.z)
@@ -204,9 +228,25 @@ func force_respawn() -> void:
 	_available = true
 	_timer = 0.0
 	if _grown != null:
-		_grown.visible = true
+		_grown.visible = _in_season if table_driven else true
+
+## 지금 시간·월에 잡을 것이 있는지 확인해 **표시**를 맞춘다.
+##
+## 왜 필요한가: 서버는 조건 밖이면 거절하는데, 화면에 벌레가 그대로 있으면
+## 플레이어는 걸어가서 거절당하고 이유를 알 수 없다(리뷰 지적).
+func _refresh_season_visibility() -> void:
+	if not table_driven or _grown == null:
+		return
+	_in_season = CatchTable.any_available(kind)
+	if _available:
+		_grown.visible = _in_season
 
 func _process(delta: float) -> void:
+	# 시간대 판정은 자주 볼 필요가 없다(시각이 분 단위로 바뀐다).
+	_season_timer -= delta
+	if _season_timer <= 0.0:
+		_season_timer = SEASON_CHECK_SEC
+		_refresh_season_visibility()
 	if _available:
 		return
 	_timer -= delta

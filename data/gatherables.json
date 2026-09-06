@@ -1,5 +1,5 @@
 {
-  "_comment": "채집물 배치와 재생 시간. 좌표는 3D 월드 단위(x=좌우, z=앞뒤, 원점=맵 중앙)이며 맵 크기는 data/world.json이 정한다. schema_version 2까지는 2D 픽셀 좌표였고 3에서 월드 좌표로, 4에서 확장된 월드맵 전체로 배치를 늘렸으며, **5에서 낚시터(kind=fishing)와 벌레 스폿(kind=bug)을 추가**했다. 이 두 종류는 spawn에 item이 없다 — 무엇이 잡히는지는 catch_tables가 정하고 **서버가 굴린다**(클라이언트가 아이템을 주장하면 비싼 것만 반복해서 잡을 수 있다). 유효범위는 주석이 아니라 limits 필드가 단일 출처이며 코드(Balance.clamp_value)가 클램프한다.",
+  "_comment": "채집물 배치와 재생 시간. 좌표는 3D 월드 단위(x=좌우, z=앞뒤, 원점=맵 중앙)이며 맵 크기는 data/world.json이 정한다. schema_version 2까지는 2D 픽셀 좌표였고 3에서 월드 좌표로, 4에서 확장된 월드맵 전체로 배치를 늘렸으며, **5에서 낚시터(kind=fishing)와 벌레 스폿(kind=bug)을 추가**했다. 이 두 종류는 spawn에 item이 없다 — 무엇이 잡히는지는 catch_tables가 정하고 **서버가 굴린다**(클라이언트가 아이템을 주장하면 비싼 것만 반복해서 잡을 수 있다). 유효범위는 주석이 아니라 limits 필드가 단일 출처이며 코드(Balance.clamp_value)가 클램프한다. hours는 [시작, 끝)이고 시작 > 끝이면 자정을 넘는 구간이다 — 낮 [6,19)과 밤 [19,6)이 24시간을 빈틈없이 덮어야 한다(예전에 밤을 [19,5)로 둬서 05시대에는 아무것도 나오지 않는 한 시간 구멍이 있었다).",
   "schema_version": 5,
   "limits": {
     "respawn_sec": [
@@ -424,7 +424,7 @@
         "weight": 9,
         "hours": [
           19,
-          5
+          6
         ]
       },
       {
@@ -432,7 +432,7 @@
         "weight": 3,
         "hours": [
           19,
-          5
+          6
         ],
         "months": [
           12,
@@ -442,6 +442,22 @@
       }
     ],
     "bug": [
+      {
+        "item": "ladybug",
+        "weight": 35,
+        "hours": [
+          6,
+          19
+        ]
+      },
+      {
+        "item": "spider",
+        "weight": 25,
+        "hours": [
+          19,
+          6
+        ]
+      },
       {
         "item": "butterfly",
         "weight": 45,
@@ -476,7 +492,7 @@
         "weight": 25,
         "hours": [
           19,
-          5
+          6
         ],
         "months": [
           6,
