@@ -281,8 +281,33 @@ async function walkToX(targetX, tolerance = 0.8, maxMs = 25000) {
   }
   return x();
 }
+/** z축 정렬. 조이스틱을 **아래/위로** 끌어 맞춘다.
+ *
+ *  왜 필요한가: 가장 가까운 나무가 (1.65, 1.5)라 x만 맞추면 거리가 1.5로
+ *  남는데 채집 사거리는 1.6이다 — x 오차가 조금만 있어도 사거리를 벗어나
+ *  "채집이 안 된다"가 아니라 **다음 단계(버리기)에서** 실패로 나타났다. */
+async function walkToZ(targetZ, tolerance = 0.5, maxMs = 12000) {
+  const tp = (x, y) => ({ x, y, radiusX: 12, radiusY: 12, force: 1 });
+  const z = () => lastPos(token)?.z ?? 0;
+  const t0 = Date.now();
+  while (Date.now() - t0 < maxMs) {
+    const diff = targetZ - z();
+    if (Math.abs(diff) <= tolerance) break;
+    const d = Math.sign(diff);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [tp(stick.x, stick.y)] });
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchMove', touchPoints: [tp(stick.x, stick.y + 90 * d)],
+    });
+    await page.waitForTimeout(Math.min(260, Math.max(90, Math.abs(diff) * 140)));
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await page.waitForTimeout(350);
+  }
+  return z();
+}
+
 const arrivedX = await walkToX(TREE.x);
-console.log(`  (이동 결과 x=${arrivedX})`);
+const arrivedZ = await walkToZ(TREE.z);
+console.log(`  (이동 결과 x=${arrivedX}, z=${arrivedZ})`);
 check(arrivedX !== null && Math.abs(arrivedX - TREE.x) <= 1.2, `나무 근처(x≈${TREE.x})까지 조이스틱으로 이동`);
 await page.screenshot({ path: `${OUT}/6-이동후-터치UI.png` });
 
@@ -300,8 +325,11 @@ for (let i = 0; i < 4 && !gathered; i++) {
     bagBefore, { timeout: 4000 },
   ).then(() => true).catch(() => false);
   if (!gathered) {
-    // 한 걸음 더 다가간다(목표를 지나쳤을 수도 있으니 양방향으로 조금씩).
+    // 두 축을 다시 맞춘다 — 사거리(1.6)는 hypot이라 한 축만 맞으면 부족하다.
+    await walkToZ(TREE.z, 0.4, 6000);
     await walkToX(TREE.x, 0.4, 6000);
+    const p = lastPos(token);
+    if (p) console.log(`   (재시도 ${i + 1}: 거리 ${Math.hypot(p.x - TREE.x, p.z - TREE.z).toFixed(2)})`);
   }
 }
 check(gathered, `액션 버튼으로 채집됐다 (가방 ${bagBefore} → ${await bagCount()})`);

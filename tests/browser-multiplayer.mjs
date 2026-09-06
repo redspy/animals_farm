@@ -587,7 +587,12 @@ if (process.env.MP_DEBUG) {
 }
 const sellClicked = (stBefore.bagCount ?? 0) > 0 ? await tapWorldPoint(a.page, 'invSell1') : false;
 check(sellClicked, '가방 목록에서 판매 버튼을 눌렀다');
-await a.page.waitForTimeout(1500);
+// **벨이 늘 때까지 기다린다.** HUD 훅은 1초 주기로 갱신되고 이 환경은 프레임이
+// 느려서, 고정 1.5초로는 아직 옛 값을 읽는 일이 있었다(간헐 실패).
+await a.page.waitForFunction(
+  (prev) => Number(window.afTest?.state?.bells ?? 0) > prev,
+  stBefore.bells ?? 0, { timeout: 8000 },
+).catch(() => {});
 const stAfter = await gameState(a.page);
 if ((stAfter.bells ?? 0) === (stBefore.bells ?? 0)) {
   console.log(`  [debug] 서버 마지막 오류=${stAfter.lastError ?? '(없음)'} invOpen=${stAfter.invOpen}`);
