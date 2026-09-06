@@ -26,7 +26,8 @@
     "test:safari": "node tests/browser-safari.mjs",
     "test:park": "node tests/browser-park.mjs",
     "test:fishing": "node tests/browser-fishing.mjs",
-    "test:npc": "node tests/browser-npc.mjs"
+    "test:npc": "node tests/browser-npc.mjs",
+    "test:race": "node tests/browser-race.mjs"
   },
   "keywords": [],
   "author": "",

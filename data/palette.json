@@ -43,7 +43,8 @@
     "fishing_ripple": "#8fc7e8",
     "flower_petal": "#f2c0d8",
     "flower_stem": "#4a8a3c",
-    "bug_body": "#3a2b1c"
+    "bug_body": "#3a2b1c",
+    "finish_dark": "#2f3238"
   },
   "ui": {
     "hud_text": "#ffffff",

@@ -41,6 +41,9 @@ signal npc_done(npc: String, reward: int, given: Dictionary, bells: int,
 signal npc_error(code: String, message: String, need: Dictionary, state: Dictionary)
 ## 날짜가 바뀌어 서버가 부탁 상태를 다시 보냈을 때.
 signal npc_state(state: Dictionary)
+
+## 달리기 경주 상태(국면·참가자 진행). results는 결과 국면에서만 실린다.
+signal race_received(race: Dictionary, results: Array)
 ## 놀이기구 상태(시소 기울기·뺑뺑이 각도). 서버가 소유한다.
 signal park_state(state: Dictionary)
 
@@ -215,6 +218,8 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			)
 		"npc_state":
 			npc_state.emit(msg.get("state", {}))
+		"race":
+			race_received.emit(msg.get("race", {}), msg.get("results", []))
 		"error":
 			server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")))
 		_:
@@ -275,6 +280,13 @@ func send_gather(index: int) -> void:
 ## 이웃에게 부탁한 물건을 건넨다. **차감·보상은 서버가 계산한다.**
 func send_npc_deliver(npc_id: String) -> void:
 	_send({"t": "npc_deliver", "npc": npc_id})
+
+## 달리기 경주 참가/포기. 상태 기계와 순위·보상은 전부 서버가 갖는다.
+func send_race_join() -> void:
+	_send({"t": "race_join"})
+
+func send_race_leave() -> void:
+	_send({"t": "race_leave"})
 
 ## item_id가 비어 있으면 팔 수 있는 것 전부.
 func send_sell(item_id: String = "") -> void:

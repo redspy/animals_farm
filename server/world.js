@@ -308,6 +308,29 @@ export class WorldState {
     this.itemDefs = itemCfg.items || {};
     this.itemIds = new Set(Object.keys(this.itemDefs));
 
+    // 달리기 경주. 판정(체크포인트 순서·순위·보상)을 전부 서버가 갖는다.
+    const raceCfg = (worldCfg.playground || {}).race || {};
+    const raceLimits = raceCfg.limits || {};
+    const rlim = (key, fallback) => raceLimits[key] || fallback;
+    this.raceCfg = {
+      checkpoints: (raceCfg.checkpoints || []).map((c) => ({
+        id: String(c.id || ''), x: Number(c.x) || 0, z: Number(c.z) || 0,
+      })),
+      radius: num(raceCfg.radius, 2.5, rlim('radius', [1, 5])[0], rlim('radius', [1, 5])[1], 'race/radius'),
+      laps: Math.floor(num(raceCfg.laps, 2, rlim('laps', [1, 5])[0], rlim('laps', [1, 5])[1], 'race/laps')),
+      lobbySec: num(raceCfg.lobby_sec, 10, rlim('lobby_sec', [3, 60])[0], rlim('lobby_sec', [3, 60])[1], 'race/lobby_sec'),
+      countdownSec: num(raceCfg.countdown_sec, 3, rlim('countdown_sec', [1, 10])[0], rlim('countdown_sec', [1, 10])[1], 'race/countdown_sec'),
+      timeoutSec: num(raceCfg.timeout_sec, 90, rlim('timeout_sec', [20, 600])[0], rlim('timeout_sec', [20, 600])[1], 'race/timeout_sec'),
+      finishedSec: num(raceCfg.finished_sec, 15, rlim('finished_sec', [3, 60])[0], rlim('finished_sec', [3, 60])[1], 'race/finished_sec'),
+      rewards: Array.isArray(raceCfg.rewards) ? raceCfg.rewards.map((v) => Math.max(0, Math.floor(Number(v) || 0))) : [300, 150, 50],
+      finishReward: Math.max(0, Math.floor(Number(raceCfg.finish_reward) || 0)),
+    };
+    if (this.raceCfg.checkpoints.length < 2) {
+      console.warn('[world] race.checkpoints가 2개 미만입니다 — 경주를 열 수 없습니다');
+    }
+    // 상태 기계: idle → lobby → countdown → running → finished → idle.
+    this.race = { phase: 'idle', endsAt: 0, startedAt: 0, runners: new Map(), seq: 0 };
+
     const gatherCfg = readJson(join(dataDir, 'gatherables.json'), { spawns: [] });
     const gatherLimits = (gatherCfg.limits || {}).respawn_sec || [10, 86400];
     // 확률 테이블(낚시·벌레). **서버가 굴린다** — 클라이언트가 아이템을 주장하면
@@ -655,6 +678,11 @@ export class WorldState {
     if (dist > maxDist) {
       // 상한을 넘으면 거부하지 않고 상한까지만 이동시킨다 — 거부하면 지터가
       // 큰 클라이언트가 영구히 뒤처지고, 그대로 받으면 순간이동이 된다.
+      //
+      // **경주 중이면 명백한 초과만 실격**으로 표시한다(벨 보상이 걸려 있다).
+      // 지터로 조금 넘는 것과 순간이동을 구분하려고 1.5배를 기준으로 둔다 —
+      // 이 값을 1.0으로 두면 프레임이 튄 사람이 억울하게 실격된다.
+      if (dist > maxDist * 1.5) this.raceFlagSpeeding(token);
       const k = maxDist / dist;
       target.x = p.x + (target.x - p.x) * k;
       target.z = p.z + (target.z - p.z) * k;
@@ -1224,6 +1252,189 @@ export class WorldState {
     return this.gatherables
       .filter((g) => now < g.availableAt)
       .map((g) => ({ index: g.index, availableAt: g.availableAt }));
+  }
+
+  // ---- 달리기 경주 (서버 권위) ----
+
+  raceOpen() {
+    return this.raceCfg.checkpoints.length >= 2;
+  }
+
+  // 남에게 보낼 상태. **변할 때만** 보낸다(공·놀이기구와 같은 원칙).
+  raceState(now = Date.now()) {
+    const runners = [];
+    for (const [token, r] of this.race.runners) {
+      const p = this.players.get(token);
+      runners.push({
+        token,
+        name: p ? p.name : '',
+        lap: r.lap,
+        cp: r.cp,
+        rank: r.rank,
+        finishMs: r.finishMs,
+        dq: r.dq,
+      });
+    }
+    // 순위 → 진행도 순으로 정렬해 클라이언트가 그대로 그릴 수 있게 한다.
+    runners.sort((a, b) => {
+      if (a.rank && b.rank) return a.rank - b.rank;
+      if (a.rank) return -1;
+      if (b.rank) return 1;
+      return (b.lap * 100 + b.cp) - (a.lap * 100 + a.cp);
+    });
+    return {
+      phase: this.race.phase,
+      // 남은 시간은 서버 시계 기준 밀리초로 준다 — 절대 시각을 주면 기기 시계
+      // 차이만큼 어긋난다.
+      remainMs: Math.max(0, this.race.endsAt - now),
+      laps: this.raceCfg.laps,
+      runners,
+    };
+  }
+
+  raceJoin(token, now = Date.now()) {
+    const p = this.players.get(token);
+    if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
+    if (!this.raceOpen()) return { error: { code: 'race_closed', message: '경주를 열 수 없습니다' } };
+    // 운동장 안에서만 참가할 수 있다 — 섬 반대편에서 참가하면 출발선까지
+    // 순간이동하거나, 시작하자마자 실격이다.
+    if (!this.inZone(p.x, p.z, 'playground')) {
+      return { error: { code: 'not_in_zone', message: '운동장에서만 참가할 수 있습니다' } };
+    }
+    if (this.race.phase !== 'idle' && this.race.phase !== 'lobby') {
+      return { error: { code: 'race_busy', message: '지금은 참가할 수 없습니다' } };
+    }
+    if (this.race.phase === 'idle') {
+      this.race.phase = 'lobby';
+      this.race.endsAt = now + this.raceCfg.lobbySec * 1000;
+      this.race.seq += 1;
+    }
+    this.race.runners.set(token, { cp: -1, lap: 0, rank: 0, finishMs: 0, dq: false, reward: 0 });
+    return { state: this.raceState(now) };
+  }
+
+  raceLeave(token, now = Date.now()) {
+    if (!this.race.runners.has(token)) {
+      return { error: { code: 'not_racing', message: '참가 중이 아닙니다' } };
+    }
+    this.race.runners.delete(token);
+    // 아무도 안 남으면 즉시 되돌린다 — 빈 대기실이 카운트다운을 시작하면
+    // 지나가던 사람이 영문 모를 숫자를 본다.
+    if (this.race.runners.size === 0) this._raceReset();
+    return { state: this.raceState(now) };
+  }
+
+  _raceReset() {
+    this.race.phase = 'idle';
+    this.race.endsAt = 0;
+    this.race.startedAt = 0;
+    this.race.runners.clear();
+  }
+
+  // 속도 상한을 넘긴 이동이 감지되면 그 주행을 무효로 표시한다.
+  //
+  // 되돌리지 않는 이유: 벨 보상이 걸려 있어 "상한을 넘겨 앞서 나가기"를 막아야
+  // 하지만, 지터가 큰 클라이언트를 즉시 실격시키면 억울하다 — 그래서 상한
+  // 초과 **거리**가 명백할 때만(보정량이 한 틱 이동거리보다 클 때) 표시한다.
+  raceFlagSpeeding(token) {
+    const r = this.race.runners.get(token);
+    if (!r || this.race.phase !== 'running' || r.rank > 0) return false;
+    r.dq = true;
+    return true;
+  }
+
+  // 서버 틱에서 호출된다. 상태가 바뀌면 true.
+  tickRace(now = Date.now()) {
+    const cfg = this.raceCfg;
+    let changed = false;
+    switch (this.race.phase) {
+      case 'lobby':
+        if (now >= this.race.endsAt) {
+          if (this.race.runners.size === 0) { this._raceReset(); return true; }
+          this.race.phase = 'countdown';
+          this.race.endsAt = now + cfg.countdownSec * 1000;
+          for (const r of this.race.runners.values()) {
+            r.cp = -1; r.lap = 0; r.rank = 0; r.finishMs = 0; r.dq = false; r.reward = 0;
+          }
+          changed = true;
+        }
+        break;
+      case 'countdown':
+        if (now >= this.race.endsAt) {
+          this.race.phase = 'running';
+          this.race.startedAt = now;
+          this.race.endsAt = now + cfg.timeoutSec * 1000;
+          changed = true;
+        }
+        break;
+      case 'running': {
+        for (const [token, r] of this.race.runners) {
+          if (r.rank > 0 || r.dq) continue;
+          const p = this.players.get(token);
+          if (!p) continue;
+          // **다음 체크포인트만** 본다. 순서를 어기면 진행하지 않는다 — 되돌리면
+          // 트랙 밖으로 한 번 튀는 것만으로 순위가 뒤집힌다.
+          const nextIndex = (r.cp + 1) % cfg.checkpoints.length;
+          const cp = cfg.checkpoints[nextIndex];
+          if (Math.hypot(p.x - cp.x, p.z - cp.z) > cfg.radius) continue;
+          // 출발선(0번)에 **마지막 체크포인트에서 도달하면** 한 바퀴다.
+          // cp가 -1인 상태에서의 0번 통과는 출발이므로 세지 않는다(별도
+          // started 플래그를 두면 리셋을 빼먹기 쉽다).
+          const wasStart = r.cp === -1;
+          r.cp = nextIndex;
+          if (nextIndex === 0 && !wasStart) r.lap += 1;
+          if (r.lap >= cfg.laps) {
+            r.finishMs = now - this.race.startedAt;
+            r.rank = 1 + [...this.race.runners.values()].filter((o) => o.rank > 0).length;
+          }
+          changed = true;
+        }
+        const active = [...this.race.runners.values()].filter((r) => r.rank === 0 && !r.dq);
+        if (active.length === 0 || now >= this.race.endsAt) {
+          this._raceFinish(now);
+          changed = true;
+        }
+        break;
+      }
+      case 'finished':
+        if (now >= this.race.endsAt) { this._raceReset(); changed = true; }
+        break;
+      default:
+        break;
+    }
+    return changed;
+  }
+
+  // 결과 정산. **참가자가 1명이면 완주 보상만 준다** — 혼자 돌려 1등 보상을
+  // 반복해서 긁는 경로를 막는다.
+  _raceFinish(now) {
+    const cfg = this.raceCfg;
+    const solo = this.race.runners.size < 2;
+    for (const [token, r] of this.race.runners) {
+      const p = this.players.get(token);
+      if (!p || r.dq || r.rank === 0) continue;
+      let reward = cfg.finishReward;
+      if (!solo && r.rank <= cfg.rewards.length) reward = cfg.rewards[r.rank - 1];
+      r.reward = reward;
+      p.bells = Math.max(0, Math.floor(p.bells + reward));
+    }
+    this.race.phase = 'finished';
+    this.race.endsAt = now + cfg.finishedSec * 1000;
+    this._markDirty();
+  }
+
+  // 결과(보상 포함) — finished 상태에서 클라이언트에 보낸다.
+  raceResults() {
+    const out = [];
+    for (const [token, r] of this.race.runners) {
+      const p = this.players.get(token);
+      out.push({
+        token, name: p ? p.name : '', rank: r.rank, finishMs: r.finishMs,
+        dq: r.dq, reward: r.reward || 0, bells: p ? p.bells : 0,
+      });
+    }
+    out.sort((a, b) => (a.rank || 99) - (b.rank || 99));
+    return out;
   }
 
   // ---- 이웃 동물(NPC) 부탁 ----

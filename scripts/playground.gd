@@ -18,6 +18,8 @@ extends Node3D
 const RING_SEGMENTS := 96
 ## 바닥 데칼 높이 — 섬 표면(y=0)과 겹치면 z-파이팅으로 지글거린다.
 const Y_TRACK := 0.02
+## 체크포인트 선을 트랙 위에 살짝 띄운다(레인 색과 z-fighting을 피한다).
+const Y_RACE := 0.03
 const Y_FIELD := 0.02
 const Y_LINE := 0.035
 const LANE_LINE_W := 0.12
@@ -29,6 +31,8 @@ const BALL_RADIUS := 0.3
 
 var _cfg: Dictionary = {}
 var _track: Dictionary = {}
+## 경주 설정(체크포인트 좌표) — 표시만 한다. 통과 판정은 서버가 소유한다.
+var _race: Dictionary = {}
 var _field: Dictionary = {}
 var _soccer_root: Node3D = null
 var _ball: Node3D = null
@@ -38,6 +42,7 @@ func setup(cfg: Dictionary) -> void:
 	_cfg = cfg
 	_track = cfg.get("track", {})
 	_field = cfg.get("field", {})
+	_race = cfg.get("race", {})
 
 func _ready() -> void:
 	if _track.is_empty() or _field.is_empty():
@@ -46,6 +51,7 @@ func _ready() -> void:
 	_build_track()
 	_build_field()
 	_build_soccer_props()
+	_build_race_marks()
 
 # ---------------------------------------------------------------------------
 # 트랙
@@ -103,6 +109,66 @@ func _add_ring(t0: float, t1: float, color: Color, y: float) -> void:
 	mi.material_override = _decal_material(color)
 	mi.position = Vector3(0, y, 0)
 	add_child(mi)
+
+# ---------------------------------------------------------------------------
+# 경주 표시 (체크포인트 선 · 결승선)
+#
+# 판정은 서버가 한다(docs/protocol.md의 race). 여기서 그리는 것은 "어디를
+# 지나야 하는지"를 눈으로 알려주는 표시뿐이다 — 그래서 반경도 데이터에서 읽어
+# 선 길이를 맞춘다(선이 판정 반경보다 짧으면 지났는데 안 지난 것처럼 보인다).
+# ---------------------------------------------------------------------------
+
+func _build_race_marks() -> void:
+	if _race.is_empty():
+		return
+	var cps: Array = _race.get("checkpoints", [])
+	var radius := float(_race.get("radius", 2.5))
+	var line_color := Palette.color("world", "track_line")
+	var cx := float(_track.get("x", 0.0))
+	var cz := float(_track.get("z", 0.0))
+	for i in cps.size():
+		if typeof(cps[i]) != TYPE_DICTIONARY:
+			continue
+		var cp := cps[i] as Dictionary
+		var pos := Vector3(float(cp.get("x", 0.0)), Y_RACE, float(cp.get("z", 0.0)))
+		# 선은 트랙 **중심을 향해** 눕는다 — 지나가는 방향과 직교해야 "통과"로
+		# 읽힌다.
+		var to_center := Vector2(cx - pos.x, cz - pos.z)
+		var angle := atan2(to_center.y, to_center.x)
+		if i == 0:
+			_add_finish_line(pos, angle, radius)
+		else:
+			_add_mark_line(pos, angle, radius, line_color)
+
+func _add_mark_line(pos: Vector3, angle: float, radius: float, color: Color) -> void:
+	var mesh := MeshInstance3D.new()
+	var box := BoxMesh.new()
+	box.size = Vector3(radius * 2.0, 0.02, 0.18)
+	mesh.mesh = box
+	mesh.position = pos
+	mesh.rotation.y = -angle
+	mesh.material_override = _flat_material(color)
+	add_child(mesh)
+
+## 결승선만 체커 무늬 — 어디가 시작이고 끝인지 한눈에 보여야 한다.
+func _add_finish_line(pos: Vector3, angle: float, radius: float) -> void:
+	var cells := 8
+	var cell := radius * 2.0 / float(cells)
+	var light := Palette.color("world", "track_line")
+	# 골대 색(#eef1f2)은 선 색과 거의 같아서 체커가 보이지 않았다 — 결승선
+	# 전용 어두운 색을 둔다(실측: 흰 막대 하나로 보였다).
+	var dark := Palette.color("world", "finish_dark")
+	for i in cells:
+		var mesh := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(cell, 0.02, 0.32)
+		mesh.mesh = box
+		# 선 방향(중심을 향하는 축)으로 칸을 늘어놓는다.
+		var offset := (float(i) - float(cells - 1) * 0.5) * cell
+		mesh.position = pos + Vector3(cos(angle) * offset, 0.0, sin(angle) * offset)
+		mesh.rotation.y = -angle
+		mesh.material_override = _flat_material(light if i % 2 == 0 else dark)
+		add_child(mesh)
 
 func _tri(st: SurfaceTool, p0: Vector3, p1: Vector3, p2: Vector3) -> void:
 	for p: Vector3 in [p0, p1, p2]:

@@ -292,7 +292,12 @@ check(dexCells >= 8, `도감에 아이템 칸이 채워진다 (${dexCells}칸)`)
 const npcTab = await page.evaluate(() => window.afTest?.points?.dexTabNpcs != null);
 check(npcTab, '도감에 이웃 탭이 있다');
 await tapGodot(page, 'dexTabNpcs');
-await page.waitForTimeout(600);
+// 훅은 **보이는 컨트롤만** 게시하고 주기는 0.4초다 — 고정 대기(600ms)로는
+// 게시 시점과 어긋나 0개로 읽히는 간헐 실패가 있었다. 나타날 때까지 기다린다.
+await page.waitForFunction(
+  () => Object.keys(window.afTest?.points ?? {}).some((k) => k.startsWith('dexNpc')),
+  null, { timeout: 6000 },
+).catch(() => {});
 const npcRows = await page.evaluate(() => Object.keys(window.afTest?.points ?? {})
   .filter((k) => k.startsWith('dexNpc')).length);
 check(npcRows === npcCfg.npcs.length, `이웃 탭에 ${npcCfg.npcs.length}명이 보인다 (${npcRows})`);

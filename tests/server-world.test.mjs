@@ -1302,3 +1302,192 @@ test('내가 버린 것을 내가 주우면 도감이 늘지 않는다', () => {
   }
   assert.equal(p.dex[item], 1, '자기가 버린 것을 주워 도감이 늘었다');
 });
+
+// ---------------------------------------------------------------------------
+// F2 달리기 경주 (상태 기계·체크포인트 순서·순위·보상을 서버가 소유)
+// ---------------------------------------------------------------------------
+
+/** 트랙 출발선에 세운다(운동장 존 안이어야 참가할 수 있다). */
+function standAtStart(w, token) {
+  w.join({ token, name: token.slice(0, 3), preset: 'f1' });
+  const cp = w.raceCfg.checkpoints[0];
+  const p = w.players.get(token);
+  p.x = cp.x;
+  p.z = cp.z;
+  return p;
+}
+
+/** 체크포인트 순서대로 좌표를 옮기며 틱을 돌린다. */
+function runCheckpoints(w, token, indices, clock) {
+  const p = w.players.get(token);
+  for (const i of indices) {
+    const cp = w.raceCfg.checkpoints[i];
+    p.x = cp.x;
+    p.z = cp.z;
+    clock.t += 100;
+    w.tickRace(clock.t);
+  }
+}
+
+test('경주는 운동장 안에서만 참가할 수 있다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const p = w.players.get(TOKEN_A);
+  p.x = 0; p.z = 0;                     // 스폰(운동장 밖)
+  assert.equal(w.raceJoin(TOKEN_A).error.code, 'not_in_zone');
+  standAtStart(w, TOKEN_A);
+  assert.ok(!w.raceJoin(TOKEN_A).error);
+});
+
+test('상태 기계는 lobby → countdown → running으로 넘어간다', () => {
+  const w = fresh();
+  const clock = { t: 5_000_000 };
+  standAtStart(w, TOKEN_A);
+  assert.equal(w.raceJoin(TOKEN_A, clock.t).state.phase, 'lobby');
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  assert.ok(w.tickRace(clock.t));
+  assert.equal(w.race.phase, 'countdown');
+  clock.t += w.raceCfg.countdownSec * 1000 + 100;
+  w.tickRace(clock.t);
+  assert.equal(w.race.phase, 'running');
+});
+
+test('아무도 안 남으면 즉시 idle로 되돌아간다', () => {
+  const w = fresh();
+  standAtStart(w, TOKEN_A);
+  w.raceJoin(TOKEN_A);
+  assert.equal(w.race.phase, 'lobby');
+  w.raceLeave(TOKEN_A);
+  assert.equal(w.race.phase, 'idle', '빈 대기실이 카운트다운을 시작하면 지나가던 사람이 영문 모를 숫자를 본다');
+  assert.equal(w.raceLeave(TOKEN_A).error.code, 'not_racing');
+});
+
+test('체크포인트는 순서를 지켜야 진행된다', () => {
+  const w = fresh();
+  const clock = { t: 6_000_000 };
+  standAtStart(w, TOKEN_A);
+  w.raceJoin(TOKEN_A, clock.t);
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  w.tickRace(clock.t);
+  clock.t += w.raceCfg.countdownSec * 1000 + 100;
+  w.tickRace(clock.t);
+  // 출발선(0)을 지난 뒤 2번을 먼저 지나가도 진행되지 않는다.
+  runCheckpoints(w, TOKEN_A, [0, 2, 3], clock);
+  const r = w.race.runners.get(TOKEN_A);
+  assert.equal(r.cp, 0, '순서를 어긴 통과가 진행으로 인정됐다');
+  assert.equal(r.lap, 0);
+  // 1 → 2 → 3 → 0 이면 한 바퀴.
+  runCheckpoints(w, TOKEN_A, [1, 2, 3, 0], clock);
+  assert.equal(w.race.runners.get(TOKEN_A).lap, 1);
+});
+
+test('혼자 완주하면 1등 보상이 아니라 완주 보상만 받는다', () => {
+  // 혼자 돌려 300벨을 반복해 긁는 경로를 막는다.
+  const w = fresh();
+  const clock = { t: 7_000_000 };
+  standAtStart(w, TOKEN_A);
+  w.raceJoin(TOKEN_A, clock.t);
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  w.tickRace(clock.t);
+  clock.t += w.raceCfg.countdownSec * 1000 + 100;
+  w.tickRace(clock.t);
+  const lap = [0, 1, 2, 3];
+  runCheckpoints(w, TOKEN_A, [...lap, ...lap, 0], clock);
+  assert.equal(w.race.phase, 'finished');
+  const me = w.raceResults()[0];
+  assert.equal(me.rank, 1);
+  assert.equal(me.reward, w.raceCfg.finishReward);
+  assert.equal(w.players.get(TOKEN_A).bells, w.raceCfg.finishReward);
+});
+
+test('둘이 달리면 순위대로 보상이 나간다', () => {
+  const w = fresh();
+  const clock = { t: 8_000_000 };
+  standAtStart(w, TOKEN_A);
+  standAtStart(w, TOKEN_B);
+  w.raceJoin(TOKEN_A, clock.t);
+  w.raceJoin(TOKEN_B, clock.t);
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  w.tickRace(clock.t);
+  clock.t += w.raceCfg.countdownSec * 1000 + 100;
+  w.tickRace(clock.t);
+  const lap = [0, 1, 2, 3];
+  runCheckpoints(w, TOKEN_A, [...lap, ...lap, 0], clock);
+  runCheckpoints(w, TOKEN_B, [...lap, ...lap, 0], clock);
+  assert.equal(w.race.phase, 'finished');
+  const results = w.raceResults();
+  assert.equal(results[0].token, TOKEN_A);
+  assert.equal(results[0].reward, w.raceCfg.rewards[0]);
+  assert.equal(results[1].reward, w.raceCfg.rewards[1]);
+  assert.ok(results[0].finishMs < results[1].finishMs, '먼저 들어온 쪽 기록이 더 빨라야 한다');
+});
+
+test('타임아웃이면 미완주자는 보상 없이 끝난다', () => {
+  const w = fresh();
+  const clock = { t: 9_000_000 };
+  standAtStart(w, TOKEN_A);
+  w.raceJoin(TOKEN_A, clock.t);
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  w.tickRace(clock.t);
+  clock.t += w.raceCfg.countdownSec * 1000 + 100;
+  w.tickRace(clock.t);
+  runCheckpoints(w, TOKEN_A, [0, 1], clock);       // 반 바퀴만
+  clock.t += w.raceCfg.timeoutSec * 1000 + 100;
+  w.tickRace(clock.t);
+  assert.equal(w.race.phase, 'finished');
+  assert.equal(w.players.get(TOKEN_A).bells, 0, '완주하지 않았는데 보상이 나갔다');
+});
+
+test('속도 상한을 크게 넘기면 실격되고 보상이 없다', () => {
+  const w = fresh();
+  const clock = { t: 10_000_000 };
+  standAtStart(w, TOKEN_A);
+  w.raceJoin(TOKEN_A, clock.t);
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  w.tickRace(clock.t);
+  clock.t += w.raceCfg.countdownSec * 1000 + 100;
+  w.tickRace(clock.t);
+  // 순간이동에 가까운 이동 — 상한의 1.5배를 넘는다.
+  const p = w.players.get(TOKEN_A);
+  p.lastMoveAt = clock.t;
+  w.move(TOKEN_A, { x: p.x + 30, z: p.z, dir: 'right' }, clock.t + 150);
+  assert.equal(w.race.runners.get(TOKEN_A).dq, true);
+  const lap = [0, 1, 2, 3];
+  runCheckpoints(w, TOKEN_A, [...lap, ...lap, 0], clock);
+  assert.equal(w.players.get(TOKEN_A).bells, 0, '실격인데 보상이 나갔다');
+});
+
+test('경주가 진행 중이면 새로 참가할 수 없다', () => {
+  const w = fresh();
+  const clock = { t: 11_000_000 };
+  standAtStart(w, TOKEN_A);
+  w.raceJoin(TOKEN_A, clock.t);
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  w.tickRace(clock.t);
+  standAtStart(w, TOKEN_B);
+  assert.equal(w.raceJoin(TOKEN_B, clock.t).error.code, 'race_busy');
+});
+
+test('체크포인트는 트랙 중앙선 위에 있다(데이터 린트)', () => {
+  // 안쪽 잔디로 지름길을 타면 체크포인트를 지나지 못해야 한다. 중앙선에서
+  // 벗어나 있으면 그 전제가 깨진다 — 트랙을 고치면 이 값도 다시 계산해야 한다.
+  const raw = JSON.parse(readFileSync('data/world.json', 'utf-8'));
+  const tr = raw.playground.track;
+  const race = raw.playground.race;
+  const tMid = (tr.outer_a - tr.lane) / tr.outer_a;
+  const expected = [-Math.PI / 2, 0, Math.PI / 2, Math.PI].map((th) => {
+    const c = Math.cos(th);
+    return {
+      x: tr.x + tMid * tr.outer_a * c,
+      z: tr.z + tMid * tr.outer_b * Math.sin(th) * (1 - tr.egg * c),
+    };
+  });
+  assert.equal(race.checkpoints.length, expected.length);
+  race.checkpoints.forEach((cp, i) => {
+    assert.ok(Math.abs(cp.x - expected[i].x) < 0.2 && Math.abs(cp.z - expected[i].z) < 0.2,
+      `${cp.id} 체크포인트가 중앙선에서 벗어났다 (${cp.x},${cp.z}) vs (${expected[i].x.toFixed(2)},${expected[i].z.toFixed(2)})`);
+  });
+  // 반경이 레인 폭을 넘으면 잔디 지름길도 체크포인트를 지나게 된다.
+  assert.ok(race.radius <= tr.lane * 1.5,
+    `체크포인트 반경 ${race.radius}가 레인 폭(${tr.lane})에 비해 너무 크다`);
+});

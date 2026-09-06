@@ -152,6 +152,13 @@ var _zoom_label: Label = null
 var _fullscreen_button: Button = null
 var _fullscreen_on := false
 var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화면)
+## 달리기 경주 상태(서버가 소유). 국면·참가자 진행·남은 시간을 그린다.
+var _race: Dictionary = {}
+## 남은 시간은 **받은 시각 기준으로 내가 센다** — 서버가 매 틱 보내면 10Hz
+## 방송이 되고, 절대 시각을 받으면 기기 시계 차이만큼 어긋난다.
+var _race_remain := 0.0
+var _race_countdown_label: Label = null
+
 ## 이웃 동물. 위치·대사는 데이터가, 부탁 상태와 정산은 서버가 소유한다.
 var _npcs: Array[Npc] = []
 ## 서버가 알려준 NPC별 상태: {npc_id: {done, request:{item,count}, reward}}
@@ -1460,6 +1467,23 @@ func _refresh_exercise_ui() -> void:
 			_hooks.track("exercise1", quit_fish)
 		return
 
+	# 달리기 경주 버튼 — 운동장 안에서만. 참가 중이면 "경주 포기"가 된다.
+	if _current_zone == "playground":
+		var phase := String(_race.get("phase", "idle"))
+		var mine := _in_race()
+		var joinable := mine or phase == "idle" or phase == "lobby"
+		var race_btn := Button.new()
+		race_btn.text = "경주 포기" if mine else ("경주" if joinable else "경주 중")
+		race_btn.disabled = not joinable
+		race_btn.custom_minimum_size = Vector2(UiScale.dim(EXERCISE_BTN.x), UiScale.dim(EXERCISE_BTN.y))
+		race_btn.clip_text = true
+		race_btn.focus_mode = Control.FOCUS_NONE
+		race_btn.add_theme_font_size_override("font_size", UiScale.font(15))
+		race_btn.pressed.connect(_on_race_button)
+		_exercise_box.add_child(race_btn)
+		if _hooks != null:
+			_hooks.track("raceButton", race_btn)
+
 	var index := 0
 	for a: Variant in _available_activities():
 		var act := a as Dictionary
@@ -1759,11 +1783,41 @@ func _refresh_zone_label() -> void:
 		return
 	if _current_zone == "playground":
 		var line := "[%s] 운동을 골라보세요" % label
-		if _playground != null and _playground.soccer_visible() and not _score.is_empty():
+		var phase := String(_race.get("phase", "idle"))
+		if phase != "idle":
+			line = "[%s] %s" % [label, _race_line(phase)]
+		elif _playground != null and _playground.soccer_visible() and not _score.is_empty():
 			line = "[%s] %d : %d" % [label, int(_score.get("left", 0)), int(_score.get("right", 0))]
 		_zone_label.text = line
 		return
 	_zone_label.text = "[%s] 모임 장소 — 미니게임 준비 중" % label
+
+## 경주 한 줄 안내. 좁은 화면에서는 짧게 — 폰에서는 이 줄이 곧 경주 UI다.
+func _race_line(phase: String) -> String:
+	var count := int((_race.get("runners", []) as Array).size())
+	var narrow := _is_narrow_screen()
+	match phase:
+		"lobby":
+			return "경주 대기 %d명 · %.0f초 후 시작" % [count, maxf(_race_remain, 0.0)]
+		"countdown":
+			return "%.0f" % maxf(ceilf(_race_remain), 1.0)
+		"running":
+			var me := _my_race_runner()
+			if me.is_empty():
+				return "경주 진행 중 (%d명)" % count
+			if bool(me.get("dq", false)):
+				return "실격 — 속도 상한을 넘겼습니다"
+			var lap := int(me.get("lap", 0)) + 1
+			var laps := int(_race.get("laps", 2))
+			var rank := int(me.get("rank", 0))
+			# 순위가 정해졌으면(완주) 기록을, 아니면 진행 중인 바퀴를 보여준다.
+			if rank > 0:
+				return "%d등 · %.1f초" % [rank, float(me.get("finishMs", 0)) / 1000.0]
+			return ("%d/%d바퀴" % [mini(lap, laps), laps]) if narrow \
+				else "%d바퀴 중 %d · 남은 시간 %.0f초" % [laps, mini(lap, laps), maxf(_race_remain, 0.0)]
+		"finished":
+			return "경주 종료 · %.0f초 후 다시" % maxf(_race_remain, 0.0)
+	return ""
 
 ## 공을 찬다. 방향은 바라보는 방향 — 다른 플레이어를 향해 서서 차면 패스가 된다.
 func _kick_ball() -> void:
@@ -1872,6 +1926,81 @@ func _drop_one() -> void:
 	_net.send_drop(item_id, _player.position)
 
 ## 가방 화면을 연다. 이미 열려 있으면 무시.
+## 경주 상태 수신. 국면이 바뀌면 버튼·안내가 함께 바뀐다.
+func _on_race(race: Dictionary, results: Array) -> void:
+	var prev := String(_race.get("phase", "idle"))
+	_race = race
+	_race_remain = float(race.get("remainMs", 0)) / 1000.0
+	var phase := String(race.get("phase", "idle"))
+	if phase != prev:
+		match phase:
+			"lobby":
+				_show_toast("경주 대기 — 곧 시작합니다")
+			"countdown":
+				_show_toast("준비!")
+			"running":
+				_show_toast("출발!")
+			"finished":
+				_show_race_results(results)
+	_refresh_exercise_ui()
+	_refresh_zone_label()
+	if _hooks != null:
+		_hooks.set_state("racePhase", phase)
+		_hooks.set_state("raceRunners", int((race.get("runners", []) as Array).size()))
+		_hooks.publish_now()
+
+## 결과 3줄. 등수·기록·보상을 한 번에 보여준다.
+func _show_race_results(results: Array) -> void:
+	if results.is_empty():
+		_show_toast("경주가 끝났습니다")
+		return
+	var lines: Array[String] = []
+	for r: Variant in results:
+		if typeof(r) != TYPE_DICTIONARY:
+			continue
+		var row := r as Dictionary
+		if bool(row.get("dq", false)):
+			lines.append("%s — 실격" % String(row.get("name", "")))
+			continue
+		var rank := int(row.get("rank", 0))
+		if rank <= 0:
+			lines.append("%s — 미완주" % String(row.get("name", "")))
+			continue
+		lines.append("%d등 %s %.1f초 (+%d벨)" % [
+			rank, String(row.get("name", "")),
+			float(row.get("finishMs", 0)) / 1000.0, int(row.get("reward", 0))])
+		# 내 결과면 벨을 서버 값으로 맞춘다(보상은 서버가 지급한다).
+		if String(row.get("token", "")) == String(_slot.get("token", "")):
+			_slot["bells"] = int(row.get("bells", _slot.get("bells", 0)))
+	_show_toast("\n".join(lines))
+	_refresh_hud()
+	_persist()
+
+## 내가 경주에 참가 중인지.
+func _in_race() -> bool:
+	for r: Variant in _race.get("runners", []):
+		if typeof(r) == TYPE_DICTIONARY \
+				and String((r as Dictionary).get("token", "")) == String(_slot.get("token", "")):
+			return true
+	return false
+
+## 내 주행 상태(랩·순위) — HUD 한 줄에 쓴다.
+func _my_race_runner() -> Dictionary:
+	for r: Variant in _race.get("runners", []):
+		if typeof(r) == TYPE_DICTIONARY \
+				and String((r as Dictionary).get("token", "")) == String(_slot.get("token", "")):
+			return r as Dictionary
+	return {}
+
+func _on_race_button() -> void:
+	if _net == null or not _net.connected:
+		_show_toast("서버에 연결돼 있지 않아 경주를 할 수 없습니다")
+		return
+	if _in_race():
+		_net.send_race_leave()
+	else:
+		_net.send_race_join()
+
 ## 서버가 알려준 NPC별 부탁 상태를 반영한다(느낌표 표시 포함).
 func _apply_npc_state(state: Dictionary) -> void:
 	_npc_state = state
@@ -2106,6 +2235,7 @@ func _start_net() -> void:
 	_net.npc_done.connect(_on_npc_done)
 	_net.npc_error.connect(_on_npc_error)
 	_net.npc_state.connect(_apply_npc_state)
+	_net.race_received.connect(_on_race)
 	_net.inventory_received.connect(_on_inventory)
 	_net.sold.connect(_on_sold)
 	_net.rename_received.connect(_on_rename)
@@ -3079,6 +3209,9 @@ func _on_viewport_resized() -> void:
 func _process(delta: float) -> void:
 	_update_camera(CAMERA_FOLLOW_SPEED * delta)
 	_update_fishing(delta)
+	# 경주 남은 시간은 **내가 센다**(서버가 매 틱 보내면 10Hz 방송이 된다).
+	if not String(_race.get("phase", "idle")).is_empty() and _race_remain > 0.0:
+		_race_remain = maxf(_race_remain - delta, 0.0)
 	_update_resync(delta)
 	_poll_resume(delta)
 

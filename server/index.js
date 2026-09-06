@@ -316,6 +316,8 @@ function handle(ws, msg) {
       world: { size_x: world.sizeX, size_z: world.sizeZ },
     });
     sendTo(ws, { t: 'snapshot', ...world.snapshot() });
+    // 새로 들어온 사람도 진행 중인 경주를 봐야 한다.
+    if (world.race.phase !== 'idle') sendTo(ws, { t: 'race', race: world.raceState() });
     lastParkSent = null;   // 새 접속자에게 다음 변화가 반드시 가도록
     broadcast({
       t: 'join',
@@ -391,6 +393,18 @@ function handle(ws, msg) {
       });
       sendTo(ws, { t: 'snapshot', ...world.snapshot() });
     lastParkSent = null;   // 새 접속자에게 다음 변화가 반드시 가도록
+      break;
+    }
+    case 'race_join': {
+      const r = world.raceJoin(ws.token);
+      if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      broadcastRace(true);
+      break;
+    }
+    case 'race_leave': {
+      const r = world.raceLeave(ws.token);
+      if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      broadcastRace(true);
       break;
     }
     case 'npc_deliver': {
@@ -526,6 +540,24 @@ function broadcastPark(force = false) {
   broadcast({ t: 'park', park: s });
 }
 
+// 경주 상태. **변할 때만** 보낸다(공·놀이기구와 같은 원칙) — 다만 남은 시간이
+// 매 틱 줄어들기 때문에 그것까지 보내면 10Hz 방송이 된다. 그래서 **국면과
+// 주행 진행**만 비교하고, 남은 시간은 클라이언트가 자기 시계로 센다.
+let lastRaceKey = null;
+function broadcastRace(force) {
+  const s = world.raceState();
+  const key = JSON.stringify({
+    phase: s.phase,
+    runners: s.runners.map((r) => [r.token, r.lap, r.cp, r.rank, r.dq]),
+  });
+  if (!force && key === lastRaceKey) return;
+  lastRaceKey = key;
+  const msg = { t: 'race', race: s };
+  // 결과 국면에서는 보상까지 함께 보낸다(누가 얼마 받았는지).
+  if (s.phase === 'finished') msg.results = world.raceResults();
+  broadcast(msg);
+}
+
 // 이동은 10Hz로 묶어 브로드캐스트한다 — 개별 전송하면 N명이 동시에 움직일 때
 // 메시지 수가 N²로 늘어난다.
 const TICK_MS = 100;
@@ -543,6 +575,9 @@ setInterval(() => {
   }
   // 놀이기구 물리도 같은 틱에서 돈다.
   if (world.tickPark(TICK_MS / 1000)) broadcastPark(false);
+  // 경주 상태 기계도 같은 틱에서 돈다 — 체크포인트 통과를 보려면 최신 좌표가
+  // 필요하고, 그 좌표가 이 틱에서 방송된다.
+  if (world.tickRace()) broadcastRace(true);
 }, TICK_MS);
 
 // **자정을 넘기면 접속자에게 부탁 상태를 다시 보낸다.**
