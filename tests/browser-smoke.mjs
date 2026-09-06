@@ -187,6 +187,34 @@ for (const name of ['00-캐릭터선택', '01-초기화면', '02-이동후', '03
   if (statSync(shot(name)).size < 2000) failures.push(`${name} 스크린샷이 비정상적으로 작음(렌더 실패 의심)`);
 }
 
+// --- 좁은 화면 판정이 런타임에 뒤집혀도 배치가 따라온다 ---
+// 회귀 방지: 한때 글자 폭·높이만 다시 잡아서, 창을 좁히면 접속자 바·채팅
+// 로그·기술 버튼 열은 데스크톱 배치로 남아 서로 겹쳤다(교차검증 지적).
+{
+  const rosterX = async () => {
+    const p = await page.evaluate(() => window.afTest?.points?.rosterEntry1 ?? null);
+    return Array.isArray(p) ? p[0] : -1;
+  };
+  const wideX = await rosterX();
+  await page.setViewportSize({ width: 420, height: 820 });
+  await page.waitForTimeout(1500);
+  const narrowX = await rosterX();
+  await page.screenshot({ path: shot('06-좁은화면-전환') });
+  if (wideX < 0 || narrowX < 0) {
+    failures.push(`접속자 바 훅을 찾지 못함(넓은 화면 ${wideX}, 좁은 화면 ${narrowX})`);
+  } else if (!(narrowX < wideX * 0.6)) {
+    failures.push(`창을 좁혔는데 접속자 바가 왼쪽으로 오지 않음(${wideX.toFixed(0)} → ${narrowX.toFixed(0)}) — 좁은 화면 배치가 적용되지 않았다`);
+  } else {
+    console.log(`좁은 화면 전환 확인: 접속자 바 x ${wideX.toFixed(0)} → ${narrowX.toFixed(0)}`);
+  }
+  await page.setViewportSize({ width: 960, height: 540 });
+  await page.waitForTimeout(1200);
+  const backX = await rosterX();
+  if (!(backX > narrowX * 1.3)) {
+    failures.push(`창을 다시 넓혔는데 접속자 바가 가운데로 돌아오지 않음(${narrowX.toFixed(0)} → ${backX.toFixed(0)})`);
+  }
+}
+
 await browser.close();
 stopServer();
 

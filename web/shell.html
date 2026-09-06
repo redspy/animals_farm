@@ -227,15 +227,19 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 	// touchend 뒤에 오는 **합성 click**을 시계가 아니라 이벤트로 걸러낸다.
 	// 합성 click의 지연은 브라우저가 보장하는 값이 아니라 메인 스레드가 얼마나
 	// 막혀 있었나에 좌우된다 — WASM 프레임이 길어지면 몇백 ms를 넘고, 시계
-	// 기반 가드는 그 순간 한 번의 탭을 "켜고 바로 끄기"로 만든다(리뷰 지적).
-	// 다음 click 한 번만 삼키면 원인 쪽에서 막힌다. 마우스 전용 브라우저는
-	// touchend가 없어 플래그가 서지 않으므로 영향이 없다.
-	var swallowNextClick = false;
+	// 기반 가드는 그 순간 한 번의 탭을 "켜고 바로 끄기"로 만든다.
+	//
+	// 플래그는 **핫스팟을 실제로 처리한 touchend에만** 세운다. 모든 touchend에
+	// 세우면, 합성 click이 아예 안 오는 제스처(드래그·스와이프) 뒤에 플래그가
+	// 눌러앉아 터치+마우스 하이브리드 기기에서 다음 마우스 클릭 한 번을
+	// 억울하게 삼킨다(교차검증에서 claude·gemini가 같이 지적). 만약을 대비해
+	// 시간 상한도 둔다 — 삼킬 기회를 못 쓴 플래그가 영구히 남지 않게 한다.
+	var swallowUntil = 0;
 	function onGesture(ev) {
-		if (ev.type === 'click') {
-			if (swallowNextClick) { swallowNextClick = false; return; }
-		} else if (ev.type === 'touchend') {
-			swallowNextClick = true;
+		if (ev.type === 'click' && swallowUntil > 0) {
+			var fresh = Date.now() < swallowUntil;
+			swallowUntil = 0;
+			if (fresh) return;
 		}
 		var canvas = document.querySelector('canvas');
 		if (!canvas) return;
@@ -249,6 +253,8 @@ const GODOT_CONFIG = $GODOT_CONFIG;
 			var h = window.afHotspots[key];
 			if (!h || h.length < 5) continue;
 			if (fx >= h[0] && fx <= h[0] + h[2] && fy >= h[1] && fy <= h[1] + h[3]) {
+				// 이 touchend로 처리했으니, 뒤따르는 합성 click은 삼킨다.
+				if (ev.type === 'touchend') swallowUntil = Date.now() + 1500;
 				act(h[4]);
 				return;
 			}

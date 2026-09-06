@@ -142,6 +142,11 @@ var _fullscreen_on := false
 var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화면)
 ## HUD 글자 상자 — 폭 상한을 리사이즈 때 다시 잡아야 해서 들고 있는다.
 var _hud_box: VBoxContainer = null
+## 좁은 화면 판정에 따라 자리가 바뀌는 노드들 — 판정이 런타임에 뒤집히므로
+## 만들 때 한 번 배치하고 끝낼 수 없다(_apply_hud_layout).
+var _roster_panel: PanelContainer = null
+var _roster_style: StyleBoxFlat = null
+var _zoom_box: HBoxContainer = null
 var _exercise_box: VBoxContainer = null
 var _trick_box: VBoxContainer = null
 var _score: Dictionary = {}
@@ -435,7 +440,7 @@ func _build_hud() -> void:
 	hud_box.set_anchors_preset(Control.PRESET_TOP_LEFT)
 	hud_box.offset_left = HUD_MARGIN
 	hud_box.offset_top = HUD_MARGIN
-	# 폭을 **오른쪽 버튼 열 왼쪽까지**로 정한다(_relayout_hud_text). 폭이
+	# 폭을 **오른쪽 버튼 열 왼쪽까지**로 정한다(_apply_hud_layout). 폭이
 	# 정해져야 안내문을 접을 수 있고(자동 줄바꿈), 버튼 밑으로 글자가
 	# 지나가지도 않는다. 예전에는 폭을 안 주고 문장을 짧게 줄여 피했는데,
 	# 그건 논리 폭에 의존하는 가정이라 +로 키우면 다시 겹쳤다(리뷰 지적).
@@ -472,10 +477,11 @@ func _build_hud() -> void:
 	_hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_hint_label.max_lines_visible = 2
 	_hint_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	# 높이 예약과 폰트 크기는 _relayout_hud_text가 잡는다 — 좁은 화면 판정은
+	# 높이 예약과 폰트 크기는 _apply_hud_layout이 잡는다 — 좁은 화면 판정은
 	# 런타임에 뒤집히므로(창을 세로로 줄이면 true가 된다) 빌드 시점에 굳혀
 	# 두면 안 된다.
-	_relayout_hud_text()
+	# 자리·크기는 _apply_hud_layout이 단일 출처다 — 여기서 만든 초기값도 그
+	# 함수가 덮어써서, 빌드 경로와 리사이즈 경로가 갈리지 않게 한다.
 
 	_net_label = _make_label(layer, Control.PRESET_TOP_RIGHT, Palette.color("ui", "warn_text"), outline_color)
 	_net_label.offset_right = -HUD_MARGIN
@@ -530,6 +536,7 @@ func _build_hud() -> void:
 	# 조이스틱 토글이 있어서 중앙에 두면 양쪽과 겹친다. 조이스틱 토글 **위**의
 	# 왼쪽으로 올린다 — 그 위는 채팅 로그가 시작되기 전까지 비어 있다.
 	var roster_panel := PanelContainer.new()
+	_roster_panel = roster_panel
 	if narrow:
 		roster_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
 		roster_panel.grow_horizontal = Control.GROW_DIRECTION_END
@@ -543,6 +550,7 @@ func _build_hud() -> void:
 		roster_panel.offset_bottom = -2.0
 	roster_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var roster_style := StyleBoxFlat.new()
+	_roster_style = roster_style
 	roster_style.bg_color = Palette.color("ui", "roster_bg")
 	roster_style.corner_radius_top_left = 8
 	roster_style.corner_radius_top_right = 8
@@ -598,6 +606,7 @@ func _build_hud() -> void:
 		_build_fullscreen_button(layer, fs_top, btn_h)
 
 	var zoom_box := HBoxContainer.new()
+	_zoom_box = zoom_box
 	zoom_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
 	zoom_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
 	zoom_box.offset_right = -HUD_MARGIN
@@ -641,6 +650,10 @@ func _build_hud() -> void:
 	_trick_box.offset_top = boxes_top
 	_trick_box.add_theme_constant_override("separation", 6)
 	layer.add_child(_trick_box)
+
+	# 자리·크기의 단일 출처. 위에서 만들 때 넣은 값도 여기서 덮어써서, 빌드
+	# 경로와 리사이즈 경로가 갈리지 않게 한다.
+	_apply_hud_layout()
 
 	# 채팅 입력은 웹이면 DOM <input>, 아니면 LineEdit — ChatInput이 갈라 준다.
 	_chat = ChatInput.new()
@@ -826,7 +839,10 @@ func _refresh_hud() -> void:
 	# **넘치면 짧은 문장으로 내린다.** "두 줄에 들어가는 길이로 맞춰 뒀다"는
 	# 가정은 보간(활동별 문구·이모티콘 개수)과 배율에 따라 깨진다 — 실제 줄
 	# 수를 보고 판단한다(리뷰 지적).
-	if _hint_label.get_line_count() > _hint_label.max_lines_visible:
+	# 폭이 아직 0이면(레이아웃 첫 프레임) 줄 수가 실제와 무관하게 크게 나와서
+	# 시작 직후 한 번 짧은 문장으로 잘못 내려간다 — 폭이 잡힌 뒤에만 잰다.
+	if _hint_label.size.x > 1.0 \
+			and _hint_label.get_line_count() > _hint_label.max_lines_visible:
 		_hint_label.text = _short_hint()
 
 	# E2E가 확인할 수 있게 상태를 공개한다 — 판매 결과처럼 본인에게만 오는
@@ -1004,19 +1020,24 @@ func _make_zoom_button(text: String, steps: float) -> Button:
 	_tracked_buttons["zoomIn" if steps > 0.0 else "zoomOut"] = b
 	return b
 
-## HUD 글자 상자의 폭·안내문 높이·안내문 폰트를 다시 잡는다.
+## 좁은 화면 판정에 딸린 **모든** 자리·크기를 다시 잡는다.
 ##
-## **빌드 시점에 굳히면 안 된다.** 이 값들은 전부 좁은 화면 판정(`UiScale`)에
-## 딸려 있고, 그 판정은 런타임에 뒤집힌다 — 창을 세로로 줄이거나 전체화면을
-## 오가면 CSS 짧은 변이 480을 가로지른다. 굳혀 두면 줌 행은 넓어진 채 상자
-## 상한은 옛 값이라, 없애려던 "안내문이 버튼 밑을 지나감"이 되돌아온다.
-func _relayout_hud_text() -> void:
+## **빌드 시점에 굳히면 안 된다.** 이 값들은 전부 `UiScale`의 좁은 화면 판정에
+## 딸려 있고, 그 판정은 런타임에 뒤집힌다 — 창을 세로로 줄이거나, 소프트
+## 키보드가 캔버스를 줄이거나, 전체화면을 오가면 CSS 짧은 변이 480을
+## 가로지른다. 한때 글자 폭·높이·폰트만 갱신했는데, 그러면 채팅 로그·접속자
+## 바·기술 버튼 열은 데스크톱 배치로 남아 서로 겹쳤다(교차검증에서 claude·
+## gemini가 같이 지적). **빌드와 리사이즈가 같은 함수를 쓰게 해서** 두 경로가
+## 갈리지 않도록 한다.
+func _apply_hud_layout() -> void:
 	if _hud_box == null or not is_instance_valid(_hud_box):
 		return
+	var narrow := _is_narrow_screen()
+	var line_h := NARROW_LINE_H if narrow else 24.0
+
+	# --- 왼쪽 위: 글자 상자 폭 상한 ---
 	_hud_box.offset_right = -(HUD_MARGIN + _right_column_width() + 8.0)
 	if _hint_label != null and is_instance_valid(_hint_label):
-		var narrow := _is_narrow_screen()
-		var line_h := NARROW_LINE_H if narrow else 24.0
 		# **높이를 예약한다.** autowrap + 트리밍을 같이 켜면 Label의 최소 크기가
 		# (1, 1)이 되고 VBox는 그 값을 그대로 주므로, 라벨이 1px로 접혀 한 줄도
 		# 안 그려질 수 있다. max_lines_visible은 높이를 예약해 주지 않는다.
@@ -1027,6 +1048,98 @@ func _relayout_hud_text() -> void:
 			_hint_label.add_theme_font_size_override("font_size", UiScale.font(12))
 		else:
 			_hint_label.remove_theme_font_size_override("font_size")
+	_refresh_bag_width()
+
+	# --- 왼쪽 아래: 채팅 로그 ---
+	# 좁은 화면에서는 화면 중앙에 두면 캐릭터를 가린다 — 아래에 붙인다.
+	if _chat_label != null and is_instance_valid(_chat_label):
+		var stack := HUD_MARGIN
+		if DisplayServer.is_touchscreen_available():
+			stack = TouchControls.MARGIN + TouchControls.BTN_SMALL + NARROW_STACK_GAP
+		stack += (NARROW_LINE_H + NARROW_STACK_GAP) * 2.0
+		var roster_bottom := stack
+		var chat_bottom := stack + NARROW_ROSTER_H + NARROW_STACK_GAP
+		# **오프셋을 두 분기 모두 명시한다.** set_anchors_preset은 앵커만 바꾸고
+		# 이전 분기가 넣은 오프셋을 남기므로, 한쪽만 쓰면 되돌아올 때 풀리지
+		# 않는다(좁혔다 넓혔을 때 접속자 바가 왼쪽에 남았다 — 실측).
+		_chat_label.set_anchors_preset(
+			Control.PRESET_BOTTOM_LEFT if narrow else Control.PRESET_CENTER_LEFT)
+		_chat_label.offset_left = HUD_MARGIN
+		if narrow:
+			_chat_label.offset_bottom = -chat_bottom
+			_chat_label.offset_top = -chat_bottom
+			_chat_label.grow_vertical = Control.GROW_DIRECTION_BEGIN
+		else:
+			_chat_label.offset_top = 0.0
+			_chat_label.offset_bottom = 0.0
+			_chat_label.grow_vertical = Control.GROW_DIRECTION_BOTH
+		# 줄 수 상한도 판정에 딸려 있다 — 넓은 화면에서 쌓인 로그가 좁아진
+		# 화면에 그대로 남으면 화면을 덮는다.
+		var limit := CHAT_LOG_LINES_SHORT if narrow else CHAT_LOG_LINES
+		if _chat_log.size() > limit:
+			_chat_log = _chat_log.slice(_chat_log.size() - limit)
+			_chat_label.text = "\n".join(_chat_log)
+
+		if _roster_panel != null and is_instance_valid(_roster_panel):
+			if narrow:
+				_roster_panel.set_anchors_preset(Control.PRESET_BOTTOM_LEFT)
+				_roster_panel.grow_horizontal = Control.GROW_DIRECTION_END
+				_roster_panel.offset_left = HUD_MARGIN
+				_roster_panel.offset_right = HUD_MARGIN
+				_roster_panel.offset_bottom = -roster_bottom
+			else:
+				_roster_panel.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+				_roster_panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
+				_roster_panel.offset_left = 0.0
+				_roster_panel.offset_right = 0.0
+				_roster_panel.offset_bottom = -2.0
+			_roster_panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+			if _roster_style != null:
+				# 화면 하단에 붙어 있지 않을 때만 아래 모서리도 둥글게 한다.
+				var r := 8 if narrow else 0
+				_roster_style.corner_radius_bottom_left = r
+				_roster_style.corner_radius_bottom_right = r
+
+	# --- 오른쪽 위: 버튼 열(연결 상태 → 전체화면 → 크기 → 운동 → 기술) ---
+	var right_top := HUD_MARGIN + line_h * 1.6
+	var btn_h := UiScale.dim(ZOOM_BTN.y)
+	var zoom_top := right_top
+	if _fullscreen_button != null and is_instance_valid(_fullscreen_button):
+		_fullscreen_button.offset_top = right_top
+		_fullscreen_button.offset_bottom = right_top + btn_h
+		_fullscreen_button.custom_minimum_size = Vector2(
+			UiScale.dim(FULLSCREEN_BTN_W), btn_h)
+		_fullscreen_button.add_theme_font_size_override("font_size", UiScale.font(15))
+		# 미지원이면 버튼이 없고, 그 자리는 줌 행이 그대로 쓴다.
+		zoom_top = right_top + btn_h + 6.0
+	if _zoom_box != null and is_instance_valid(_zoom_box):
+		_zoom_box.offset_top = zoom_top
+	if _zoom_label != null and is_instance_valid(_zoom_label):
+		_zoom_label.custom_minimum_size = Vector2(UiScale.dim(52.0), btn_h)
+	for key: String in ["zoomIn", "zoomOut"]:
+		var b: Control = _tracked_buttons.get(key)
+		if b != null and is_instance_valid(b):
+			b.custom_minimum_size = Vector2(UiScale.dim(ZOOM_BTN.x), UiScale.dim(ZOOM_BTN.y))
+	var boxes_top := zoom_top + btn_h + 10.0
+	if _exercise_box != null and is_instance_valid(_exercise_box):
+		_exercise_box.offset_top = boxes_top
+	# 기술 버튼 열은 폰에서 **반대쪽(왼쪽)** 에 둔다 — 운동 버튼 옆에 붙이면 두
+	# 열이 화면 가운데의 캐릭터를 덮는다(폰 실측).
+	if _trick_box != null and is_instance_valid(_trick_box):
+		if narrow:
+			_trick_box.set_anchors_preset(Control.PRESET_TOP_LEFT)
+			_trick_box.grow_horizontal = Control.GROW_DIRECTION_END
+			_trick_box.offset_left = HUD_MARGIN
+			_trick_box.offset_right = HUD_MARGIN
+		else:
+			_trick_box.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+			_trick_box.grow_horizontal = Control.GROW_DIRECTION_BEGIN
+			var right := -(HUD_MARGIN + UiScale.dim(EXERCISE_BTN.x) + 8.0)
+			_trick_box.offset_left = right
+			_trick_box.offset_right = right
+		_trick_box.offset_top = boxes_top
+	# 자리가 바뀌면 셸에 알린 전체화면 핫스팟도 다시 계산해야 한다.
+	_publish_fullscreen_hotspot.call_deferred()
 
 ## 가방 줄 폭을 **글자 폭으로** 잡는다(상한은 글자 상자 폭).
 ##
@@ -2525,9 +2638,8 @@ func _on_viewport_resized() -> void:
 	# 전체화면 전환은 크기 변경으로 나타난다 — 버튼 글자를 바로 맞춘다.
 	_refresh_fullscreen_button()
 	_publish_fullscreen_hotspot()
-	# 좁은 화면 판정이 뒤집힐 수 있으므로 글자 폭·높이·폰트를 다시 잡는다.
-	_relayout_hud_text()
-	_refresh_bag_width()
+	# 좁은 화면 판정이 뒤집힐 수 있으므로 자리·크기를 전부 다시 잡는다.
+	_apply_hud_layout()
 	if _camera != null:
 		_camera.size = _camera_size_for_screen()
 
@@ -2608,12 +2720,15 @@ func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST or what == NOTIFICATION_APPLICATION_FOCUS_OUT:
 		if _player != null:
 			_persist()
+		# 떠난 시각은 **여기서** 적어야 한다. 아래에 `elif FOCUS_OUT` 분기를
+		# 뒀더니 위 조건이 이미 그 값을 잡아 도달하지 못했고, 그래서 데스크톱
+		# 복귀 재동기화가 영원히 안 걸렸다(교차검증에서 gemini가 지적).
+		if what == NOTIFICATION_APPLICATION_FOCUS_OUT:
+			_away_since = Time.get_ticks_msec()
 	# 창 포커스로는 재동기화를 걸지 않는다 — 채팅 입력창을 닫는 것만으로도
 	# 포커스 알림이 오고, 그때 재동기화가 돌면 방금 지시한 이동이 서버 위치로
 	# 되돌려진다(실측). 실제 탭 이탈 여부는 웹의 visibilitychange로 판단한다
 	# (_poll_resume, web/shell.html의 afResumeToken).
-	elif what == NOTIFICATION_APPLICATION_FOCUS_OUT:
-		_away_since = Time.get_ticks_msec()
 	elif what == NOTIFICATION_APPLICATION_FOCUS_IN and not OS.has_feature("web"):
 		# 데스크톱에는 visibilitychange가 없으므로 떠나 있던 시간으로 판단한다.
 		if _away_since > 0 and Time.get_ticks_msec() - _away_since >= AWAY_MIN_MS:
