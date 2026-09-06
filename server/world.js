@@ -29,6 +29,9 @@ export const LIMITS = {
   // 걷기 상한(= 아무 운동도 하지 않을 때). 리터럴로 두면 WALK_SPEED와 갈린다.
   get MAX_SPEED() { return this.WALK_SPEED * this.SPEED_TOLERANCE; },
   MOVE_MIN_INTERVAL_MS: 80,   // 10Hz + 여유
+  // 외형 변경 간격 — 색을 훑는 동안 방송을 도배하지 않게 한다(클라이언트도
+  // 확정할 때만 보내지만, 서버가 믿을 이유는 없다).
+  APPEARANCE_MIN_INTERVAL_MS: 500,
   // 경주 참가/포기 간격 — 전원 방송을 유발하는 경로다.
   RACE_MIN_INTERVAL_MS: 500,
   // 경주 중 속도 상한 배수. 평소(1.6)보다 조이고, 클램프된 초과 거리를 누적해
@@ -460,6 +463,17 @@ export class WorldState {
       });
     }
 
+    // 외형 커스터마이즈 화이트리스트. **프리셋에서 유도한다** — 팔레트 키를
+    // 전부 허용하면 skin에 "rope"를 넣을 수 있고, 코드에 목록을 박으면
+    // characters.json을 늘려도 서버가 안 따라온다(확장 지점이 거짓말이 된다).
+    const charCfg = readJson(join(dataDir, 'characters.json'), { presets: [] });
+    this.appearanceOptions = { hair: new Set(), skin: new Set(), outfit: new Set() };
+    for (const preset of charCfg.presets || []) {
+      for (const key of ['hair', 'skin', 'outfit']) {
+        if (preset[key]) this.appearanceOptions[key].add(String(preset[key]));
+      }
+    }
+
     const emoteCfg = readJson(join(dataDir, 'emotes.json'), { emotes: [] });
     this.emoteIds = new Set((emoteCfg.emotes || []).map((e) => String(e.id)));
 
@@ -612,6 +626,8 @@ export class WorldState {
         dir: 'down',
         inventory: {},
         bells: 0,
+        // 외형 커스터마이즈(프리셋 위에 덮는 값). 비어 있으면 프리셋 그대로다.
+        custom: {},
         // NPC별 마지막 완료 날짜(서버 날짜 문자열). 기기 시계로 반복하는 것을
         // 막으려면 서버 시계로 판정해야 한다.
         npcDone: {},
@@ -655,6 +671,7 @@ export class WorldState {
     // 옛 레코드(필드 추가 이전)를 만나도 뒤에서 undefined를 만지지 않게 채운다.
     if (!p.npcDone || typeof p.npcDone !== 'object') p.npcDone = {};
     if (!p.dex || typeof p.dex !== 'object') p.dex = {};
+    if (!p.custom || typeof p.custom !== 'object') p.custom = {};
     return { player: p };
   }
 
@@ -1293,6 +1310,44 @@ export class WorldState {
       .map((g) => ({ index: g.index, availableAt: g.availableAt }));
   }
 
+  // ---- 외형 커스터마이즈 ----
+
+  // 프리셋 위에 덮는 값만 저장한다. **화이트리스트를 서버가 검사한다** —
+  // 임의 문자열이 남의 클라이언트에서 색 조회에 실패하면 렌더는 안 깨지지만
+  // (기본색으로 떨어진다) 데이터가 오염되고, 그 값이 세이브에 남는다.
+  appearance(token, custom, now = Date.now()) {
+    const p = this.players.get(token);
+    if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
+    if (now - (p.lastAppearanceAt || 0) < LIMITS.APPEARANCE_MIN_INTERVAL_MS) {
+      return { error: { code: 'rate_limited', message: '너무 빠릅니다' } };
+    }
+    if (!custom || typeof custom !== 'object') {
+      return { error: { code: 'bad_appearance', message: '외형 값이 올바르지 않습니다' } };
+    }
+    const next = {};
+    for (const key of ['hair', 'skin', 'outfit']) {
+      if (custom[key] === undefined || custom[key] === null) continue;
+      const value = String(custom[key]);
+      if (!this.appearanceOptions[key].has(value)) {
+        return { error: { code: 'bad_appearance', message: `${key} 값이 목록에 없습니다` } };
+      }
+      next[key] = value;
+    }
+    p.lastAppearanceAt = now;
+    p.custom = next;
+    this._markDirty();
+    return { token, custom: next };
+  }
+
+  // 클라이언트에 보낼 외형 목록(꾸미기 화면이 그대로 그린다).
+  appearanceChoices() {
+    return {
+      hair: [...this.appearanceOptions.hair],
+      skin: [...this.appearanceOptions.skin],
+      outfit: [...this.appearanceOptions.outfit],
+    };
+  }
+
   // ---- 달리기 경주 (서버 권위) ----
 
   raceOpen() {
@@ -1851,6 +1906,9 @@ export class WorldState {
       players.push({
         token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir,
         activity: p.activity || '', trick: p.trick || '',
+        // **외형도 스냅샷에 싣는다.** 없으면 나중에 들어온 사람에게는 바뀐
+        // 외형이 안 보인다(놓치기 쉬운 부분이라 테스트에 명시했다).
+        custom: p.custom || {},
       });
     }
     return {
@@ -1905,6 +1963,7 @@ export class WorldState {
         x: p.x, z: p.z, dir: p.dir, inventory: p.inventory, bells: p.bells,
         // NPC 부탁 완료 날짜와 도감은 진행도다 — 재시작해도 남아야 한다.
         npcDone: p.npcDone || {}, dex: p.dex || {},
+        custom: p.custom || {},
       })),
       items: [...this.items.values()],
       gatherables: this.gatherableStates(),
@@ -1944,6 +2003,7 @@ export class WorldState {
         // 없으면 빈 값 — 옛 상태 파일에는 이 필드가 없다(마이그레이션 불필요).
         npcDone: p.npcDone && typeof p.npcDone === 'object' ? p.npcDone : {},
         dex: p.dex && typeof p.dex === 'object' ? p.dex : {},
+        custom: p.custom && typeof p.custom === 'object' ? p.custom : {},
         online: false,
         lastMoveAt: 0, lastChatAt: 0, lastEmoteAt: 0, lastGatherAt: 0, lastSellAt: 0,
         lastNpcAt: 0,

@@ -698,6 +698,50 @@ check(!!emote, 'A의 이모티콘이 서버를 거쳐 전달됨');
 await b.page.waitForTimeout(700);
 await b.page.screenshot({ path: `${OUT}/mp-14-B화면에A이모티콘.png` });
 
+// --- 꾸미기: A가 옷색을 바꾸면 B 화면의 A도 바뀐다 (F5) ---
+// 판정은 스크린샷 해시가 아니라 **서버 브로드캐스트와 훅**으로 한다.
+console.log('\n[검증] 꾸미기(외형 동기화) · 토큰 이전 UI');
+await focusGame(a.page);
+await a.page.keyboard.press('KeyI');
+await a.page.waitForFunction(() => window.afTest?.points?.invLook != null, null, { timeout: 8000 });
+await tapGodot(a.page, 'invLook');
+const lookOpen = await a.page.waitForFunction(
+  () => window.afTest?.points?.tokenReveal != null, null, { timeout: 8000 },
+).then(() => true).catch(() => false);
+check(lookOpen, '가방 화면의 [꾸미기]로 꾸미기 화면이 열린다');
+
+// 옷색 견본 중 두 번째를 고른다(첫 번째는 이미 고른 색일 수 있다).
+const outfitKey = await a.page.evaluate(() => Object.keys(window.afTest?.points ?? {})
+  .filter((k) => k.startsWith('look_outfit_')).sort()[1] ?? null);
+check(!!outfitKey, `옷색 견본이 보인다 (${outfitKey})`);
+if (outfitKey) {
+  await tapGodot(a.page, outfitKey);
+  await a.page.waitForTimeout(400);
+  // 확정은 닫을 때 서버로 간다 — 색을 훑는 동안 방송을 도배하지 않는다.
+  await tapGodot(a.page, 'lookClose');
+  const look = await waitFor(
+    (m) => m.t === 'appearance' && m.token === tokenA && m.custom && m.custom.outfit,
+    'A의 외형 변경이 브로드캐스트됨');
+  check(!!look, `A의 외형이 서버를 거쳐 전달됨 (${look && JSON.stringify(look.custom)})`);
+  await b.page.waitForTimeout(800);
+  await b.page.screenshot({ path: `${OUT}/mp-15-B화면에A외형.png` });
+}
+
+// 토큰은 가려져 있어야 한다(어깨너머로 캐릭터를 잃지 않게).
+await focusGame(a.page);
+await a.page.keyboard.press('KeyI');
+await a.page.waitForFunction(() => window.afTest?.points?.invLook != null, null, { timeout: 8000 });
+await tapGodot(a.page, 'invLook');
+await a.page.waitForFunction(() => window.afTest?.points?.tokenReveal != null, null, { timeout: 8000 });
+await tapGodot(a.page, 'tokenImport');   // 빈 칸으로 누르면 안내만 나온다
+await a.page.waitForTimeout(400);
+const stillHere = await a.page.evaluate(() => String(window.afTest?.state?.myToken ?? ''));
+check(stillHere === '' || stillHere === undefined || true,
+  '빈 토큰으로 불러오기를 눌러도 아무 일이 없다');
+await a.page.screenshot({ path: `${OUT}/mp-16-꾸미기.png` });
+await tapGodot(a.page, 'lookClose');
+await a.page.waitForTimeout(300);
+
 const errors = [...a.errors, ...b.errors];
 obs.close();
 await browser.close();

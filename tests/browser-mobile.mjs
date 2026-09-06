@@ -197,7 +197,13 @@ console.log('\n[검증] 조이스틱 영역 탭 통과');
   const box = page.viewportSize();
   const pt = { x: Math.round(box.width * 0.22), y: Math.round(box.height * 0.78) };
   await page.touchscreen.tap(pt.x, pt.y);
-  await page.waitForTimeout(700);
+  // **고정 대기를 쓰지 않는다.** 소프트웨어 렌더에서 이 에뮬레이션은 4FPS
+  // 수준이라 700ms가 두세 프레임뿐이고, 훅 게시(0.4초 주기)와 어긋나면
+  // 원인 불명의 간헐 실패가 된다(실측: worldTaps 1 → 1).
+  await page.waitForFunction(
+    (prev) => Number(window.afTest?.state?.worldTaps ?? 0) > prev,
+    before, { timeout: 8000 },
+  ).catch(() => {});
   const after = await taps();
   check(after > before, `스틱 영역을 탭하면 월드 탭으로 처리된다 (worldTaps ${before} → ${after})`);
   check((await branch()).length > 0, `탭이 실제 분기를 탔다 (tapBranch=${await branch()})`);
@@ -280,8 +286,25 @@ console.log(`  (이동 결과 x=${arrivedX})`);
 check(arrivedX !== null && Math.abs(arrivedX - TREE.x) <= 1.2, `나무 근처(x≈${TREE.x})까지 조이스틱으로 이동`);
 await page.screenshot({ path: `${OUT}/6-이동후-터치UI.png` });
 
-await tapGodot(page, 'actionButton', { touch: true });   // 채집
-await page.waitForTimeout(800);
+// **가방이 늘 때까지 액션을 다시 시도한다.** 소프트웨어 렌더가 4FPS 수준이라
+// 조이스틱 이동이 목표에서 조금 벗어나면 사거리(1.6)를 못 채우고, 그러면
+// 채집이 실패해 다음 단계(버리기)가 "버릴 물건이 없습니다"로 죽는다 —
+// 원인이 채집인데 실패는 버리기에서 나타난다(실측: 3회 연속).
+const bagCount = () => page.evaluate(() => Number(window.afTest?.state?.bagCount ?? 0));
+const bagBefore = await bagCount();
+let gathered = false;
+for (let i = 0; i < 4 && !gathered; i++) {
+  await tapGodot(page, 'actionButton', { touch: true });
+  gathered = await page.waitForFunction(
+    (prev) => Number(window.afTest?.state?.bagCount ?? 0) > prev,
+    bagBefore, { timeout: 4000 },
+  ).then(() => true).catch(() => false);
+  if (!gathered) {
+    // 한 걸음 더 다가간다(목표를 지나쳤을 수도 있으니 양방향으로 조금씩).
+    await walkToX(TREE.x, 0.4, 6000);
+  }
+}
+check(gathered, `액션 버튼으로 채집됐다 (가방 ${bagBefore} → ${await bagCount()})`);
 await page.screenshot({ path: `${OUT}/7-채집후.png` });
 await tapGodot(page, 'dropButton', { touch: true });     // 버리기
 const added = await waitFor((m) => m.t === 'item_add', '버리기가 서버에 반영됨');
@@ -396,7 +419,15 @@ const playerScreenY = async () => (await godotPoint(page, 'playerScreen')).y;
 const beforeKeyboard = await playerScreenY();
 await page.evaluate(() => { window.afForceKeyboardCover = 0.4; });
 await tapGodot(page, 'chatButton', { touch: true });   // 채팅 열기 → 폴링 시작
-await page.waitForTimeout(1200);
+// 카메라 보정이 **실제로 반영될 때까지** 기다린다(고정 1.2초는 4FPS 환경에서
+// 다섯 프레임 남짓이라 보정 lerp가 끝나지 않는다).
+await page.waitForFunction(
+  (base) => {
+    const p = window.afTest?.points?.playerScreen;
+    return Array.isArray(p) && p[1] < base - 20;
+  },
+  beforeKeyboard, { timeout: 10000 },
+).catch(() => {});
 const afterKeyboard = await playerScreenY();
 const coverState = await page.evaluate(() => (window.afTest && window.afTest.state && window.afTest.state.keyboardCover) ?? null);
 console.log(`  (가림 비율 인식=${coverState}, 캐릭터 화면 Y ${beforeKeyboard.toFixed(0)} → ${afterKeyboard.toFixed(0)})`);
@@ -407,7 +438,13 @@ await page.screenshot({ path: `${OUT}/16-키보드-카메라보정.png` });
 // 원상 복구: 키보드가 내려가면 보정도 풀려야 한다.
 await page.evaluate(() => { window.afForceKeyboardCover = 0; });
 await page.keyboard.press('Escape');
-await page.waitForTimeout(1500);
+await page.waitForFunction(
+  (base) => {
+    const p = window.afTest?.points?.playerScreen;
+    return Array.isArray(p) && Math.abs(p[1] - base) < 30;
+  },
+  beforeKeyboard, { timeout: 10000 },
+).catch(() => {});
 const restored = await playerScreenY();
 check(Math.abs(restored - beforeKeyboard) < 30,
   `키보드가 내려가면 보정이 풀린다(${restored.toFixed(0)} ≈ ${beforeKeyboard.toFixed(0)})`);

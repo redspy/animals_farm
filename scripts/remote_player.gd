@@ -19,6 +19,8 @@ var extras: AvatarExtras
 
 var _target := Vector3.ZERO
 var _dir_name: String = "down"
+var _preset: Dictionary = {}
+var _custom: Dictionary = {}
 
 func setup(player: Dictionary, preset: Dictionary) -> void:
 	token = String(player.get("token", ""))
@@ -27,8 +29,14 @@ func setup(player: Dictionary, preset: Dictionary) -> void:
 	_dir_name = String(player.get("dir", "down"))
 
 	sprite = PlayerSprite.new()
+	# 외형 커스터마이즈는 프리셋 위에 덮는다 — 스냅샷·join에 실려 오므로
+	# 나중에 들어온 사람도 바뀐 색을 본다.
+	_preset = preset
+	var custom: Variant = player.get("custom", {})
+	if typeof(custom) == TYPE_DICTIONARY:
+		_custom = (custom as Dictionary).duplicate(true)
 	if not preset.is_empty():
-		sprite.setup(preset)
+		sprite.setup(_merged_look())
 	add_child(sprite)
 
 	extras = AvatarExtras.new()
@@ -92,3 +100,21 @@ func _dir_to_vector(dir: String) -> Vector2:
 		"left": return Vector2(-1, 0)
 		"right": return Vector2(1, 0)
 		_: return Vector2(0, 1)
+
+## 프리셋 위에 커스터마이즈를 덮은 외형.
+func _merged_look() -> Dictionary:
+	var merged := _preset.duplicate(true)
+	for key: Variant in _custom.keys():
+		merged[String(key)] = _custom[key]
+	return merged
+
+## 외형이 바뀌었을 때(서버 브로드캐스트). 색만 바꾸고 **하고 있던 운동 모습은
+## 다시 적용한다** — 스프라이트를 새로 만들면 그 상태가 사라진다.
+func apply_custom(custom: Dictionary) -> void:
+	_custom = custom.duplicate(true)
+	if sprite == null:
+		return
+	var activity := sprite.activity_id()
+	var trick := sprite.trick_id()
+	sprite.setup(_merged_look())
+	sprite.set_activity(activity, trick)

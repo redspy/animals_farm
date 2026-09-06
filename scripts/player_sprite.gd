@@ -98,6 +98,13 @@ func facing() -> String:
 
 ## 운동 모습으로 바꾼다. kind가 빈 문자열이면 원래 모습으로 돌아온다.
 ## trick은 줄넘기에만 쓰인다(모아 뛰기/이중 뛰기/토드/엇걸어 풀어 뛰기).
+## 지금 활동·기술 — 외형만 바꿔 다시 만들 때 상태를 잃지 않으려고 읽는다.
+func activity_id() -> String:
+	return _activity
+
+func trick_id() -> String:
+	return _trick
+
 func set_activity(kind: String, trick: String = "") -> void:
 	if kind == _activity and trick == _trick:
 		return

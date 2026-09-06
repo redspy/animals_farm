@@ -152,6 +152,11 @@ var _zoom_label: Label = null
 var _fullscreen_button: Button = null
 var _fullscreen_on := false
 var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화면)
+## 외형 커스터마이즈(프리셋 위에 덮는 값)와 서버가 준 선택지.
+var _custom: Dictionary = {}
+var _appearance_choices: Dictionary = {}
+var _look_ui: AppearanceUI = null
+
 ## 달리기 경주 상태(서버가 소유). 국면·참가자 진행·남은 시간을 그린다.
 var _race: Dictionary = {}
 ## 남은 시간은 **받은 시각 기준으로 내가 센다** — 서버가 매 틱 보내면 10Hz
@@ -278,6 +283,13 @@ func _build_world() -> void:
 
 	# 내 캐릭터도 남들과 같은 이름표·말풍선을 쓴다 — 나만 다르게 보이면
 	# "실시간으로 잘 보이는지"를 검증할 수 없다.
+	# 세이브에 남은 외형을 적용한다(서버에 붙으면 서버 값으로 덮인다).
+	var saved_custom: Variant = _slot.get("custom", {})
+	if typeof(saved_custom) == TYPE_DICTIONARY and not (saved_custom as Dictionary).is_empty():
+		_custom = (saved_custom as Dictionary).duplicate(true)
+		if _player.sprite != null:
+			_player.sprite.setup(_merged_look(_custom))
+
 	_my_extras = AvatarExtras.new()
 	_player.add_child(_my_extras)
 	_my_extras.set_name_text(String(_slot.get("name", "")))
@@ -1039,6 +1051,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if _dex_ui != null and is_instance_valid(_dex_ui):
 		return
+	if _look_ui != null and is_instance_valid(_look_ui):
+		return
 	if _npc_ui != null and is_instance_valid(_npc_ui):
 		return
 	if _resync != null and _resync.is_active():
@@ -1322,6 +1336,7 @@ func _publish_fullscreen_hotspot() -> void:
 		or not _fullscreen_button.is_visible_in_tree() \
 		or (_inventory_ui != null and is_instance_valid(_inventory_ui)) \
 		or (_dex_ui != null and is_instance_valid(_dex_ui)) \
+		or (_look_ui != null and is_instance_valid(_look_ui)) \
 		or (_npc_ui != null and is_instance_valid(_npc_ui)) \
 		or (_touch != null and _touch.is_sheet_open())
 	var spec := ""
@@ -2161,6 +2176,84 @@ func _on_npc_error(code: String, message: String, need: Dictionary, state: Dicti
 		if npc != null:
 			_talk_to(npc)
 
+## 프리셋 위에 커스터마이즈를 덮은 외형 딕셔너리.
+func _merged_look(custom: Dictionary) -> Dictionary:
+	var merged := _preset.duplicate(true)
+	for key: Variant in custom.keys():
+		merged[String(key)] = custom[key]
+	return merged
+
+## 내 외형을 바꾼다. persist=true면 세이브에도 남긴다(서버가 없어도 유지되게).
+func _apply_my_custom(custom: Dictionary, persist: bool) -> void:
+	_custom = custom.duplicate(true)
+	_slot["custom"] = _custom
+	if _player != null and _player.sprite != null:
+		# 스프라이트를 다시 만들면 지금 하고 있는 운동 모습이 사라진다 —
+		# 색만 바꾸고 활동을 다시 적용한다.
+		_player.sprite.setup(_merged_look(_custom))
+		_player.sprite.set_activity(_activity, _trick)
+	if persist:
+		_persist()
+
+## 남의 외형이 바뀌었을 때(서버 브로드캐스트).
+func _on_appearance(token: String, custom: Dictionary) -> void:
+	if token == String(_slot.get("token", "")):
+		_apply_my_custom(custom, true)
+		return
+	if not _remotes.has(token):
+		return
+	var remote: RemotePlayer = _remotes[token]
+	remote.apply_custom(custom)
+
+## 꾸미기 화면을 연다(가방 화면의 [꾸미기] 버튼).
+func _open_look() -> void:
+	if _look_ui != null and is_instance_valid(_look_ui):
+		return
+	_look_ui = AppearanceUI.new()
+	_look_ui.setup(_appearance_choices, _custom, _merged_look(_custom),
+		String(_slot.get("token", "")))
+	# 고르는 즉시 내 화면에 반영하고(미리보기 = 실제), 서버로는 확정할 때만 보낸다.
+	_look_ui.previewed.connect(func(custom: Dictionary) -> void: _apply_my_custom(custom, false))
+	_look_ui.committed.connect(func(custom: Dictionary) -> void:
+		_apply_my_custom(custom, true)
+		if _net != null and _net.connected:
+			_net.send_appearance(custom))
+	_look_ui.token_import_requested.connect(_on_token_import)
+	_look_ui.closed.connect(func() -> void:
+		_look_ui = null
+		_publish_fullscreen_hotspot.call_deferred())
+	add_child(_look_ui)
+	_publish_fullscreen_hotspot.call_deferred()
+
+## 다른 기기의 토큰을 가져온다. **이 기기의 현재 캐릭터는 목록에서 사라진다** —
+## 화면이 2단 확인을 받은 뒤에만 여기까지 온다.
+func _on_token_import(token: String) -> void:
+	var clean := token.strip_edges()
+	if not _is_uuid(clean):
+		_show_toast("토큰 형식이 아닙니다")
+		return
+	if clean == String(_slot.get("token", "")):
+		_show_toast("이미 이 토큰으로 접속해 있습니다")
+		return
+	_slot["token"] = clean
+	# 위치·가방·벨은 서버가 소유하므로 여기서 비운다 — 남겨 두면 옛 캐릭터의
+	# 값이 잠깐 보이고 서버 응답으로 덮인다(둘이 갈리는 것처럼 보인다).
+	_slot["inventory"] = {}
+	_slot["bells"] = 0
+	_persist()
+	if _look_ui != null and is_instance_valid(_look_ui):
+		_look_ui.close()
+	_show_toast("토큰을 가져왔습니다 — 다시 접속합니다")
+	# 재접속은 장면을 다시 여는 것이 가장 단순하고 확실하다(연결·상태·스프라이트
+	# 를 부분적으로 갈아끼우면 어디까지 옛 캐릭터인지 알기 어렵다).
+	get_tree().reload_current_scene.call_deferred()
+
+## UUID 형식인지(서버와 같은 규칙 — 형식만 본다).
+func _is_uuid(text: String) -> bool:
+	var re := RegEx.new()
+	re.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+	return re.search(text) != null
+
 ## 도감을 연다(가방 화면의 [도감] 버튼).
 func _open_dex() -> void:
 	if _dex_ui != null and is_instance_valid(_dex_ui):
@@ -2197,6 +2290,7 @@ func _open_inventory() -> void:
 	_inventory_ui.sell_requested.connect(func(item_id: String) -> void: _sell(item_id))
 	_inventory_ui.sell_all_requested.connect(func() -> void: _sell(""))
 	_inventory_ui.dex_requested.connect(_open_dex)
+	_inventory_ui.look_requested.connect(_open_look)
 	_inventory_ui.closed.connect(func() -> void:
 		_inventory_ui = null
 		# 내리는 쪽만 즉시면 반쪽이다 — 닫자마자 전체화면을 누르면 0.25초
@@ -2255,6 +2349,7 @@ func _start_net() -> void:
 	_net.npc_error.connect(_on_npc_error)
 	_net.npc_state.connect(_apply_npc_state)
 	_net.race_received.connect(_on_race)
+	_net.appearance_received.connect(_on_appearance)
 	_net.inventory_received.connect(_on_inventory)
 	_net.sold.connect(_on_sold)
 	_net.rename_received.connect(_on_rename)
@@ -2316,6 +2411,12 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 		_apply_npc_state(you["npc"])
 	if typeof(you.get("dex")) == TYPE_DICTIONARY:
 		_dex = you["dex"]
+	# 외형도 서버가 단일 출처다(임의 문자열이 퍼지지 않게 화이트리스트를 서버가
+	# 검사한다). 선택지 목록도 서버가 보낸 것만 그린다.
+	if typeof(you.get("appearanceChoices")) == TYPE_DICTIONARY:
+		_appearance_choices = you["appearanceChoices"]
+	if typeof(you.get("custom")) == TYPE_DICTIONARY:
+		_apply_my_custom(you["custom"], false)
 	_refresh_hud()
 	_refresh_inventory_ui()
 	var sx := float(world_cfg.get("size_x", _world_size.x))

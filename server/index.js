@@ -318,6 +318,9 @@ function handle(ws, msg) {
         // 이웃의 부탁과 도감은 **내 진행도**라 나에게만 보낸다(남에게 방송할
         // 이유가 없고, 방송하면 스냅샷이 인원수만큼 커진다).
         npc: world.npcState(ws.token), dex: p.dex || {},
+        custom: p.custom || {},
+        // 꾸미기 화면이 그릴 선택지(프리셋에서 유도한 화이트리스트).
+        appearanceChoices: world.appearanceChoices(),
       },
       world: { size_x: world.sizeX, size_z: world.sizeZ },
     });
@@ -335,6 +338,7 @@ function handle(ws, msg) {
       t: 'join',
       player: {
         token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir,
+        custom: p.custom || {},
         activity: p.activity || '', trick: p.trick || '',
       },
     }, p.token);
@@ -399,12 +403,20 @@ function handle(ws, msg) {
           x: me.x, z: me.z, dir: me.dir,
           inventory: me.inventory, bells: me.bells,
           npc: world.npcState(ws.token), dex: me.dex || {},
+          custom: me.custom || {}, appearanceChoices: world.appearanceChoices(),
         },
         world: { size_x: world.sizeX, size_z: world.sizeZ },
         resync: true,
       });
       sendTo(ws, { t: 'snapshot', ...world.snapshot() });
     lastParkSent = null;   // 새 접속자에게 다음 변화가 반드시 가도록
+      break;
+    }
+    case 'appearance': {
+      const r = world.appearance(ws.token, msg.custom);
+      if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
+      // 남의 화면에도 바뀐 외형이 보여야 한다 — 서버를 거친다.
+      broadcast({ t: 'appearance', token: r.token, custom: r.custom });
       break;
     }
     case 'race_join': {

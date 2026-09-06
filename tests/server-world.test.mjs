@@ -1659,3 +1659,61 @@ test('정렬 좌표는 카운트다운 상태에 실려 나간다', () => {
   assert.ok(Math.hypot(me.x - start.x, me.z - start.z) < 2.0,
     `정렬 좌표가 출발선 근처가 아니다 (${me.x}, ${me.z})`);
 });
+
+// ---------------------------------------------------------------------------
+// F5 외형 커스터마이즈 (화이트리스트는 서버가 소유)
+// ---------------------------------------------------------------------------
+
+test('외형 선택지는 characters.json 프리셋에서 유도된다', () => {
+  // 팔레트 키를 전부 허용하면 skin에 "rope"를 넣을 수 있고, 코드에 목록을
+  // 박으면 프리셋을 늘려도 서버가 안 따라온다(확장 지점이 거짓말이 된다).
+  const w = fresh();
+  const presets = JSON.parse(readFileSync('data/characters.json', 'utf-8')).presets;
+  const choices = w.appearanceChoices();
+  for (const key of ['hair', 'skin', 'outfit']) {
+    const expected = new Set(presets.map((p) => p[key]).filter(Boolean));
+    assert.deepEqual(new Set(choices[key]), expected, `${key} 선택지가 프리셋과 다르다`);
+  }
+});
+
+test('목록에 없는 외형 값은 거부된다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  assert.equal(w.appearance(TOKEN_A, { skin: 'rope' }, 1000).error.code, 'bad_appearance');
+  assert.equal(w.appearance(TOKEN_A, { hair: '<script>' }, 2000).error.code, 'bad_appearance');
+  assert.equal(w.appearance(TOKEN_A, 'nope', 3000).error.code, 'bad_appearance');
+  assert.deepEqual(w.players.get(TOKEN_A).custom, {}, '거절인데 값이 저장됐다');
+});
+
+test('유효한 외형은 저장되고 스냅샷에 실린다', () => {
+  // 스냅샷에 없으면 **나중에 들어온 사람에게는 바뀐 외형이 안 보인다**.
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const p = w.players.get(TOKEN_A);
+  p.online = true;
+  const r = w.appearance(TOKEN_A, { hair: 'hair_bob', outfit: 'outfit_blue' }, 1000);
+  assert.ok(!r.error);
+  assert.deepEqual(r.custom, { hair: 'hair_bob', outfit: 'outfit_blue' });
+  const snap = w.snapshot().players.find((q) => q.token === TOKEN_A);
+  assert.deepEqual(snap.custom, { hair: 'hair_bob', outfit: 'outfit_blue' });
+});
+
+test('외형 변경은 간격 제한을 받고 실패는 예산을 쓰지 않는다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  assert.ok(!w.appearance(TOKEN_A, { skin: 'skin_tan' }, 5000).error);
+  assert.equal(w.appearance(TOKEN_A, { skin: 'skin_pale' }, 5100).error.code, 'rate_limited');
+  // 거절(bad_appearance)은 예산을 먹지 않는다 — 곧바로 다시 시도할 수 있다.
+  assert.equal(w.appearance(TOKEN_A, { skin: 'rope' }, 9000).error.code, 'bad_appearance');
+  assert.ok(!w.appearance(TOKEN_A, { skin: 'skin_pale' }, 9100).error);
+});
+
+test('외형은 재시작해도 남는다', () => {
+  const statePath = join(mkdtempSync(join(tmpdir(), 'af-look-')), 'world.json');
+  const w = new WorldState({ statePath });
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  w.appearance(TOKEN_A, { hair: 'hair_cap', skin: 'skin_pale' }, 1000);
+  assert.ok(w.save());
+  const w2 = new WorldState({ statePath });
+  assert.deepEqual(w2.players.get(TOKEN_A).custom, { hair: 'hair_cap', skin: 'skin_pale' });
+});
