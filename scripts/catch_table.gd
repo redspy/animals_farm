@@ -26,6 +26,11 @@ static func _load() -> void:
 	var raw: Variant = cfg.get("catch_tables", {})
 	if typeof(raw) != TYPE_DICTIONARY:
 		return
+	# **서버와 같은 규칙으로 걸러야 한다.** 서버는 items.json에 없는 아이템을
+	# 테이블에서 빼는데, 여기서 안 빼면 어떤 시간대의 유일한 항목이 오타일 때
+	# 클라이언트는 "잡힌다"고 표시하고 서버는 거절한다 — 이 표시가 막으려던
+	# 상황 그대로다(리뷰 지적).
+	var known: Dictionary = DataFiles.load_dict("res://data/items.json").get("items", {})
 	for kind: Variant in (raw as Dictionary).keys():
 		var rows: Variant = (raw as Dictionary)[kind]
 		if typeof(rows) != TYPE_ARRAY:
@@ -35,6 +40,10 @@ static func _load() -> void:
 			if typeof(r) != TYPE_DICTIONARY:
 				continue
 			var row := r as Dictionary
+			if not known.has(String(row.get("item", ""))):
+				push_warning("[catch_table] %s의 '%s'이 items.json에 없습니다 — 무시합니다"
+					% [kind, row.get("item", "")])
+				continue
 			entries.append({
 				"item": String(row.get("item", "")),
 				"hours": row.get("hours", null),

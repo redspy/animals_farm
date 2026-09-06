@@ -196,10 +196,15 @@ const maxWait = Number(fishCfg.wait_max_sec) * 1000 + 3000;
 //
 // 소모되는 시나리오(성공)만 두 번째 낚시터에서 하고, 소모되지 않는 것(헛챔질·
 // 놓침·우회 차단)은 첫 낚시터에서 한다 — 쿨다운이 다음 시나리오에 섞이지 않는다.
+// 필터 조건이 타이트한 이유: 남쪽 해안(z < −10)에서 **걸어서 도달 가능한**
+// 구간이 x ∈ [−20, 5]뿐이다. 동쪽은 x≈7.5의 석벽(z −20.5~−15.5), 서쪽 끝
+// (x=−34)은 wall_west 근처에서 걷기가 막힌다(실측: 16유닛을 남기고 멈췄다).
+// 서쪽부터 쓴다 — 석벽 옆(x=5)에서 시나리오 3개를 돌리면 접근 실패가 원인
+// 불명으로 보인다.
 const spots = gcfg.spawns
   .map((s, index) => ({ ...s, index }))
   .filter((s) => s.kind === 'fishing' && s.z < -10 && s.x <= 5 && s.x >= -20)
-  .sort((a, b) => b.x - a.x)
+  .sort((a, b) => a.x - b.x)
   .slice(0, 2);
 if (spots.length < 2) throw new Error(`쓸 수 있는 낚시터가 2곳 미만이다(${spots.length}) — 테스트 전제가 깨졌다`);
 
@@ -215,7 +220,8 @@ async function approach(spot) {
 
 /** 탭해서 낚시를 시작하고, 시작된 상태를 돌려준다.
  *  낚시 상태는 전이할 때 즉시 게시되므로(world.gd의 _publish_fish_state) 여기서
- *  보는 값은 지연 없는 값이다 — 그래야 "물기 전"이라는 전제가 성립한다. */
+ *  보는 값은 지연 없는 값이다 — 주기 게시(0.4초)를 기다리면 "물기 전"이라는
+ *  전제가 깨진 채로 다음 단계로 넘어간다(최소 대기가 1.5초다). */
 async function cast(spot) {
   await clickWorld(spot.x, spot.z);
   const t0 = Date.now();

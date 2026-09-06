@@ -1038,11 +1038,17 @@ test('낚시·벌레 테이블은 모든 월·시각에 최소 1종을 낸다', 
   assert.equal(holes.length, 0, `잡을 것이 없는 시간대: ${holes.slice(0, 8).join(', ')}`);
 });
 
-test('낮·밤 시간 구간이 24시간을 빈틈없이 덮는다(데이터 린트)', () => {
+test('연중 항목만으로도 24시간이 덮인다(계절 한정에 기대지 않는다)', () => {
+  // 위 테스트("모든 월·시각에 최소 1종")가 결과를 보는 반면, 이 린트는 **구조**를
+  // 본다: 월 조건이 없는 항목만으로 24시간이 덮여야 한다. 계절 한정 항목이
+  // 우연히 구멍을 메우고 있으면 그 계절 범위를 좁히는 순간 스폿이 죽는다.
+  // (예전 버전은 months를 무시하고 hours만 누적해서, 24시간을 덮는 항목이 전부
+  // 계절 한정이어도 통과했다 — 이름만 강하고 실제로는 약한 린트였다.)
   const raw = JSON.parse(readFileSync('data/gatherables.json', 'utf-8'));
   for (const [kind, rows] of Object.entries(raw.catch_tables || {})) {
     const covered = new Set();
     for (const r of rows) {
+      if (r.months) continue;                      // 계절 한정은 세지 않는다
       if (!r.hours) { for (let h = 0; h < 24; h++) covered.add(h); continue; }
       const [from, to] = r.hours;
       for (let h = 0; h < 24; h++) {
@@ -1050,6 +1056,22 @@ test('낮·밤 시간 구간이 24시간을 빈틈없이 덮는다(데이터 린
         if (inRange) covered.add(h);
       }
     }
-    assert.equal(covered.size, 24, `catch_tables.${kind}가 덮지 않는 시각이 있다(${24 - covered.size}시간)`);
+    assert.equal(covered.size, 24,
+      `catch_tables.${kind}는 연중 항목만으로 ${24 - covered.size}시간을 덮지 못한다`);
   }
+});
+
+test('어떤 월·시각에도 뽑기 후보가 2종 이상이다', () => {
+  // 단일 후보만 남으면 "무엇이 잡힐까"가 사라져 그냥 느린 채집이 된다.
+  const w = fresh();
+  const singles = [];
+  for (let month = 1; month <= 12; month++) {
+    for (let hour = 0; hour < 24; hour++) {
+      const ts = new Date(2026, month - 1, 15, hour, 30).getTime();
+      for (const kind of Object.keys(w.catchTables)) {
+        if (w.catchableEntries(kind, ts).length < 2) singles.push(`${month}월 ${hour}시 ${kind}`);
+      }
+    }
+  }
+  assert.equal(singles.length, 0, `후보가 1종뿐인 시간대: ${singles.slice(0, 8).join(', ')}`);
 });

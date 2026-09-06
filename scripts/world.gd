@@ -2292,7 +2292,8 @@ func _fish_strike() -> void:
 
 ## 낚시 상태를 E2E가 볼 수 있게 공개한다(브라우저 테스트의 유일한 판정 수단).
 ##
-## **즉시 게시한다.** 훅은 기본 0.25초 주기로 올리는데, 낚시는 최소 대기가 1.5초
+## **즉시 게시한다.** 훅은 기본 0.4초 주기로 올리는데(TestHooks.PUBLISH_INTERVAL),
+## 낚시는 최소 대기가 1.5초
 ## 이고 물기 창이 1.2초라 그 지연이 판정을 흔든다 — 테스트가 "아직 대기 중"으로
 ## 읽고 누르는 순간 이미 물어 있어서, 헛챔질 시나리오가 물고기를 잡아 버렸다.
 func _publish_fish_state() -> void:
@@ -2338,6 +2339,8 @@ func _try_gather() -> void:
 	for g in _gatherables:
 		if not g.can_interact(_player.position):
 			continue
+		if not g.is_catchable_now():
+			continue
 		var d := _player.position.distance_to(g.position)
 		if d < best:
 			best = d
@@ -2349,14 +2352,16 @@ func _try_gather() -> void:
 	# 가장 가까운 것을 캐므로, 낚시터 옆에서 액션 버튼만 누르면 대기·타이밍을
 	# 전부 건너뛰고 물고기를 얻을 수 있었다(리뷰 지적). 탭 경로와 같은 분기로
 	# 넘겨 낚시를 시작한다.
-	if nearest.kind == "fishing":
-		_start_fishing(nearest)
-		return
 	# 확률 테이블이 아이템을 정하는 자리(낚시터·벌레)는 **오프라인에서 캘 수
 	# 없다.** 클라이언트는 무엇이 잡히는지 모르고(서버가 굴린다), 빈 문자열
 	# 아이템을 가방에 넣으면 이름 없는 물건이 세이브에 남아 팔 수도 없다.
+	# 낚시 시작보다 **먼저** 본다 — 뒤에 두면 대기 1.5~4초와 물기 1.2초를 다
+	# 하고 나서야 "낚을 수 없습니다"가 뜬다(리뷰 지적).
 	if nearest.table_driven and (_net == null or not _net.connected):
 		_show_toast("서버에 연결돼 있지 않아 잡을 수 없습니다")
+		return
+	if nearest.kind == "fishing":
+		_start_fishing(nearest)
 		return
 	if _net != null and _net.connected:
 		# 서버가 사거리·재생 상태를 검증하고, 성공하면 gathered 브로드캐스트로
@@ -2474,7 +2479,9 @@ func _gatherable_near(point: Vector3) -> Gatherable:
 	var best := TAP_PICK_RADIUS
 	var found: Gatherable = null
 	for g in _gatherables:
-		if not g.is_available():
+		# 시즌 밖(지금 잡을 것이 없는) 자리는 탭 대상에서 뺀다 — 벌레 스폿은
+		# 꽃이 남아 있어서 여전히 눌리는데, 걸어가면 거절만 당한다.
+		if not g.is_catchable_now():
 			continue
 		var d := Vector2(g.position.x, g.position.z).distance_to(Vector2(point.x, point.z))
 		if d <= best:
@@ -2534,17 +2541,21 @@ func _on_player_arrived() -> void:
 			# 탭한 그 대상만 캔다. "근처에서 아무거나"로 두면 지나가다 옆 나무를
 			# 캐게 된다.
 			if target != null and is_instance_valid(target) and target.can_interact(_player.position):
-				if target.kind == "fishing":
+				if target.table_driven and (_net == null or not _net.connected):
+					# 오프라인에서는 무엇이 잡히는지 알 수 없다(서버가 굴린다).
+					# 그대로 캐면 빈 문자열 아이템이 가방·세이브에 남는다.
+					_show_toast("서버에 연결돼 있지 않아 잡을 수 없습니다")
+				elif target.kind == "fishing":
 					# 낚시터는 도착하자마자 캐지 않는다 — 기다렸다가 눌러야 한다.
 					_start_fishing(target)
 				elif _net != null and _net.connected:
 					_net.send_gather(target.index)
-				elif target.table_driven:
-					# 오프라인에서는 무엇이 잡히는지 알 수 없다(서버가 굴린다).
-					# 그대로 캐면 빈 문자열 아이템이 가방·세이브에 남는다.
-					_show_toast("서버에 연결돼 있지 않아 잡을 수 없습니다")
 				else:
 					target.gather()
+			elif target != null and not target.is_in_season():
+				# 시즌 밖은 "가까이 가라"가 아니다 — 발밑에 두고 같은 토스트가
+				# 무한 반복된다(리뷰 지적).
+				_show_toast("지금은 아무것도 없습니다")
 			elif target != null:
 				_show_toast("조금 더 가까이 가야 합니다")
 		"pickup":

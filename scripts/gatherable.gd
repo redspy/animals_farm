@@ -51,6 +51,9 @@ func setup(spawn: Dictionary, limits: Dictionary = {}, spawn_index: int = -1) ->
 	position = Vector3(float(spawn.get("x", 0.0)), 0.0, float(spawn.get("z", 0.0)))
 	_build_mesh()
 	_refresh_season_visibility()
+	# 시즌 판정이 필요 없는 종류(나무·조개·잡초)는 시간 검사를 돌리지 않는다.
+	# 재생 타이머는 `hide_until`/`gather`에서 다시 켠다.
+	set_process(table_driven)
 
 func _build_mesh() -> void:
 	match kind:
@@ -191,8 +194,25 @@ func _material(color: Color) -> StandardMaterial3D:
 	_mat_cache[key] = m
 	return m
 
+## ⚠️ 캐시된 머티리얼은 **인스턴스 사이에서 공유된다.** 나중에 개별 채집물을
+## 강조하려고 `material_override.albedo_color`를 바꾸면 같은 색 전부가 바뀐다 —
+## 그때는 `duplicate()`한 사본을 써야 한다.
+
 func is_available() -> bool:
 	return _available
+
+## 지금 실제로 잡을 수 있는지 — 재생 완료 **그리고** 시간·월 조건 충족.
+##
+## `is_available()`과 나누어 둔 이유: 탭 대상 선별과 토스트 문구가 두 사유를
+## 구분해야 한다. "아직 자라지 않았다"와 "지금은 아무것도 없다"는 다른 상황이고,
+## 시즌 밖 스폿을 탭 대상으로 남기면 발밑에 두고 "조금 더 가까이 가야 합니다"가
+## 무한 반복된다(리뷰 지적 — 꽃은 남고 벌레만 숨기 때문에 여전히 탭된다).
+func is_catchable_now() -> bool:
+	return _available and _in_season
+
+## 지금 시간·월에 잡을 것이 있는지(테이블 구동 종류만 의미가 있다).
+func is_in_season() -> bool:
+	return _in_season
 
 func can_interact(from: Vector3) -> bool:
 	if not _available or not _in_season:
@@ -205,6 +225,12 @@ func can_interact(from: Vector3) -> bool:
 func gather() -> bool:
 	if not _available:
 		return false
+	set_process(true)   # 재생 타이머를 돌려야 한다
+	# **빈 아이템은 애초에 캐지 않는다.** 낚시터·벌레는 무엇이 잡히는지 서버가
+	# 정하므로(item_id가 비어 있다) 오프라인에서 캐면 자리만 소모하고 아무것도
+	# 주지 않는다. 호출자 쪽 가드만 두면 세 번째 호출자가 생길 때 조용히 회귀한다.
+	if item_id.is_empty():
+		return false
 	_available = false
 	_timer = respawn_sec
 	if _grown != null:
@@ -216,6 +242,7 @@ func gather() -> bool:
 ## 아니라 이 값이 진실이다 — 두 시계가 다르면 어떤 사람에게는 있고 어떤 사람에게는
 ## 없는 나무가 생긴다.
 func hide_until(seconds_from_now: float) -> void:
+	set_process(true)   # 재생 타이머를 돌려야 한다
 	_available = false
 	_timer = maxf(seconds_from_now, 0.0)
 	if _grown != null:
@@ -229,6 +256,7 @@ func force_respawn() -> void:
 	_timer = 0.0
 	if _grown != null:
 		_grown.visible = _in_season if table_driven else true
+	set_process(table_driven)
 
 ## 지금 시간·월에 잡을 것이 있는지 확인해 **표시**를 맞춘다.
 ##

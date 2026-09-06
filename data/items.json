@@ -113,6 +113,22 @@
         10,
         800
       ]
+    },
+    "caterpillar": {
+      "label": "애벌레",
+      "sell_price": 45,
+      "price_range": [
+        10,
+        500
+      ]
+    },
+    "moth": {
+      "label": "나방",
+      "sell_price": 80,
+      "price_range": [
+        10,
+        500
+      ]
     }
   }
 }

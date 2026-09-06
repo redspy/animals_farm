@@ -451,8 +451,32 @@
         ]
       },
       {
-        "item": "spider",
+        "item": "caterpillar",
         "weight": 25,
+        "hours": [
+          6,
+          19
+        ],
+        "months": [
+          9,
+          10,
+          11,
+          12,
+          1,
+          2
+        ]
+      },
+      {
+        "item": "moth",
+        "weight": 30,
+        "hours": [
+          19,
+          6
+        ]
+      },
+      {
+        "item": "spider",
+        "weight": 14,
         "hours": [
           19,
           6

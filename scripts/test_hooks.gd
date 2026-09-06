@@ -81,6 +81,9 @@ func _process(delta: float) -> void:
 	publish_now()
 
 func publish_now() -> void:
+	# 주기 게시와 겹치지 않게 타이머를 리셋한다 — 즉시 게시 직후 또 올리면
+	# 같은 내용으로 eval을 두 번 돈다.
+	_timer = 0.0
 	if not OS.has_feature("web"):
 		return
 	var vp := get_viewport()
