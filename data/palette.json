@@ -38,7 +38,12 @@
     "carousel_deck": "#3fa96b",
     "carousel_bar": "#e8e8e0",
     "seesaw_plank": "#e07b39",
-    "seesaw_pivot": "#7c6f63"
+    "seesaw_pivot": "#7c6f63",
+    "fishing_water": "#3f7fb5",
+    "fishing_ripple": "#8fc7e8",
+    "flower_petal": "#f2c0d8",
+    "flower_stem": "#4a8a3c",
+    "bug_body": "#3a2b1c"
   },
   "ui": {
     "hud_text": "#ffffff",
@@ -83,6 +88,9 @@
     "skate_boot": "#e9eef2",
     "skate_wheel": "#f0a12e",
     "board_deck": "#4b5563",
-    "board_bar": "#9aa3ad"
+    "board_bar": "#9aa3ad",
+    "rod": "#8b5a2b",
+    "line": "#e8f0f4",
+    "bobber": "#e04a3f"
   }
 }

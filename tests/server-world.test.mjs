@@ -907,3 +907,105 @@ test('시소 push가 데이터에서 과하면 로드할 때 잘린다', () => {
   assert.ok(Math.abs(w.parkCfg.seesawPush - limit) < 1e-9,
     `과한 push가 상한으로 잘리지 않았다 (${w.parkCfg.seesawPush} vs ${limit})`);
 });
+
+// ---------------------------------------------------------------------------
+// F4 낚시·벌레 (확률 테이블은 서버가 굴린다)
+// ---------------------------------------------------------------------------
+
+// 테이블 종류의 스폰 하나를 찾아 그 앞에 플레이어를 세운다.
+function standAtSpawn(w, token, kind) {
+  const g = w.gatherables.find((s) => s.kind === kind);
+  assert.ok(g, `${kind} 스폰이 데이터에 없다`);
+  w.join({ token, name: '가', preset: 'f1' });
+  const p = w.players.get(token);
+  p.x = g.x;
+  p.z = g.z;
+  return g;
+}
+
+test('낚시터·벌레 스폿은 spawn에 item이 없고 테이블이 정한다', () => {
+  const w = fresh();
+  const table = w.gatherables.filter((g) => g.kind === 'fishing' || g.kind === 'bug');
+  assert.ok(table.length > 0, '낚시터/벌레 스폿이 데이터에 없다');
+  for (const g of table) assert.equal(g.item, '', `${g.kind} 스폰이 item을 갖고 있다(클라이언트 주장 경로가 남는다)`);
+});
+
+test('밤 전용 물고기는 낮에 안 나오고 밤에 나온다', () => {
+  const w = fresh();
+  const noon = new Date(2026, 6, 15, 12, 0).getTime();
+  const night = new Date(2026, 6, 15, 21, 0).getTime();
+  const day = w.catchableEntries('fishing', noon).map((r) => r.item);
+  const dark = w.catchableEntries('fishing', night).map((r) => r.item);
+  assert.ok(!day.includes('squid'), '오징어가 낮에 나온다');
+  assert.ok(dark.includes('squid'), '오징어가 밤에 안 나온다');
+  // 실러캔스는 밤 + 겨울(12·1·2월)만.
+  assert.ok(!dark.includes('coelacanth'), '실러캔스가 7월 밤에 나온다');
+  const winterNight = new Date(2026, 0, 15, 2, 0).getTime();
+  assert.ok(w.catchableEntries('fishing', winterNight).map((r) => r.item).includes('coelacanth'),
+    '실러캔스가 겨울 밤에 안 나온다');
+});
+
+test('겨울 밤에는 벌레가 아무것도 없어 채집이 거부된다(쿨다운도 안 걸린다)', () => {
+  const w = fresh();
+  const winterNight = new Date(2026, 0, 15, 2, 0).getTime();
+  assert.equal(w.catchableEntries('bug', winterNight).length, 0);
+  const g = standAtSpawn(w, TOKEN_A, 'bug');
+  const r = w.gather(TOKEN_A, g.index, winterNight);
+  assert.equal(r.error.code, 'nothing_here');
+  assert.equal(g.availableAt, 0, '잡을 수 없는 자리에 재생 쿨다운이 걸렸다');
+});
+
+test('낚시는 시간대에 맞는 아이템만 가방에 들어온다', () => {
+  const w = fresh();
+  const noon = new Date(2026, 6, 15, 12, 0).getTime();
+  const g = standAtSpawn(w, TOKEN_A, 'fishing');
+  const allowed = new Set(w.catchableEntries('fishing', noon).map((r) => r.item));
+  for (let i = 0; i < 30; i++) {
+    g.availableAt = 0;
+    const p = w.players.get(TOKEN_A);
+    p.lastGatherAt = 0;
+    const r = w.gather(TOKEN_A, g.index, noon);
+    assert.ok(!r.error, `채집이 거부됐다: ${r.error && r.error.code}`);
+    assert.ok(allowed.has(r.gathered.item), `${r.gathered.item}은 이 시간에 나오면 안 된다`);
+  }
+});
+
+test('가중치 추첨은 결정적 난수에서 테이블 순서를 따른다', () => {
+  const w = fresh();
+  const noon = new Date(2026, 6, 15, 12, 0).getTime();
+  // 낮 낚시: anchovy 40 / crucian 30 / sea_bass 18 (합 88)
+  assert.equal(w.rollCatch('fishing', noon, () => 0.0), 'anchovy');
+  assert.equal(w.rollCatch('fishing', noon, () => 39 / 88), 'anchovy');
+  assert.equal(w.rollCatch('fishing', noon, () => 41 / 88), 'crucian');
+  assert.equal(w.rollCatch('fishing', noon, () => 71 / 88), 'sea_bass');
+  assert.equal(w.rollCatch('fishing', noon, () => 0.999999), 'sea_bass');
+});
+
+test('테이블의 아이템은 전부 items.json에 정의돼 있다(데이터 린트)', () => {
+  const raw = JSON.parse(readFileSync('data/gatherables.json', 'utf-8'));
+  const items = JSON.parse(readFileSync('data/items.json', 'utf-8')).items;
+  for (const [kind, rows] of Object.entries(raw.catch_tables || {})) {
+    for (const r of rows) {
+      assert.ok(items[r.item], `catch_tables.${kind}의 ${r.item}이 items.json에 없다`);
+      assert.ok(Array.isArray(items[r.item].price_range),
+        `${r.item}에 price_range가 없다 — 유효범위의 단일 출처가 비었다`);
+      const [lo, hi] = items[r.item].price_range;
+      const price = Number(items[r.item].sell_price);
+      assert.ok(price >= lo && price <= hi, `${r.item}의 가격 ${price}가 유효범위 [${lo}, ${hi}] 밖이다`);
+      assert.ok(Number(r.weight) > 0, `${r.item}의 가중치가 0 이하다`);
+    }
+  }
+});
+
+test('빈 확률 테이블은 경고만 하고 서버는 뜬다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'af-catch-'));
+  const src = JSON.parse(readFileSync('data/gatherables.json', 'utf-8'));
+  src.catch_tables.fishing = [];
+  writeFileSync(join(dir, 'gatherables.json'), JSON.stringify(src));
+  for (const name of ['world.json', 'items.json', 'activities.json', 'emotes.json', 'characters.json', 'palette.json']) {
+    try { writeFileSync(join(dir, name), readFileSync(join('data', name))); } catch { /* 없는 파일은 건너뜀 */ }
+  }
+  const w = new WorldState({ dataDir: dir, persist: false });
+  assert.equal(w.catchTables.fishing.length, 0);
+  assert.equal(w.rollCatch('fishing', Date.now()), '');
+});

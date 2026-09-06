@@ -59,6 +59,9 @@ var _c_skate_boot: Color
 var _c_skate_wheel: Color
 var _c_board_deck: Color
 var _c_board_bar: Color
+var _c_rod: Color
+var _c_line: Color
+var _c_bobber: Color
 
 ## 운동별 착지/자세 기준 — 픽셀 좌표(32x40, 발바닥이 y=39).
 ## 바퀴 중심 높이. y=35에 반지름 5를 두면 스프라이트(40px) 아래가 잘려
@@ -155,6 +158,9 @@ func _ready() -> void:
 	_c_skate_wheel = Palette.color("character", "skate_wheel")
 	_c_board_deck = Palette.color("character", "board_deck")
 	_c_board_bar = Palette.color("character", "board_bar")
+	_c_rod = Palette.color("character", "rod")
+	_c_line = Palette.color("character", "line")
+	_c_bobber = Palette.color("character", "bobber")
 
 	_c_hair = Palette.color("character", "hair")
 	_c_shoe = Palette.color("character", "shoe")
@@ -184,9 +190,10 @@ func _generate_sprite_frames() -> SpriteFrames:
 		"walk_down", "walk_up", "walk_left", "walk_right"
 	]
 	
-	# 줄넘기는 **제자리에서도 움직여야** 한다 — idle이 한 장이면 멈춰 서서
-	# 줄만 든 자세로 굳는다. 자전거·인라인·킥보드는 멈추면 정지 자세가 맞다.
-	var idle_loops := _activity == "jumprope"
+	# 제자리에서도 움직여야 하는 활동. 줄넘기는 동작 자체가 제자리라 idle이 한
+	# 장이면 줄만 든 자세로 굳고, 낚시는 찌가 물 위에서 오르내려야 "기다리는
+	# 중"으로 읽힌다. 자전거·인라인·킥보드는 멈추면 정지 자세가 맞다.
+	var idle_loops := _activity == "jumprope" or _activity == "fishing"
 	for anim: String in anims:
 		frames.add_animation(anim)
 		frames.set_animation_loop(anim, anim.begins_with("walk_") or idle_loops)
@@ -452,6 +459,8 @@ func _apply_activity(img: Image, dir: Vector2i, phase: int) -> Image:
 			_draw_sitting(img, side)
 		"carousel":
 			_draw_gripping(img, side)
+		"fishing":
+			_draw_fishing(img, side, phase)
 	return img
 
 # --- 줄넘기 ------------------------------------------------------------------
@@ -639,6 +648,27 @@ func _draw_kickboard(img: Image, side: bool, phase: int) -> void:
 		var off := 1 if phase % 3 == 0 else 3
 		_draw_rect(img, Rect2i(12, DECK_Y - 4, 4, 5), _c_bottom)
 		_draw_rect(img, Rect2i(18, DECK_Y - 4 - off, 4, 5), _c_bottom_dark)
+
+# --- 낚시 --------------------------------------------------------------------
+
+## 낚싯대 + 줄 + 찌. 새 에셋 없이 선 3개로 "낚시 중"을 읽히게 한다.
+##
+## 위상을 쓰는 곳은 찌 하나뿐이다(물 위에서 1픽셀 오르내림) — 몸을 다시 그리면
+## 4방향 × 6프레임을 자세마다 관리해야 해서, 팔·대만 덮어 그린다.
+func _draw_fishing(img: Image, side: bool, phase: int) -> void:
+	var bob := 1 if phase % 4 < 2 else 0
+	if side:
+		# 옆모습: 대를 앞으로 비스듬히 들고 줄이 앞쪽 물로 떨어진다.
+		_draw_rect(img, Rect2i(17, 20, 6, 2), _c_skin)                    # 뻗은 팔
+		_draw_line(img, Vector2i(21, 21), Vector2i(30, 12), _c_rod, 2)     # 낚싯대
+		_draw_line(img, Vector2i(30, 12), Vector2i(30, 30 + bob), _c_line) # 줄
+		_draw_rect(img, Rect2i(29, 30 + bob, 3, 3), _c_bobber)             # 찌
+	else:
+		# 앞/뒤: 대를 몸 옆으로 세우고 줄은 화면 아래로.
+		_draw_rect(img, Rect2i(19, 20, 5, 2), _c_skin)
+		_draw_line(img, Vector2i(23, 21), Vector2i(27, 11), _c_rod, 2)
+		_draw_line(img, Vector2i(27, 11), Vector2i(27, 31 + bob), _c_line)
+		_draw_rect(img, Rect2i(26, 31 + bob, 3, 3), _c_bobber)
 
 # --- 놀이기구 자세 ------------------------------------------------------------
 

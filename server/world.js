@@ -293,12 +293,55 @@ export class WorldState {
           radius: Number(o.radius) || 1.0,
         }));
 
+    // 아이템 정의(가격 포함)를 서버도 읽는다. 판매 금액을 클라이언트가 주장하게
+    // 두면 벨을 임의로 불릴 수 있다 — 가격의 단일 출처는 data/items.json이고
+    // 서버가 그 값으로 직접 계산한다.
+    const itemCfg = readJson(join(dataDir, 'items.json'), { items: {} });
+    // 이름을 itemDefs로 둔 이유: this.items는 **월드에 놓인 아이템 엔티티 맵**
+    // 으로 이미 쓰이고 있어서, 정의를 같은 이름에 넣으면 아래에서 통째로
+    // 덮어써진다(실제로 그렇게 해서 가격이 전부 null이 됐다).
+    this.itemDefs = itemCfg.items || {};
+    this.itemIds = new Set(Object.keys(this.itemDefs));
+
     const gatherCfg = readJson(join(dataDir, 'gatherables.json'), { spawns: [] });
     const gatherLimits = (gatherCfg.limits || {}).respawn_sec || [10, 86400];
+    // 확률 테이블(낚시·벌레). **서버가 굴린다** — 클라이언트가 아이템을 주장하면
+    // 비싼 것만 반복해서 잡을 수 있고, 시간·월 조건도 기기 시계로 우회된다.
+    // hours는 [시작, 끝)이고 시작 > 끝이면 자정을 넘는 구간이다. months는 있으면
+    // 그 달에만 나온다(계절 문자열을 쓰지 않는 이유: 서버(JS)와 클라이언트
+    // (GDScript)가 같은 매핑을 각자 구현하면 두 곳이 갈린다).
+    const weightRange = (gatherCfg.limits || {}).catch_weight || [1, 1000];
+    this.catchTables = {};
+    for (const [kind, rows] of Object.entries(gatherCfg.catch_tables || {})) {
+      const entries = (rows || [])
+        .map((r) => ({
+          item: String(r.item || ''),
+          weight: Math.min(Number(weightRange[1]), Math.max(Number(weightRange[0]), Number(r.weight) || 1)),
+          hours: Array.isArray(r.hours) && r.hours.length === 2
+            ? [Number(r.hours[0]), Number(r.hours[1])] : null,
+          months: Array.isArray(r.months) && r.months.length > 0
+            ? r.months.map(Number) : null,
+        }))
+        .filter((r) => r.item);
+      // 정의에 없는 아이템은 걸러낸다 — 그대로 두면 가방에 팔 수 없는 물건이
+      // 쌓이고(판매는 items.json 가격으로만 정산한다) 도감에도 유령이 생긴다.
+      const known = entries.filter((r) => this.itemIds.has(r.item));
+      for (const r of entries) {
+        if (!this.itemIds.has(r.item)) {
+          console.warn(`[world] catch_tables.${kind}의 "${r.item}"이 data/items.json에 없습니다 — 무시합니다`);
+        }
+      }
+      this.catchTables[kind] = known;
+      if (known.length === 0) {
+        console.warn(`[world] catch_tables.${kind}가 비어 있습니다 — 그 종류는 아무것도 잡히지 않습니다`);
+      }
+    }
+
     this.gatherables = (gatherCfg.spawns || []).map((s, index) => ({
       index,
       kind: String(s.kind || 'tree'),
-      item: String(s.item || 'wood'),
+      // 낚시터·벌레 스폿은 item이 없다 — catch_tables가 정한다(빈 문자열).
+      item: this.catchTables[String(s.kind)] ? '' : String(s.item || 'wood'),
       x: Number(s.x) || 0,
       z: Number(s.z) || 0,
       // 유효범위는 데이터가 소유한다(클라이언트 Balance.clamp_value와 같은 규칙).
@@ -309,15 +352,6 @@ export class WorldState {
     const emoteCfg = readJson(join(dataDir, 'emotes.json'), { emotes: [] });
     this.emoteIds = new Set((emoteCfg.emotes || []).map((e) => String(e.id)));
 
-    // 아이템 정의(가격 포함)를 서버도 읽는다. 판매 금액을 클라이언트가 주장하게
-    // 두면 벨을 임의로 불릴 수 있다 — 가격의 단일 출처는 data/items.json이고
-    // 서버가 그 값으로 직접 계산한다.
-    const itemCfg = readJson(join(dataDir, 'items.json'), { items: {} });
-    // 이름을 itemDefs로 둔 이유: this.items는 **월드에 놓인 아이템 엔티티 맵**
-    // 으로 이미 쓰이고 있어서, 정의를 같은 이름에 넣으면 아래에서 통째로
-    // 덮어써진다(실제로 그렇게 해서 가격이 전부 null이 됐다).
-    this.itemDefs = itemCfg.items || {};
-    this.itemIds = new Set(Object.keys(this.itemDefs));
 
     this.players = new Map();   // token -> record
     this.items = new Map();     // id -> {id, item, x, z, at}
@@ -1054,11 +1088,53 @@ export class WorldState {
     if (dist > LIMITS.GATHER_RANGE) {
       return { error: { code: 'too_far', message: '너무 멉니다' } };
     }
+    // 낚시터·벌레 스폿은 무엇이 잡히는지를 **여기서** 정한다. 지금 시간·월에
+    // 맞는 항목이 하나도 없으면(예: 겨울 밤의 벌레) 잡히지 않는다 — 그 경우
+    // 재생 쿨다운을 걸지 않는다(잡을 수 없는 자리에 벌을 줄 이유가 없다).
+    let item = g.item;
+    if (!item) {
+      item = this.rollCatch(g.kind, now);
+      if (!item) {
+        return { error: { code: 'nothing_here', message: '지금은 아무것도 없습니다' } };
+      }
+    }
     p.lastGatherAt = now;
     g.availableAt = now + g.respawnSec * 1000;
-    p.inventory[g.item] = Number(p.inventory[g.item] || 0) + 1;
+    p.inventory[item] = Number(p.inventory[item] || 0) + 1;
     this._markDirty();
-    return { inventory: p.inventory, gathered: { index: g.index, item: g.item, availableAt: g.availableAt } };
+    return { inventory: p.inventory, gathered: { index: g.index, item, availableAt: g.availableAt } };
+  }
+
+  // 지금(시간·월) 잡을 수 있는 항목만 남긴다.
+  //
+  // **경계에 여유를 두지 않는다.** 클라이언트는 자기 시계로 "지금 잡히는 것"을
+  // 표시할 뿐이고 실제 판정은 여기서만 하므로, 여유를 주면 그만큼 조건이 느슨해질
+  // 뿐이다(기기 시계를 앞당겨 실러캔스를 잡는 경로를 열어 준다).
+  catchableEntries(kind, now = Date.now()) {
+    const table = this.catchTables[String(kind)] || [];
+    const d = new Date(now);
+    const hour = d.getHours();
+    const month = d.getMonth() + 1;
+    return table.filter((r) => {
+      if (r.months && !r.months.includes(month)) return false;
+      if (!r.hours) return true;
+      const [from, to] = r.hours;
+      // 시작 > 끝이면 자정을 넘는 구간(예: 19~5시).
+      return from <= to ? (hour >= from && hour < to) : (hour >= from || hour < to);
+    });
+  }
+
+  // 가중치 추첨. 조건에 맞는 항목이 없으면 빈 문자열.
+  rollCatch(kind, now = Date.now(), rnd = Math.random) {
+    const rows = this.catchableEntries(kind, now);
+    const total = rows.reduce((sum, r) => sum + r.weight, 0);
+    if (total <= 0) return '';
+    let pick = rnd() * total;
+    for (const r of rows) {
+      pick -= r.weight;
+      if (pick < 0) return r.item;
+    }
+    return rows[rows.length - 1].item;
   }
 
   // 지금 캘 수 없는 채집물 목록(스냅샷·브로드캐스트용).

@@ -95,6 +95,13 @@
       "free_trick": true,
       "note": "기울기는 서버가 소유한다(축구공과 같은 구조). 액션 버튼으로 자기 쪽을 누른다.",
       "button": false
+    },
+    {
+      "id": "fishing",
+      "label": "낚시",
+      "speed": 1.2,
+      "note": "낚시터를 탭하면 켜진다. 제자리에서 기다리다 '!'가 뜨면 액션 버튼(1.2초 안).",
+      "button": false
     }
   ],
   "soccer": {
@@ -125,5 +132,11 @@
     "carousel_push": 1.0,
     "carousel_max_speed": 3.2,
     "carousel_friction": 0.6
+  },
+  "fishing": {
+    "_comment": "낚시 타이밍. wait_min~wait_max 뒤에 물고 bite_sec 안에 액션을 눌러야 한다. 무엇이 잡히는지는 **서버가** data/gatherables.json의 catch_tables로 정한다 — 여기 값은 타이밍(연출)만이다. bite_sec을 0.6 아래로 내리면 폰에서 사실상 불가능하다(터치 지연 포함).",
+    "wait_min_sec": 1.5,
+    "wait_max_sec": 4.0,
+    "bite_sec": 1.2
   }
 }

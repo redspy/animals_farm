@@ -120,6 +120,14 @@ var _my_extras: AvatarExtras
 ## 탭 이동의 "도착하면 무엇을 할지". kind: ""(그냥 이동) | "gather" | "pickup"
 var _tap_intent := {"kind": "", "id": ""}
 
+## 낚시 상태. 낚시는 **기다렸다가 정확한 순간에 누르는** 것이라 상태가 필요하다.
+## 무엇이 잡히는지는 서버가 정하고(catch_tables), 여기서는 타이밍만 다룬다.
+enum FishState { OFF, WAIT, BITE }
+var _fish_cfg: Dictionary = {}
+var _fish_state: FishState = FishState.OFF
+var _fish_timer := 0.0
+var _fish_spot: Gatherable = null
+
 # --- 운동장/운동 ---
 var _playground: Playground = null
 var _park: Park = null
@@ -213,6 +221,7 @@ func _ready() -> void:
 			_activity_by_id[String((a as Dictionary).get("id", ""))] = a
 	_soccer_cfg = act_cfg.get("soccer", {})
 	_park_phys = act_cfg.get("park", {})
+	_fish_cfg = act_cfg.get("fishing", {})
 	_build_world()
 	_apply_daily_respawn()
 	_refresh_hud()
@@ -788,6 +797,10 @@ func _price_of(item_id: String) -> int:
 ##
 ## Space가 지금 무엇을 하는지 — 상황에 따라 달라진다.
 func _action_hint() -> String:
+	if _fish_state == FishState.BITE:
+		return "채기!"
+	if _fish_state == FishState.WAIT:
+		return "기다리는 중"
 	match _activity:
 		"soccer": return "공 차기"
 		"seesaw", "carousel": return "밀기"
@@ -804,6 +817,11 @@ func _short_hint() -> String:
 	return "[클릭] 이동  [Space] %s  [I] 가방" % _action_hint()
 
 func _touch_hint() -> String:
+	# 낚시는 안내문이 곧 게임의 UI다 — 지금 기다려야 하는지, 눌러야 하는지.
+	if _fish_state == FishState.BITE:
+		return "! 지금 액션 버튼을 누르세요"
+	if _fish_state == FishState.WAIT:
+		return "찌를 보며 기다리는 중…"
 	if _is_narrow_screen():
 		if _is_riding():
 			return "액션 버튼으로 밀기/높이 · 내리기 버튼으로 내림"
@@ -1391,6 +1409,21 @@ func _refresh_exercise_ui() -> void:
 			_hooks.track("exercise1", off)
 		return
 
+	# 낚시는 버튼으로 시작하지 않지만(낚시터를 탭한다) **그만둘 방법은 있어야**
+	# 한다 — 폰에는 Esc가 없다.
+	if _activity == "fishing":
+		var quit_fish := Button.new()
+		quit_fish.text = "그만두기"
+		quit_fish.custom_minimum_size = Vector2(UiScale.dim(EXERCISE_BTN.x), UiScale.dim(EXERCISE_BTN.y))
+		quit_fish.clip_text = true
+		quit_fish.focus_mode = Control.FOCUS_NONE
+		quit_fish.add_theme_font_size_override("font_size", UiScale.font(15))
+		quit_fish.pressed.connect(_stop_fishing)
+		_exercise_box.add_child(quit_fish)
+		if _hooks != null:
+			_hooks.track("exercise1", quit_fish)
+		return
+
 	var index := 0
 	for a: Variant in _available_activities():
 		var act := a as Dictionary
@@ -1433,11 +1466,12 @@ func _refresh_exercise_ui() -> void:
 				_hooks.track("trick%d" % ti, tb)
 
 ## 지금 놀이기구를 타고 있는가(버튼이 아니라 기구를 탭해 타는 활동).
+## 놀이기구를 타고 있는지. **버튼 없는 활동(button:false)으로 판정하지 않는다** —
+## 낚시도 버튼 없이 시작하는 활동이라, 그 기준으로는 낚시 중에 "내리기" 버튼이
+## 뜨고 놀이기구용 좌석·리시 처리까지 끌려 들어온다(실측). 판정의 단일 출처는
+## 놀이기구 목록이다.
 func _is_riding() -> bool:
-	if _activity.is_empty():
-		return false
-	var a: Dictionary = _activity_by_id.get(_activity, {})
-	return a.get("button", true) == false
+	return _park_ride_kinds.has(_activity)
 
 func _dismount() -> void:
 	if _park != null and _activity == "slide":
@@ -1752,6 +1786,11 @@ func _send_emote(emote_id: String) -> void:
 
 ## Space: 주변에 놓인 물건이 있으면 줍고, 없으면 채집한다.
 func _try_interact() -> void:
+	# 낚시 중이면 액션은 **채는 것**이다. 물기 전에 누르면 헛챔질로 끝낸다 —
+	# 아무 반응도 없으면 "버튼이 안 먹는다"로 읽힌다.
+	if _fish_state != FishState.OFF:
+		_fish_strike()
+		return
 	# 놀이기구를 타고 있으면 액션은 그 기구를 미는 것이다(시소·뺑뺑이) 또는
 	# 진폭 올리기(그네).
 	if _is_riding() and _ride_action():
@@ -2068,6 +2107,10 @@ func _on_server_gathered(index: int, item: String, available_at: float, by: Stri
 		break
 	if by == String(_slot.get("token", "")):
 		_show_toast("%s 채집!" % _label_of(item))
+		# 무엇이 잡혔는지는 서버가 정한다 — E2E가 그 결과를 확인할 수 있게
+		# 마지막 획득을 공개한다(가방 개수만으로는 물고기인지 알 수 없다).
+		if _hooks != null:
+			_hooks.set_state("lastGather", item)
 
 ## 스냅샷의 채집물 상태 — 이미 캔 나무를 새로 들어온 화면에서도 감춘다.
 func _apply_gatherable_states(states: Array) -> void:
@@ -2198,6 +2241,87 @@ func _on_server_error(code: String, message: String) -> void:
 	push_warning("서버 오류(%s): %s" % [code, message])
 	if _hooks != null:
 		_hooks.set_state("lastError", code)
+
+## 낚시를 시작한다(낚시터에 도착했을 때).
+func _start_fishing(spot: Gatherable) -> void:
+	if spot == null or not is_instance_valid(spot) or not spot.is_available():
+		return
+	_fish_spot = spot
+	_fish_state = FishState.WAIT
+	# 대기 시간을 무작위로 두는 이유: 고정이면 초를 세서 누르게 되고, 그러면
+	# 타이밍 게임이 아니라 암기가 된다.
+	var lo := float(_fish_cfg.get("wait_min_sec", 1.5))
+	var hi := float(_fish_cfg.get("wait_max_sec", 4.0))
+	_fish_timer = randf_range(minf(lo, hi), maxf(lo, hi))
+	_apply_activity("fishing", "", true)
+	_show_toast("찌를 던졌다…")
+	_publish_fish_state()
+
+## 낚시를 끝낸다(성공·실패·취소 공통).
+func _stop_fishing() -> void:
+	if _fish_state == FishState.OFF:
+		return
+	_fish_state = FishState.OFF
+	_fish_timer = 0.0
+	_fish_spot = null
+	if _activity == "fishing":
+		_apply_activity("", "", true)
+	_publish_fish_state()
+
+## 액션 버튼을 눌렀을 때. 물었으면 서버에 채집을 요청하고, 아니면 헛챔질.
+func _fish_strike() -> void:
+	if _fish_state == FishState.BITE:
+		var spot := _fish_spot
+		_stop_fishing()
+		if spot != null and is_instance_valid(spot) and spot.can_interact(_player.position):
+			if _net != null and _net.connected:
+				# **무엇이 잡혔는지는 서버가 정한다.** 클라이언트가 아이템을
+				# 주장하면 비싼 것만 반복해서 잡을 수 있다.
+				_net.send_gather(spot.index)
+			else:
+				_show_toast("서버에 연결돼 있지 않아 낚을 수 없습니다")
+		else:
+			_show_toast("낚시터에서 너무 멀어졌습니다")
+		return
+	_stop_fishing()
+	_show_toast("너무 일렀다…")
+
+## 낚시 상태를 E2E가 볼 수 있게 공개한다(브라우저 테스트의 유일한 판정 수단).
+func _publish_fish_state() -> void:
+	if _hooks == null:
+		return
+	match _fish_state:
+		FishState.WAIT:
+			_hooks.set_state("fishing", "wait")
+		FishState.BITE:
+			_hooks.set_state("fishing", "bite")
+		_:
+			_hooks.set_state("fishing", "off")
+
+## 낚시 타이머. 대기 → 물기(제한 시간) → 놓침.
+func _update_fishing(delta: float) -> void:
+	if _fish_state == FishState.OFF:
+		return
+	# 자리를 벗어나면 낚시가 끝난다 — 걸어가면서 낚는 그림은 이상하다.
+	if _fish_spot == null or not is_instance_valid(_fish_spot) \
+			or not _fish_spot.can_interact(_player.position):
+		_stop_fishing()
+		_show_toast("낚시를 그만뒀다")
+		return
+	_fish_timer -= delta
+	if _fish_timer > 0.0:
+		return
+	if _fish_state == FishState.WAIT:
+		_fish_state = FishState.BITE
+		_fish_timer = float(_fish_cfg.get("bite_sec", 1.2))
+		_show_toast("! 지금이야")
+		_publish_fish_state()
+		_refresh_hud()
+		return
+	# 물었는데 시간이 지났다 — 놓친 것이다. 쿨다운은 걸지 않는다(실패의 벌은
+	# 시간 낭비로 충분하다. 서버도 채집 요청을 받지 않았으므로 자리는 그대로다).
+	_stop_fishing()
+	_show_toast("놓쳤다…")
 
 func _try_gather() -> void:
 	var nearest: Gatherable = null
@@ -2388,7 +2512,10 @@ func _on_player_arrived() -> void:
 			# 탭한 그 대상만 캔다. "근처에서 아무거나"로 두면 지나가다 옆 나무를
 			# 캐게 된다.
 			if target != null and is_instance_valid(target) and target.can_interact(_player.position):
-				if _net != null and _net.connected:
+				if target.kind == "fishing":
+					# 낚시터는 도착하자마자 캐지 않는다 — 기다렸다가 눌러야 한다.
+					_start_fishing(target)
+				elif _net != null and _net.connected:
 					_net.send_gather(target.index)
 				else:
 					target.gather()
@@ -2660,6 +2787,7 @@ func _on_viewport_resized() -> void:
 
 func _process(delta: float) -> void:
 	_update_camera(CAMERA_FOLLOW_SPEED * delta)
+	_update_fishing(delta)
 	_update_resync(delta)
 	_poll_resume(delta)
 

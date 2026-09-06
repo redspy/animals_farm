@@ -1,10 +1,14 @@
 {
-  "_comment": "채집물 배치와 재생 시간. 좌표는 3D 월드 단위(x=좌우, z=앞뒤, 원점=맵 중앙)이며 맵 크기는 data/world.json이 정한다(현재 50.7 x 28.5 = 한 화면의 9배). schema_version 2까지는 2D 픽셀 좌표(x,y)였고 3에서 월드 좌표(x,z)로 바뀌었으며, 4에서 확장된 월드맵 전체로 배치를 늘렸다. 유효범위는 주석이 아니라 limits 필드가 단일 출처이며 코드(Balance.clamp_value)가 클램프하고 경고를 남긴다.",
-  "schema_version": 4,
+  "_comment": "채집물 배치와 재생 시간. 좌표는 3D 월드 단위(x=좌우, z=앞뒤, 원점=맵 중앙)이며 맵 크기는 data/world.json이 정한다. schema_version 2까지는 2D 픽셀 좌표였고 3에서 월드 좌표로, 4에서 확장된 월드맵 전체로 배치를 늘렸으며, **5에서 낚시터(kind=fishing)와 벌레 스폿(kind=bug)을 추가**했다. 이 두 종류는 spawn에 item이 없다 — 무엇이 잡히는지는 catch_tables가 정하고 **서버가 굴린다**(클라이언트가 아이템을 주장하면 비싼 것만 반복해서 잡을 수 있다). 유효범위는 주석이 아니라 limits 필드가 단일 출처이며 코드(Balance.clamp_value)가 클램프한다.",
+  "schema_version": 5,
   "limits": {
     "respawn_sec": [
       10,
       86400
+    ],
+    "catch_weight": [
+      1,
+      1000
     ]
   },
   "spawns": [
@@ -287,6 +291,199 @@
       "x": -34.0,
       "z": -6.0,
       "respawn_sec": 40
+    },
+    {
+      "kind": "fishing",
+      "x": -34.0,
+      "z": -18.0,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "fishing",
+      "x": -14.0,
+      "z": -19.5,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "fishing",
+      "x": 5.0,
+      "z": -19.5,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "fishing",
+      "x": 24.0,
+      "z": -19.5,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "fishing",
+      "x": 35.5,
+      "z": -8.0,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "fishing",
+      "x": 35.5,
+      "z": 10.0,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "fishing",
+      "x": 18.0,
+      "z": 19.5,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "fishing",
+      "x": -20.0,
+      "z": 19.5,
+      "respawn_sec": 20
+    },
+    {
+      "kind": "bug",
+      "x": -35.0,
+      "z": -1.0,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": -33.0,
+      "z": 6.0,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": -6.0,
+      "z": -6.0,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": 6.0,
+      "z": -6.0,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": -16.5,
+      "z": 10.0,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": 16.5,
+      "z": 9.5,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": 30.0,
+      "z": 15.0,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": -30.0,
+      "z": -14.0,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": 0.0,
+      "z": -19.0,
+      "respawn_sec": 45
+    },
+    {
+      "kind": "bug",
+      "x": 33.0,
+      "z": -14.0,
+      "respawn_sec": 45
     }
-  ]
+  ],
+  "catch_tables": {
+    "fishing": [
+      {
+        "item": "anchovy",
+        "weight": 40
+      },
+      {
+        "item": "crucian",
+        "weight": 30,
+        "hours": [
+          6,
+          19
+        ]
+      },
+      {
+        "item": "sea_bass",
+        "weight": 18
+      },
+      {
+        "item": "squid",
+        "weight": 9,
+        "hours": [
+          19,
+          5
+        ]
+      },
+      {
+        "item": "coelacanth",
+        "weight": 3,
+        "hours": [
+          19,
+          5
+        ],
+        "months": [
+          12,
+          1,
+          2
+        ]
+      }
+    ],
+    "bug": [
+      {
+        "item": "butterfly",
+        "weight": 45,
+        "hours": [
+          6,
+          19
+        ],
+        "months": [
+          3,
+          4,
+          5,
+          6,
+          7,
+          8
+        ]
+      },
+      {
+        "item": "cicada",
+        "weight": 30,
+        "hours": [
+          6,
+          19
+        ],
+        "months": [
+          6,
+          7,
+          8
+        ]
+      },
+      {
+        "item": "beetle",
+        "weight": 25,
+        "hours": [
+          19,
+          5
+        ],
+        "months": [
+          6,
+          7,
+          8
+        ]
+      }
+    ]
+  }
 }

@@ -1,10 +1,102 @@
 {
-  "_comment": "밸런스 데이터는 코드에 흩뿌리지 않고 이 파일에서만 정의한다(AGENTS.md 밸런스 규칙). 유효범위는 주석이 아니라 항목별 price_range 필드가 단일 출처이며, 코드(Balance.clamp_value)가 이 값으로 클램프하고 경고를 남긴다.",
-  "schema_version": 1,
+  "_comment": "밸런스 데이터는 코드에 흩뿌리지 않고 이 파일에서만 정의한다(AGENTS.md 밸런스 규칙). 유효범위는 주석이 아니라 항목별 price_range 필드가 단일 출처이며, 코드(Balance.clamp_value)가 이 값으로 클램프하고 경고를 남긴다. 물고기·벌레는 등장 조건(시간·월)이 data/gatherables.json의 catch_tables에 있고 **어떤 것이 잡히는지는 서버가 그 테이블로 정한다** — 클라이언트가 아이템을 주장하면 실러캔스만 반복해서 잡을 수 있다.",
+  "schema_version": 2,
   "items": {
-    "wood": { "label": "나무", "sell_price": 60, "price_range": [10, 500] },
-    "fruit": { "label": "과일", "sell_price": 100, "price_range": [10, 500] },
-    "shell": { "label": "조개", "sell_price": 180, "price_range": [10, 500] },
-    "weed": { "label": "잡초", "sell_price": 10, "price_range": [1, 100] }
+    "wood": {
+      "label": "나무",
+      "sell_price": 60,
+      "price_range": [
+        10,
+        500
+      ]
+    },
+    "fruit": {
+      "label": "과일",
+      "sell_price": 100,
+      "price_range": [
+        10,
+        500
+      ]
+    },
+    "shell": {
+      "label": "조개",
+      "sell_price": 180,
+      "price_range": [
+        10,
+        500
+      ]
+    },
+    "weed": {
+      "label": "잡초",
+      "sell_price": 10,
+      "price_range": [
+        1,
+        100
+      ]
+    },
+    "anchovy": {
+      "label": "멸치",
+      "sell_price": 40,
+      "price_range": [
+        10,
+        500
+      ]
+    },
+    "crucian": {
+      "label": "붕어",
+      "sell_price": 120,
+      "price_range": [
+        10,
+        800
+      ]
+    },
+    "sea_bass": {
+      "label": "농어",
+      "sell_price": 320,
+      "price_range": [
+        10,
+        2000
+      ]
+    },
+    "squid": {
+      "label": "오징어",
+      "sell_price": 600,
+      "price_range": [
+        10,
+        2000
+      ]
+    },
+    "coelacanth": {
+      "label": "실러캔스",
+      "sell_price": 2500,
+      "price_range": [
+        100,
+        5000
+      ]
+    },
+    "butterfly": {
+      "label": "나비",
+      "sell_price": 90,
+      "price_range": [
+        10,
+        500
+      ]
+    },
+    "cicada": {
+      "label": "매미",
+      "sell_price": 150,
+      "price_range": [
+        10,
+        800
+      ]
+    },
+    "beetle": {
+      "label": "장수풍뎅이",
+      "sell_price": 400,
+      "price_range": [
+        10,
+        2000
+      ]
+    }
   }
 }

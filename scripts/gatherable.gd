@@ -27,7 +27,10 @@ var _grown: Node3D = null    # 채집 가능할 때 보이는 부분(나무 몸�
 func setup(spawn: Dictionary, limits: Dictionary = {}, spawn_index: int = -1) -> void:
 	index = spawn_index
 	kind = String(spawn.get("kind", "tree"))
-	item_id = String(spawn.get("item", "wood"))
+	# 낚시터·벌레 스폿은 item이 없다 — 무엇이 잡히는지는 **서버가** 확률
+	# 테이블로 정한다(data/gatherables.json의 catch_tables). 여기서 기본값을
+	# 넣으면 오프라인 채집이 엉뚱한 아이템(나무)을 만든다.
+	item_id = String(spawn.get("item", "" if kind in ["fishing", "bug"] else "wood"))
 	respawn_sec = Balance.clamp_value(
 		float(spawn.get("respawn_sec", 30.0)),
 		limits.get("respawn_sec", null),
@@ -77,6 +80,69 @@ func _build_mesh() -> void:
 			shell.position = Vector3(0, 0.1, 0)
 			shell.material_override = _material(Palette.color("world", "shell"))
 			_grown.add_child(shell)
+		"fishing":
+			# 낚시터는 **물빛 원판 + 잔물결 링 2개**다. 채집해도 자리는 남아야
+			# 하므로(다시 찾아올 수 있게) 원판은 항상 보이고, 링만 감춘다.
+			var pond := MeshInstance3D.new()
+			var pond_mesh := CylinderMesh.new()
+			pond_mesh.top_radius = 0.95
+			pond_mesh.bottom_radius = 0.95
+			pond_mesh.height = 0.06
+			pond_mesh.radial_segments = 16
+			pond.mesh = pond_mesh
+			pond.position = Vector3(0, 0.03, 0)
+			pond.material_override = _material(Palette.color("world", "fishing_water"))
+			add_child(pond)
+
+			_grown = Node3D.new()
+			add_child(_grown)
+			var ripple_color := Palette.color("world", "fishing_ripple")
+			for i in 2:
+				var ring := MeshInstance3D.new()
+				var ring_mesh := TorusMesh.new()
+				ring_mesh.inner_radius = 0.22 + 0.26 * i
+				ring_mesh.outer_radius = 0.28 + 0.26 * i
+				ring_mesh.rings = 12
+				ring_mesh.ring_segments = 6
+				ring.mesh = ring_mesh
+				ring.position = Vector3(0, 0.07, 0)
+				ring.material_override = _material(ripple_color)
+				_grown.add_child(ring)
+		"bug":
+			# 벌레 스폿은 꽃 3점 + 그 위 벌레 한 마리. 꽃은 남고 벌레만 사라진다.
+			var stem_color := Palette.color("world", "flower_stem")
+			var petal_color := Palette.color("world", "flower_petal")
+			for i in 3:
+				var stem := MeshInstance3D.new()
+				var stem_mesh := BoxMesh.new()
+				stem_mesh.size = Vector3(0.05, 0.34, 0.05)
+				stem.mesh = stem_mesh
+				stem.position = Vector3(-0.22 + 0.22 * i, 0.17, 0.08 * i)
+				stem.material_override = _material(stem_color)
+				add_child(stem)
+				var petal := MeshInstance3D.new()
+				var petal_mesh := SphereMesh.new()
+				petal_mesh.radius = 0.11
+				petal_mesh.height = 0.14
+				petal_mesh.radial_segments = 8
+				petal_mesh.rings = 3
+				petal.mesh = petal_mesh
+				petal.position = Vector3(-0.22 + 0.22 * i, 0.38, 0.08 * i)
+				petal.material_override = _material(petal_color)
+				add_child(petal)
+
+			_grown = Node3D.new()
+			add_child(_grown)
+			var bug := MeshInstance3D.new()
+			var bug_mesh := SphereMesh.new()
+			bug_mesh.radius = 0.1
+			bug_mesh.height = 0.16
+			bug_mesh.radial_segments = 8
+			bug_mesh.rings = 4
+			bug.mesh = bug_mesh
+			bug.position = Vector3(0, 0.62, 0)
+			bug.material_override = _material(Palette.color("world", "bug_body"))
+			_grown.add_child(bug)
 		_:
 			_grown = Node3D.new()
 			add_child(_grown)

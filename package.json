@@ -24,7 +24,8 @@
     "test:insecure": "node tests/browser-insecure.mjs",
     "test:playground": "node tests/browser-playground.mjs",
     "test:safari": "node tests/browser-safari.mjs",
-    "test:park": "node tests/browser-park.mjs"
+    "test:park": "node tests/browser-park.mjs",
+    "test:fishing": "node tests/browser-fishing.mjs"
   },
   "keywords": [],
   "author": "",
