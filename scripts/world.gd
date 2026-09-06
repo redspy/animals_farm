@@ -670,6 +670,11 @@ func _build_hud() -> void:
 		# 시트가 열리면 전체화면 핫스팟을 바로 내린다(모달 위 오작동 방지).
 		_touch.sheet_toggled.connect(func() -> void: _publish_fullscreen_hotspot.call_deferred())
 		_touch.joystick_toggled.connect(_on_joystick_toggled)
+		# 스틱 영역의 짧은 탭은 월드 탭과 **같은 경로**로 처리한다 — 대상 탭
+		# 자동 처리·마커·우회 경로가 전부 그 함수 안에 있어서, 새 경로를 만들면
+		# 두 곳이 갈린다.
+		_touch.stick_tapped.connect(
+			func(pos: Vector2) -> void: _on_world_tapped(pos, true))
 		_touch.action_pressed.connect(_try_interact)
 		_touch.chat_pressed.connect(_open_chat_input)
 		_touch.drop_pressed.connect(_drop_one)
@@ -2223,13 +2228,23 @@ func _screen_to_ground(screen_pos: Vector2) -> Variant:
 	var dir := _camera.project_ray_normal(screen_pos)
 	return Plane(Vector3.UP, 0.0).intersects_ray(origin, dir)
 
-func _on_world_tapped(screen_pos: Vector2) -> void:
+## 월드 탭 처리. `from_stick`은 **조이스틱 영역에서 탭으로 판정된 터치**다.
+##
+## 왜 구분이 필요한가: 터치는 기본 설정에서 마우스 이벤트로도 에뮬레이트되고, 그
+## 가짜 클릭은 **손가락을 대는 순간**(끌기 시작 전에) 도착한다. 그래서 스틱을
+## 끌기만 해도 시작점으로 이동 지시가 들어갔고, 그것을 막으려고 스틱 영역의 탭을
+## 전부 버렸다 — 그 대가로 화면 왼쪽 아래 1/4이 조작 불가가 됐다. 이제
+## TouchControls가 **떼는 시점에** 끌지 않았음을 확인하고 알려주므로, 그 경로만
+## 가드를 통과시킨다.
+func _on_world_tapped(screen_pos: Vector2, from_stick: bool = false) -> void:
 	if _hooks != null:
 		# E2E가 "클릭이 게임에 도달했는지"를 확인할 수 있게 횟수를 남긴다.
 		_hooks.set_state("worldTaps", int(_hooks_tap_count + 1))
 		_hooks_tap_count += 1
-	# 조이스틱 영역의 터치는 이동 지시가 아니다 — 그 영역은 조이스틱이 쓴다.
-	if _touch != null and _touch.is_in_stick_area(screen_pos):
+	# 스틱 영역에 **손가락을 댄 순간** 오는 가짜 클릭은 이동 지시가 아니다.
+	if not from_stick and _touch != null and _touch.is_in_stick_area(screen_pos):
+		if _hooks != null:
+			_hooks.set_state("tapBranch", "stick_area")
 		return
 	var hit: Variant = _screen_to_ground(screen_pos)
 	if hit == null:

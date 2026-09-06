@@ -25,6 +25,13 @@ signal sell_requested          # (남겨둠) 확인 시트에서 전부 판매�
 signal inventory_pressed       # 가방 화면 열기
 ## 조이스틱 사용 여부가 바뀔 때. 세이브에 남겨 다음 접속에도 유지한다.
 signal joystick_toggled(enabled: bool)
+## 조이스틱 영역에서 **끌지 않고 짧게 뗀** 터치 — 월드 탭으로 흘려보낸다.
+##
+## 왜 필요한가: 스틱 영역은 화면 왼쪽 아래 넓은 자리를 차지하는데, 그 안에서 탭만
+## 하면 아무 일도 일어나지 않았다. 탭-투-무브가 주 조작인데 화면 1/4이 조작
+## 불가면 그건 기능이 아니라 함정이다(운동장이 섬 가운데를 차지한 뒤로 그 자리에
+## 채집물이 놓이는 일이 흔해졌다 — 2026-09-05 모바일 테스트).
+signal stick_tapped(position: Vector2)
 signal sheet_toggled            # 시트(이모티콘/판매)가 열리거나 닫힘 — 월드가
                                 # 전체화면 핫스팟을 즉시 내리는 데 쓴다
 
@@ -53,6 +60,13 @@ const STICK_AREA_H_RATIO := 0.55
 const STICK_RADIUS := 84.0
 ## 이 비율 미만의 기울기는 무시한다(엄지 떨림으로 캐릭터가 스르륵 움직이는 것 방지).
 const STICK_DEADZONE := 0.18
+## 탭으로 볼 최대 이동(논리 픽셀)과 최대 누름 시간(ms).
+##
+## **두 조건을 다 쓴다.** 시간만 보면 느리게 조금 끈 것이 탭이 되고, 거리만 보면
+## 손가락을 대고 가만히 있다가 뗀 것(조이스틱 중립 유지)이 탭이 된다. 후자는
+## 실제로 자주 일어난다.
+const STICK_TAP_MAX_MOVE := 12.0
+const STICK_TAP_MAX_MS := 250
 
 var move_vector := Vector2.ZERO   # world/player가 매 프레임 읽는다
 ## 조이스틱을 쓸지. 끄면 이동은 탭-투-무브로만 한다 — 엄지로 화면을 가리는 게
@@ -65,6 +79,9 @@ var _chat_button: Button = null
 var _stick_touch_index := -1
 var _stick_origin := Vector2.ZERO
 var _stick_current := Vector2.ZERO
+## 탭 판정용 — 누른 시각과 "한 번이라도 이동 벡터가 생겼는지".
+var _stick_pressed_ms := 0
+var _stick_moved := false
 var _stick_visual: Control
 var _emote_sheet: Control
 var _sell_sheet: Control
@@ -268,15 +285,28 @@ func _input(event: InputEvent) -> void:
 				_stick_touch_index = touch.index
 				_stick_origin = touch.position
 				_stick_current = touch.position
+				_stick_pressed_ms = Time.get_ticks_msec()
+				_stick_moved = false
 				_stick_visual.queue_redraw()
 		elif touch.index == _stick_touch_index:
+			# 끌지 않고 짧게 뗐으면 **탭**이다 — 월드로 흘려보낸다.
+			var held := Time.get_ticks_msec() - _stick_pressed_ms
+			var moved := (touch.position - _stick_origin).length()
+			var is_tap := not _stick_moved \
+				and moved < STICK_TAP_MAX_MOVE \
+				and held < STICK_TAP_MAX_MS
 			_release_stick()
+			if is_tap:
+				stick_tapped.emit(touch.position)
 	elif event is InputEventScreenDrag:
 		var drag := event as InputEventScreenDrag
 		if drag.index != _stick_touch_index:
 			return
 		_stick_current = drag.position
 		_update_move_vector()
+		# 이동 벡터가 한 번이라도 생겼으면 그 터치는 조이스틱 조작이다.
+		if move_vector != Vector2.ZERO:
+			_stick_moved = true
 		_stick_visual.queue_redraw()
 
 func _release_stick() -> void:

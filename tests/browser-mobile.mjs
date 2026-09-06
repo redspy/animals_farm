@@ -184,6 +184,37 @@ const xAfterRelease = lastPos(token)?.x ?? 0;
 await page.waitForTimeout(1200);
 check(Math.abs((lastPos(token)?.x ?? 0) - xAfterRelease) < 0.2, '손을 떼면 이동이 멈춘다');
 
+// --- 조이스틱 영역의 짧은 탭은 월드로 흘러야 한다(F1) ---
+// 회귀 방지: 스틱 영역(왼쪽 아래 절반)에서 탭만 하면 아무 일도 없었다. 탭-투-
+// 무브가 주 조작인데 화면 1/4이 조작 불가면 함정이다. 고치기 전 이 검사는
+// worldTaps가 늘지 않아 실패한다.
+console.log('\n[검증] 조이스틱 영역 탭 통과');
+{
+  const taps = () => page.evaluate(() => Number(window.afTest?.state?.worldTaps ?? 0));
+  const branch = () => page.evaluate(() => String(window.afTest?.state?.tapBranch ?? ''));
+  const before = await taps();
+  // 스틱 영역 안이면서 캐릭터에서 떨어진 지점(영역은 x ≤ 폭 0.5, y ≥ 높이 0.45).
+  const box = page.viewportSize();
+  const pt = { x: Math.round(box.width * 0.22), y: Math.round(box.height * 0.78) };
+  await page.touchscreen.tap(pt.x, pt.y);
+  await page.waitForTimeout(700);
+  const after = await taps();
+  check(after > before, `스틱 영역을 탭하면 월드 탭으로 처리된다 (worldTaps ${before} → ${after})`);
+  check((await branch()).length > 0, `탭이 실제 분기를 탔다 (tapBranch=${await branch()})`);
+
+  // 반대로 **끌면** 조이스틱이어야 한다 — 탭으로 새면 조이스틱이 못 쓰게 된다.
+  // 판정은 worldTaps(도착 횟수)가 아니라 **분기**로 한다: 손가락을 대는 순간 오는
+  // 가짜 클릭은 도착하되 `stick_area`에서 버려져야 하고, 이동 지시(`move:`)가
+  // 되어서는 안 된다.
+  const d = await dragTouch(cdp, pt, { x: pt.x + 80, y: pt.y }, { page, steps: 4, holdMs: 50 });
+  await d.hold(250);
+  await d.release();
+  await page.waitForTimeout(600);
+  const dragBranch = await branch();
+  check(dragBranch === 'stick_area',
+    `끌면 이동 지시로 처리되지 않는다 (tapBranch=${dragBranch})`);
+}
+
 // --- 주 액션 버튼: 채집 → 버리기로 서버 가방까지 확인 ---
 console.log('\n[검증] 터치 버튼(채집/줍기 · 버리기)');
 // 스폰(0,0) 오른쪽 5칸에 나무가 있다(data/gatherables.json).
@@ -272,18 +303,12 @@ await page.screenshot({ path: `${OUT}/9-탭이동.png` });
 // (2) 채집물 탭 → 다가가서 자동 채집. 채집이 서버 가방에 들어갔는지는
 //     이어지는 버리기(item_add)로 확인한다 — gather는 브로드캐스트되지 않는다.
 const seenBefore = seen.length;
-let treePt = await godotPoint(page, 'nearestGatherable');
-// 대상이 **조이스틱 영역(왼쪽 아래)** 에 있으면 탭이 조이스틱에 먹힌다 —
-// 게임이 그렇게 만들어져 있다(그 영역은 조이스틱이 쓴다). 조이스틱을 끄면
-// 그 영역도 평범한 월드 탭이 되므로 그 경로로 확인한다. 운동장이 섬 가운데를
-// 차지한 뒤 가까운 채집물이 이 영역에 오는 일이 흔해졌다(2026-09-05).
-const stickArea = treePt.x < size.width * 0.5 && treePt.y > size.height * 0.45;
-if (stickArea) {
-  await tapGodot(page, 'joystickToggle', { touch: true });
-  await page.waitForTimeout(500);
-  treePt = await godotPoint(page, 'nearestGatherable');
-  check(true, '대상이 조이스틱 영역에 있어 조이스틱을 끄고 탭한다(스틱 OFF 경로)');
-}
+const treePt = await godotPoint(page, 'nearestGatherable');
+// 예전에는 대상이 **조이스틱 영역(왼쪽 아래)** 에 있으면 탭이 먹히지 않아
+// 조이스틱을 끄고 확인했다. 지금은 그 영역의 짧은 탭도 월드로 흐르므로(F1)
+// 스틱을 켠 채로 그대로 탭한다 — 우회책을 남겨두면 회귀를 못 잡는다.
+const inStickArea = treePt.x < size.width * 0.5 && treePt.y > size.height * 0.45;
+if (inStickArea) console.log('   (대상이 조이스틱 영역 안 — 스틱 ON 상태로 탭한다)');
 await page.touchscreen.tap(treePt.x, treePt.y);
 await page.waitForTimeout(4000);          // 접근 + 자동 채집
 await page.screenshot({ path: `${OUT}/10-대상탭-자동채집.png` });
