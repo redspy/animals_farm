@@ -38,7 +38,9 @@ signal goal_scored(side: String, score: Dictionary)
 ## 이웃 동물 부탁: 정산 결과(보상·가방·NPC별 상태)와 거절 사유(부족한 수 포함).
 signal npc_done(npc: String, reward: int, given: Dictionary, bells: int,
 	inventory: Dictionary, state: Dictionary)
-signal npc_error(code: String, message: String, need: Dictionary)
+signal npc_error(code: String, message: String, need: Dictionary, state: Dictionary)
+## 날짜가 바뀌어 서버가 부탁 상태를 다시 보냈을 때.
+signal npc_state(state: Dictionary)
 ## 놀이기구 상태(시소 기울기·뺑뺑이 각도). 서버가 소유한다.
 signal park_state(state: Dictionary)
 
@@ -203,15 +205,18 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 				msg.get("given", {}), int(msg.get("bells", 0)),
 				msg.get("inventory", {}), msg.get("state", {})
 			)
+		"npc_error":
+			# 부탁 정산 거절은 **전용 메시지**로 온다. 일반 error에 섞어 보내고
+			# 필드 유무로 추측하면 too_far·already_done·rate_limited가 그 추측에서
+			# 빠져 "가져왔어" 버튼이 잠긴 채 굳는다(리뷰 지적).
+			npc_error.emit(
+				String(msg.get("code", "")), String(msg.get("message", "")),
+				msg.get("need", {}), msg.get("state", {})
+			)
+		"npc_state":
+			npc_state.emit(msg.get("state", {}))
 		"error":
-			# 부탁 거절은 **부족한 수**를 함께 실어 온다 — 일반 오류 토스트로
-			# 흘리면 "몇 개 더 필요한지"를 가방 화면에서 세어야 한다.
-			var need: Variant = msg.get("need", null)
-			if typeof(need) == TYPE_DICTIONARY:
-				npc_error.emit(String(msg.get("code", "")), String(msg.get("message", "")),
-					need as Dictionary)
-			else:
-				server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")))
+			server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")))
 		_:
 			push_warning("알 수 없는 서버 메시지: %s" % String(msg.get("t", "")))
 

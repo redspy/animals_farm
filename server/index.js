@@ -397,9 +397,17 @@ function handle(ws, msg) {
       // 부탁 정산. **금액·차감은 서버가 계산한다**(docs/protocol.md).
       const r = world.npcDeliver(ws.token, msg.npc);
       if (r.error) {
-        // 부족한 경우엔 몇 개가 부족한지 함께 보낸다 — "부족하다"만 알려주면
-        // 플레이어가 가방 화면을 왕복해야 한다.
-        sendTo(ws, { t: 'error', ...r.error, ...(r.need ? { need: r.need } : {}) });
+        // **전용 메시지로 돌려준다.** 일반 error로 섞어 보내면 클라이언트가
+        // "이 거절이 부탁 정산에 대한 것인지"를 필드 유무로 추측해야 하고,
+        // 실제로 too_far·already_done·rate_limited는 그 추측에서 빠져
+        // "가져왔어" 버튼이 잠긴 채 굳었다(리뷰 지적).
+        // 부족한 경우엔 몇 개가 부족한지, 그리고 **현재 부탁 상태**를 함께
+        // 보낸다(자정을 넘겨 클라이언트가 어제 상태로 굳는 것을 푼다).
+        sendTo(ws, {
+          t: 'npc_error', ...r.error,
+          ...(r.need ? { need: r.need } : {}),
+          ...(r.state ? { state: r.state } : {}),
+        });
         break;
       }
       sendTo(ws, {
@@ -530,6 +538,24 @@ setInterval(() => {
   // 놀이기구 물리도 같은 틱에서 돈다.
   if (world.tickPark(TICK_MS / 1000)) broadcastPark(false);
 }, TICK_MS);
+
+// **자정을 넘기면 접속자에게 부탁 상태를 다시 보낸다.**
+//
+// 부탁은 서버 날짜로 정해지는데 클라이언트는 welcome·정산 응답에서만 상태를
+// 받는다. 세션을 켜둔 채 날이 바뀌면 어제 완료한 이웃이 계속 "오늘은 충분해"로
+// 보여서 **오늘 부탁이 있는 줄도 모른다**(리뷰 지적). 하루에 한 번뿐인
+// 브로드캐스트라 비용은 없다.
+let lastDayKey = world.dayKey();
+setInterval(() => {
+  const today = world.dayKey();
+  if (today === lastDayKey) return;
+  lastDayKey = today;
+  for (const [token, ws] of sockets) {
+    if (ws.readyState !== ws.OPEN) continue;
+    sendTo(ws, { t: 'npc_state', state: world.npcState(token) });
+  }
+  console.log(`[server] 날짜가 ${today}로 바뀌어 부탁 상태를 다시 보냈습니다`);
+}, 30000);
 
 // 죽은 연결 정리 — 브라우저 탭이 그냥 사라지면 close 이벤트가 안 올 수 있다.
 setInterval(() => {

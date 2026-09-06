@@ -31,6 +31,11 @@ func setup(items_meta: Dictionary, dex: Dictionary, npcs: Array, npc_state: Dict
 	_dex = dex
 	_npcs = npcs
 	_npc_state = npc_state
+	# **열려 있는 동안 다시 부르면 실제로 다시 그려야 한다.** 값만 대입하고
+	# _fill()을 _ready에서 한 번만 돌리면, resync로 상태가 바뀌어도 화면은
+	# 낡은 채로 남는다(리뷰 지적: 사실상 죽은 코드였다).
+	if is_node_ready():
+		_fill()
 
 func _ready() -> void:
 	_hooks = TestHooks.new()

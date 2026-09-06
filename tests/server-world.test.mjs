@@ -1110,12 +1110,14 @@ test('부탁은 (토큰·NPC·날짜)로 결정적이다', () => {
 test('없는 이웃·부족한 물건은 거부하고 가방을 건드리지 않는다', () => {
   const w = fresh();
   w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
-  assert.equal(w.npcDeliver(TOKEN_A, 'nobody').error.code, 'unknown_npc');
-  const req = w.npcRequest(TOKEN_A, 'mochi');
+  const at = 8_000_000;
+  assert.equal(w.npcDeliver(TOKEN_A, 'nobody', at).error.code, 'unknown_npc');
+  const req = w.npcRequest(TOKEN_A, 'mochi', at);
   const p = w.players.get(TOKEN_A);
   standAtNpc(w, TOKEN_A, 'mochi');
   p.inventory[req.item] = req.count - 1;
-  const r = w.npcDeliver(TOKEN_A, 'mochi');
+  // 실패도 간격 제한을 받으므로 시각을 넘겨야 한다(연타 방지 규칙).
+  const r = w.npcDeliver(TOKEN_A, 'mochi', at + 1000);
   assert.equal(r.error.code, 'not_enough');
   assert.equal(r.need.have, req.count - 1, '부족한 수를 알려주지 않으면 가방 화면을 왕복해야 한다');
   assert.equal(p.inventory[req.item], req.count - 1, '거절인데 가방이 줄었다');
@@ -1232,4 +1234,71 @@ test('멀리서는 부탁을 정산할 수 없다', () => {
   // 허용 거리 안.
   p.x = npc.x + npc.wanderRadius;
   assert.ok(!w.npcDeliver(TOKEN_A, 'mochi', Date.now() + 1000).error);
+});
+
+test('부탁 아이템은 시간·월 제한이 없어야 한다(데이터 린트)', () => {
+  // 부탁은 하루 내내 고정이므로(결정적 해시), 낮에만 나오는 매미를 부탁받으면
+  // 밤에 접속한 사람은 그날 아무것도 할 수 없다. 서버가 로드할 때 걸러내지만,
+  // **데이터 자체가 그러면 부탁 후보가 조용히 줄어든다** — 데이터에서 막는다.
+  const w = fresh();
+  const raw = JSON.parse(readFileSync('data/npcs.json', 'utf-8'));
+  for (const npc of raw.npcs) {
+    for (const r of npc.requests) {
+      assert.equal(w.catchEntryFor(r.item), null,
+        `${npc.id}의 부탁 ${r.item}에 시간·월 제한이 있다 — 그날 완료 불가능한 부탁이 된다`);
+    }
+    // 로드 후에도 후보가 그대로 남아야 한다(걸러진 것이 없다).
+    assert.equal(w.npcs.get(npc.id).requests.length, npc.requests.length,
+      `${npc.id}의 부탁 후보가 로드 중 걸러졌다`);
+  }
+});
+
+test('부탁 보상 편차가 과하지 않다(밸런스 린트)', () => {
+  // 잡초 3개(54벨)와 조개 2개(648벨)가 섞이면 "팔지 말고 남겨두는 선택"이라는
+  // 의도가 잡초 날에는 성립하지 않는다. 최대/최소 비율을 3배로 제한한다.
+  const w = fresh();
+  const rewards = [];
+  for (const npc of w.npcs.values()) {
+    for (const r of npc.requests) rewards.push(w.npcReward(r));
+  }
+  const lo = Math.min(...rewards);
+  const hi = Math.max(...rewards);
+  assert.ok(hi / lo <= 3.0, `보상 편차가 ${(hi / lo).toFixed(1)}배다 (${lo}~${hi}벨)`);
+});
+
+test('모든 거절에 현재 부탁 상태가 실린다', () => {
+  // 클라이언트는 "가져왔어" 버튼을 누른 즉시 잠근다(연타 방지). 거절에 상태가
+  // 없으면 자정을 넘긴 세션이 어제 상태로 굳고, 버튼도 회색으로 남는다.
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const far = w.npcDeliver(TOKEN_A, 'mochi');
+  assert.equal(far.error.code, 'too_far');
+  assert.ok(far.state && far.state.mochi, 'too_far 거절에 상태가 없다');
+  const unknown = w.npcDeliver(TOKEN_A, 'nobody', Date.now() + 1000);
+  assert.ok(unknown.state, 'unknown_npc 거절에 상태가 없다');
+});
+
+test('실패한 정산도 간격 제한을 받는다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const at = 12_000_000;
+  assert.equal(w.npcDeliver(TOKEN_A, 'nobody', at).error.code, 'unknown_npc');
+  assert.equal(w.npcDeliver(TOKEN_A, 'nobody', at + 10).error.code, 'rate_limited');
+});
+
+test('내가 버린 것을 내가 주우면 도감이 늘지 않는다', () => {
+  // 버리고 줍기를 반복해 도감 숫자를 얼마든지 올릴 수 있었다.
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const p = w.players.get(TOKEN_A);
+  const g = w.gatherables.find((s) => s.kind === 'tree');
+  p.x = g.x; p.z = g.z;
+  const item = w.gather(TOKEN_A, g.index, 6_000_000).gathered.item;
+  assert.equal(p.dex[item], 1);
+  for (let i = 0; i < 3; i++) {
+    const dropped = w.drop(TOKEN_A, item, p.x, p.z);
+    assert.ok(!dropped.error);
+    assert.ok(!w.pickup(TOKEN_A, dropped.item.id).error);
+  }
+  assert.equal(p.dex[item], 1, '자기가 버린 것을 주워 도감이 늘었다');
 });

@@ -12,6 +12,8 @@ class_name Balance
 const FALLBACK := {
 	"price": [0.0, 1000000.0],
 	"duration_sec": [1.0, 86400.0],
+	# 월드 단위 거리(배회 반경 등). 섬 반지름을 넘는 값은 의미가 없다.
+	"distance": [0.0, 40.0],
 }
 
 ## 범위 배열이 쓸 수 있는 형태인지 검증한다([lo, hi] 숫자 2개, lo <= hi).

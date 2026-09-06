@@ -14,6 +14,9 @@ const PANEL_MIN_W := 520.0
 const PANEL_MIN_H := 170.0
 
 var _npc_id := ""
+## 지금 건넬 수 있는지. **버튼 문구로 판정하지 않는다** — 문구를 바꾸면 조용히
+## "닫기"처럼 동작한다(리뷰 지적).
+var _can_deliver := false
 var _title: Label
 var _body: Label
 var _action: Button
@@ -94,6 +97,7 @@ func _ready() -> void:
 ## 상태에서 같은 버튼을 두면 눌러도 아무 일이 없는 버튼이 된다.
 func show_talk(npc_id: String, npc_label: String, text: String, can_deliver: bool) -> void:
 	_npc_id = npc_id
+	_can_deliver = can_deliver
 	if _title != null:
 		_title.text = npc_label
 	if _body != null:
@@ -103,7 +107,7 @@ func show_talk(npc_id: String, npc_label: String, text: String, can_deliver: boo
 		_action.disabled = false
 
 func _on_action() -> void:
-	if _action != null and _action.text == "가져왔어":
+	if _can_deliver and _action != null:
 		# 연타로 두 번 보내지 않게 즉시 잠근다 — 서버도 400ms 간격 제한이
 		# 있지만, 눌리는 버튼이 남아 있으면 "안 먹혔나?" 싶어 다시 누른다.
 		_action.disabled = true

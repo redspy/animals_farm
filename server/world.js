@@ -377,9 +377,20 @@ export class WorldState {
             Math.max(Number(countRange[0]), Math.floor(Number(r.count) || 1))),
         }))
         .filter((r) => {
-          if (this.itemIds.has(r.item)) return true;
-          console.warn(`[world] npcs.json의 ${id} 부탁 아이템 "${r.item}"이 items.json에 없습니다 — 무시합니다`);
-          return false;
+          if (!this.itemIds.has(r.item)) {
+            console.warn(`[world] npcs.json의 ${id} 부탁 아이템 "${r.item}"이 items.json에 없습니다 — 무시합니다`);
+            return false;
+          }
+          // **시간 제한이 붙은 아이템은 부탁으로 쓸 수 없다.** 부탁은 하루 내내
+          // 고정이므로(결정적 해시), 낮에만 나오는 것을 부탁받으면 밤에 접속한
+          // 사람은 그날 아무것도 할 수 없다. 월 제한도 같은 이유로 막는다 —
+          // 9~5월에 매미를 부탁하면 그 날은 통째로 죽은 부탁이 된다.
+          const limited = this.catchEntryFor(r.item);
+          if (limited) {
+            console.warn(`[world] npcs.json의 ${id} 부탁 아이템 "${r.item}"은 시간·월 제한이 있어 부탁으로 쓸 수 없습니다 — 무시합니다`);
+            return false;
+          }
+          return true;
         });
       if (requests.length === 0) {
         console.warn(`[world] NPC ${id}에 유효한 부탁이 없습니다 — 부탁을 주지 않습니다`);
@@ -1164,6 +1175,18 @@ export class WorldState {
     return { inventory: p.inventory, gathered: { index: g.index, item, availableAt: g.availableAt } };
   }
 
+  // 이 아이템이 확률 테이블에서 **시간·월 제한**을 받는지. 받으면 그 항목을
+  // 돌려준다(부탁 후보에서 빼는 데 쓴다).
+  catchEntryFor(item) {
+    for (const rows of Object.values(this.catchTables)) {
+      for (const r of rows) {
+        if (r.item !== item) continue;
+        if (r.hours || r.months) return r;
+      }
+    }
+    return null;
+  }
+
   // 지금(시간·월) 잡을 수 있는 항목만 남긴다.
   //
   // **경계에 여유를 두지 않는다.** 클라이언트는 자기 시계로 "지금 잡히는 것"을
@@ -1259,31 +1282,40 @@ export class WorldState {
     const p = this.players.get(token);
     if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
     if (now - (p.lastNpcAt || 0) < LIMITS.NPC_MIN_INTERVAL_MS) {
-      return { error: { code: 'rate_limited', message: '너무 빠릅니다' } };
+      return { error: { code: 'rate_limited', message: '너무 빠릅니다' }, state: this.npcState(token, now) };
     }
+    // **실패도 간격 제한에 넣는다.** 성공만 기록하면 too_far/unknown_npc를
+    // 무한 연타할 수 있고, 다른 핸들러(채집·판매)와 규칙이 달라진다.
+    p.lastNpcAt = now;
     const npc = this.npcs.get(String(npcId));
-    if (!npc) return { error: { code: 'unknown_npc', message: '없는 이웃입니다' } };
+    if (!npc) {
+      return { error: { code: 'unknown_npc', message: '없는 이웃입니다' }, state: this.npcState(token, now) };
+    }
     const today = this.dayKey(now);
     if (p.npcDone[npc.id] === today) {
-      return { error: { code: 'already_done', message: '오늘은 이미 도와줬습니다' } };
+      // **거절에도 현재 상태를 싣는다.** 세션을 켜둔 채 자정을 넘기면
+      // 클라이언트가 어제 상태로 굳어 "오늘은 충분해"만 보여준다.
+      return { error: { code: 'already_done', message: '오늘은 이미 도와줬습니다' }, state: this.npcState(token, now) };
     }
     // **거리를 검사한다.** 없으면 섬 반대편에서 부탁을 정산할 수 있다. 기준은
     // 데이터의 고정 좌표이고, 배회 반경 + 여유(NPC_TALK_PAD)만큼 넉넉히 준다.
     const dist = Math.hypot(p.x - npc.x, p.z - npc.z);
     if (dist > npc.wanderRadius + LIMITS.NPC_TALK_PAD) {
-      return { error: { code: 'too_far', message: '이웃에게서 너무 멉니다' } };
+      return { error: { code: 'too_far', message: '이웃에게서 너무 멉니다' }, state: this.npcState(token, now) };
     }
     const request = this.npcRequest(token, npc.id, now);
-    if (!request) return { error: { code: 'no_request', message: '지금은 부탁이 없습니다' } };
+    if (!request) {
+      return { error: { code: 'no_request', message: '지금은 부탁이 없습니다' }, state: this.npcState(token, now) };
+    }
     const have = Number(p.inventory[request.item] || 0);
     if (have < request.count) {
       return {
         error: { code: 'not_enough', message: '물건이 부족합니다' },
         // 부족한 수를 알려 준다 — "부족하다"만 말하면 가방 화면을 왕복해야 한다.
         need: { item: request.item, count: request.count, have },
+        state: this.npcState(token, now),
       };
     }
-    p.lastNpcAt = now;
     const left = have - request.count;
     if (left <= 0) delete p.inventory[request.item];
     else p.inventory[request.item] = left;
@@ -1329,7 +1361,9 @@ export class WorldState {
     }
     const pos = this.clampPos(x, z);
     if (have === 1) delete p.inventory[id]; else p.inventory[id] = have - 1;
-    const entity = { id: randomUUID(), item: id, x: pos.x, z: pos.z, at: Date.now() };
+    // 누가 버렸는지 남긴다 — 자기가 버린 것을 자기가 줍는 경우를 도감에서
+    // 빼려면 필요하다(버리고 줍기 반복으로 숫자를 올릴 수 있다).
+    const entity = { id: randomUUID(), item: id, x: pos.x, z: pos.z, at: Date.now(), by: token };
     this.items.set(entity.id, entity);
     this._markDirty();
     return { item: entity, inventory: p.inventory };
@@ -1347,7 +1381,9 @@ export class WorldState {
     this.items.delete(entity.id);
     p.inventory[entity.item] = Number(p.inventory[entity.item] || 0) + 1;
     // 남이 버린 것을 주워도 "만난 것"은 만난 것이다 — 도감에 누적한다.
-    this.recordDex(p, entity.item);
+    // **단 내가 버린 것을 내가 주우면 세지 않는다**: 버리고 줍기를 반복해
+    // 도감 숫자를 얼마든지 올릴 수 있다(리뷰 지적).
+    if (entity.by !== token) this.recordDex(p, entity.item);
     this._markDirty();
     return { item: entity, inventory: p.inventory };
   }
@@ -1519,7 +1555,12 @@ export class WorldState {
     for (const i of data.items || []) {
       if (!i || !i.id || !this.itemIds.has(String(i.item))) continue;
       const pos = this.clampPos(i.x, i.z);
-      this.items.set(String(i.id), { id: String(i.id), item: String(i.item), x: pos.x, z: pos.z, at: Number(i.at) || 0 });
+      this.items.set(String(i.id), {
+        id: String(i.id), item: String(i.item), x: pos.x, z: pos.z,
+        at: Number(i.at) || 0,
+        // 옛 상태 파일에는 by가 없다 — 없으면 "남이 버린 것"으로 본다.
+        by: WorldState.validToken(i.by) ? String(i.by) : '',
+      });
     }
     for (const g of data.gatherables || []) {
       const target = this.gatherables[Number(g.index)];

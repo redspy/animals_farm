@@ -5,9 +5,10 @@
 // 벨·가방·부탁 상태가 갱신되는 흐름이 맞물려 있다. **정산 계산·하루 1회
 // 제한은 서버 유닛 테스트가 보고**, 여기서는 흐름과 UI를 본다.
 //
-// **부탁을 나무로 고정한다**: 데이터 사본(AF_DATA_DIR)에서 요구 아이템을
-// wood로 바꿔 서버를 띄운다. 실제 데이터는 물고기·벌레도 요구할 수 있어서,
-// 테스트가 그 흐름을 끝까지 볼 수 없다(밤에만 나오는 것도 있다).
+// **부탁을 나무 2개로 고정한다**: 데이터 사본(AF_DATA_DIR)에서 요구를 바꿔
+// 서버를 띄운다. 실제 데이터의 부탁은 전부 시간 제한이 없는 아이템이지만
+// (조개·농어 등) 스폰 위치가 멀어 테스트가 오래 걸리고, 어떤 부탁이 뽑히는지에
+// 따라 왕복 거리가 달라져 판정이 흔들린다.
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';

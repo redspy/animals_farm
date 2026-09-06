@@ -39,7 +39,13 @@ func setup(data: Dictionary) -> void:
 	label = String(data.get("label", id))
 	species = String(data.get("species", "cat"))
 	base_position = Vector3(float(data.get("x", 0.0)), 0.0, float(data.get("z", 0.0)))
-	wander_radius = clampf(float(data.get("wander_radius", 3.0)), 0.0, 8.0)
+	# 유효범위의 단일 출처는 데이터의 limits다(AGENTS.md 밸런스 규칙) — 여기에
+	# 상한을 박으면 데이터에서 바꿔도 클라이언트만 안 따라간다.
+	var limits: Dictionary = DataFiles.load_dict("res://data/npcs.json").get("limits", {})
+	wander_radius = Balance.clamp_value(
+		float(data.get("wander_radius", 3.0)),
+		limits.get("wander_radius", null),
+		"npcs.%s.wander_radius" % id, "distance")
 	_dialogue = data.get("dialogue", {}) as Dictionary
 	_greet = _dialogue.get("greet", []) as Array
 	# 위상은 id에서 뽑는다 — 세 마리가 같은 리듬으로 움직이면 한 몸처럼 보인다.

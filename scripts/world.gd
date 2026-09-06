@@ -1993,15 +1993,20 @@ func _on_npc_done(npc_id: String, reward: int, given: Dictionary, bells: int,
 	_persist()
 
 ## 정산 거절. 부족한 경우엔 **몇 개 부족한지** 보여준다.
-func _on_npc_error(code: String, message: String, need: Dictionary) -> void:
-	if code == "not_enough":
+func _on_npc_error(code: String, message: String, need: Dictionary, state: Dictionary) -> void:
+	# 서버가 함께 보낸 최신 상태로 먼저 갱신한다 — 자정을 넘겨 어제 상태로
+	# 굳어 있었다면 여기서 풀린다.
+	if typeof(state) == TYPE_DICTIONARY and not state.is_empty():
+		_apply_npc_state(state)
+	if code == "not_enough" and not need.is_empty():
 		_show_toast("%s %d개가 필요하다 (%d개 있음)" % [
 			_label_of(String(need.get("item", ""))),
 			int(need.get("count", 0)), int(need.get("have", 0))])
 	else:
 		_show_toast(message)
+	# **모든 거절에서 버튼을 다시 살린다.** 누른 즉시 잠그기 때문에(연타 방지)
+	# 살리는 경로가 빠지면 회색 버튼으로 굳어 대화창을 닫고 다시 탭해야 한다.
 	if _npc_ui != null and is_instance_valid(_npc_ui) and not _talking.is_empty():
-		# 버튼을 다시 살려 준다(눌렀는데 아무 일도 없는 상태로 굳지 않게).
 		var npc := _npc_by_id(_talking)
 		if npc != null:
 			_talk_to(npc)
@@ -2098,6 +2103,7 @@ func _start_net() -> void:
 	_net.gathered.connect(_on_server_gathered)
 	_net.npc_done.connect(_on_npc_done)
 	_net.npc_error.connect(_on_npc_error)
+	_net.npc_state.connect(_apply_npc_state)
 	_net.inventory_received.connect(_on_inventory)
 	_net.sold.connect(_on_sold)
 	_net.rename_received.connect(_on_rename)
