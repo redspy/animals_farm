@@ -25,6 +25,10 @@ var _hooks: TestHooks
 func _ready() -> void:
 	_hooks = TestHooks.new()
 	add_child(_hooks)
+	# **가방 화면 위에 뜬다.** 같은 레이어(기본 1)에 두면 그리는 순서는 위여도
+	# 입력은 먼저 만들어진 가방이 먹어서, 이 화면의 버튼을 눌러도 가방의
+	# 버튼(판매 등)이 눌린다(실측: 색 견본을 탭했는데 물건이 팔렸다).
+	layer = 5
 
 	# 뒤를 탭하면 닫힌다(시트 밖 탭 = 닫기, 이모티콘 시트와 같은 규칙).
 	var dim := Button.new()

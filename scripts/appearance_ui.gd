@@ -62,6 +62,10 @@ func setup(choices: Dictionary, custom: Dictionary, effective: Dictionary, token
 func _ready() -> void:
 	_hooks = TestHooks.new()
 	add_child(_hooks)
+	# **가방 화면 위에 뜬다.** 같은 레이어(기본 1)에 두면 그리는 순서는 위여도
+	# 입력은 먼저 만들어진 가방이 먹어서, 이 화면의 버튼을 눌러도 가방의
+	# 버튼(판매 등)이 눌린다(실측: 색 견본을 탭했는데 물건이 팔렸다).
+	layer = 5
 
 	var dim := Button.new()
 	dim.flat = true
@@ -322,3 +326,18 @@ func close() -> void:
 		committed.emit(_custom.duplicate(true))
 	closed.emit()
 	queue_free()
+
+## **확정하지 않고** 닫는다(토큰 이전처럼 이 캐릭터가 바뀌는 경우).
+##
+## 왜 필요한가: close()는 바뀐 외형을 committed로 보내는데, 토큰을 갈아끼운
+## 뒤에 그것이 나가면 **새 토큰 슬롯에 옛 외형이 저장되고 옛 소켓으로 전송**된다.
+func discard() -> void:
+	closed.emit()
+	queue_free()
+
+## 불러오기가 거절됐을 때 2단 확인을 처음 상태로 되돌린다 — 그러지 않으면
+## 다음 붙여넣기는 한 번 누름으로 즉시 실행된다(확인이 무력화된다).
+func reset_import() -> void:
+	_import_pending = false
+	if _import_confirm != null:
+		_import_confirm.text = "불러오기"

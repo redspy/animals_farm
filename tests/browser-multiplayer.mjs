@@ -710,20 +710,40 @@ const lookOpen = await a.page.waitForFunction(
 ).then(() => true).catch(() => false);
 check(lookOpen, '가방 화면의 [꾸미기]로 꾸미기 화면이 열린다');
 
-// 옷색 견본 중 두 번째를 고른다(첫 번째는 이미 고른 색일 수 있다).
-const outfitKey = await a.page.evaluate(() => Object.keys(window.afTest?.points ?? {})
-  .filter((k) => k.startsWith('look_outfit_')).sort()[1] ?? null);
-check(!!outfitKey, `옷색 견본이 보인다 (${outfitKey})`);
-if (outfitKey) {
-  await tapGodot(a.page, outfitKey);
-  await a.page.waitForTimeout(400);
+// 옷색 견본을 **숫자 순서로** 고른다(사전순으로 뽑으면 옵션이 10개를 넘을 때
+// look_outfit_10이 뽑힌다 — 확장 지점에 걸린다).
+const outfitKeys = await a.page.evaluate(() => Object.keys(window.afTest?.points ?? {})
+  .filter((k) => k.startsWith('look_outfit_'))
+  .sort((x, y) => Number(x.split('_').pop()) - Number(y.split('_').pop())));
+check(outfitKeys.length >= 2, `옷색 견본이 보인다 (${outfitKeys.length}개)`);
+if (outfitKeys.length >= 2) {
+  // **화면에 반영됐는지**를 본다. 서버 방송만 확인하면 스프라이트 재적용을
+  // 빼먹어도 통과한다(실제로 그랬다 — setup()은 이미 만들어진 스프라이트에
+  // 아무 일도 하지 않는다).
+  const myLook = () => a.page.evaluate(() => String(window.afTest?.state?.myLook ?? ''));
+  const remoteLook = () => b.page.evaluate(() => String(window.afTest?.state?.remoteLook ?? ''));
+  const beforeMine = await myLook();
+  const beforeRemote = await remoteLook();
+  await tapGodot(a.page, outfitKeys[1]);
+  const mineChanged = await a.page.waitForFunction(
+    (prev) => String(window.afTest?.state?.myLook ?? '') !== prev && String(window.afTest?.state?.myLook ?? '') !== '',
+    beforeMine, { timeout: 8000 },
+  ).then(() => true).catch(() => false);
+  check(mineChanged, `고르는 즉시 내 캐릭터에 반영된다 (${beforeMine} → ${await myLook()})`);
   // 확정은 닫을 때 서버로 간다 — 색을 훑는 동안 방송을 도배하지 않는다.
   await tapGodot(a.page, 'lookClose');
   const look = await waitFor(
     (m) => m.t === 'appearance' && m.token === tokenA && m.custom && m.custom.outfit,
     'A의 외형 변경이 브로드캐스트됨');
   check(!!look, `A의 외형이 서버를 거쳐 전달됨 (${look && JSON.stringify(look.custom)})`);
-  await b.page.waitForTimeout(800);
+  const remoteChanged = await b.page.waitForFunction(
+    (prev) => {
+      const now = String(window.afTest?.state?.remoteLook ?? '');
+      return now !== '' && now !== prev;
+    },
+    beforeRemote, { timeout: 10000 },
+  ).then(() => true).catch(() => false);
+  check(remoteChanged, `B 화면의 A 스프라이트 색도 바뀐다 (${beforeRemote} → ${await remoteLook()})`);
   await b.page.screenshot({ path: `${OUT}/mp-15-B화면에A외형.png` });
 }
 
@@ -733,11 +753,20 @@ await a.page.keyboard.press('KeyI');
 await a.page.waitForFunction(() => window.afTest?.points?.invLook != null, null, { timeout: 8000 });
 await tapGodot(a.page, 'invLook');
 await a.page.waitForFunction(() => window.afTest?.points?.tokenReveal != null, null, { timeout: 8000 });
-await tapGodot(a.page, 'tokenImport');   // 빈 칸으로 누르면 안내만 나온다
-await a.page.waitForTimeout(400);
-const stillHere = await a.page.evaluate(() => String(window.afTest?.state?.myToken ?? ''));
-check(stillHere === '' || stillHere === undefined || true,
-  '빈 토큰으로 불러오기를 눌러도 아무 일이 없다');
+// 잘못된 토큰을 넣고 두 번 눌러도 **캐릭터가 바뀌지 않아야 한다**(형식 검사).
+// 예전 판정(`|| true`)은 항상 참이라 아무것도 검증하지 않았다.
+const lookBefore = await a.page.evaluate(() => String(window.afTest?.state?.myLook ?? ''));
+await tapGodot(a.page, 'tokenField');
+await a.page.keyboard.type('not-a-uuid', { delay: 20 });
+await tapGodot(a.page, 'tokenImport');   // 1단: 경고
+await a.page.waitForTimeout(300);
+await tapGodot(a.page, 'tokenImport');   // 2단: 실행 시도 → 형식 거절
+await a.page.waitForTimeout(1200);
+const lookAfter = await a.page.evaluate(() => String(window.afTest?.state?.myLook ?? ''));
+check(lookAfter === lookBefore && lookAfter !== '',
+  `잘못된 토큰으로는 캐릭터가 바뀌지 않는다 (${lookBefore} → ${lookAfter})`);
+const stillOpen = await a.page.evaluate(() => window.afTest?.points?.tokenReveal != null);
+check(stillOpen, '거절되면 꾸미기 화면이 그대로 열려 있다');
 await a.page.screenshot({ path: `${OUT}/mp-16-꾸미기.png` });
 await tapGodot(a.page, 'lookClose');
 await a.page.waitForTimeout(300);

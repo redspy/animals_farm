@@ -114,7 +114,8 @@ func apply_custom(custom: Dictionary) -> void:
 	_custom = custom.duplicate(true)
 	if sprite == null:
 		return
-	var activity := sprite.activity_id()
-	var trick := sprite.trick_id()
-	sprite.setup(_merged_look())
-	sprite.set_activity(activity, trick)
+	# 프리셋을 모르는 경우(데이터에서 사라진 프리셋 id)는 건드리지 않는다 —
+	# custom 키만 든 딕셔너리를 넣으면 나머지 색이 기본값으로 떨어진다.
+	if _preset.is_empty():
+		return
+	sprite.apply_look(_merged_look())

@@ -96,8 +96,11 @@ func set_move_dir(dir: Vector2) -> void:
 func facing() -> String:
 	return _current_facing
 
-## 운동 모습으로 바꾼다. kind가 빈 문자열이면 원래 모습으로 돌아온다.
-## trick은 줄넘기에만 쓰인다(모아 뛰기/이중 뛰기/토드/엇걸어 풀어 뛰기).
+## 지금 쓰고 있는 외형 요약(테스트 판정용). 색을 문자열로 내보내면 E2E가
+## "방송됐는가"가 아니라 **화면에 반영됐는가**를 볼 수 있다.
+func look_signature() -> String:
+	return "%s|%s|%s" % [_hair_style, _c_skin.to_html(false), _c_torso.to_html(false)]
+
 ## 지금 활동·기술 — 외형만 바꿔 다시 만들 때 상태를 잃지 않으려고 읽는다.
 func activity_id() -> String:
 	return _activity
@@ -105,6 +108,8 @@ func activity_id() -> String:
 func trick_id() -> String:
 	return _trick
 
+## 운동 모습으로 바꾼다. kind가 빈 문자열이면 원래 모습으로 돌아온다.
+## trick은 줄넘기에만 쓰인다(모아 뛰기/이중 뛰기/토드/엇걸어 풀어 뛰기).
 func set_activity(kind: String, trick: String = "") -> void:
 	if kind == _activity and trick == _trick:
 		return
@@ -132,7 +137,11 @@ func _apply_frames() -> void:
 		play("idle_" + _current_facing)
 
 # --- 내부 로직 ---
-func _ready() -> void:
+## 프리셋에서 색·머리 모양을 계산한다. **트리에 붙은 뒤에도 다시 부를 수 있어야
+## 한다** — 예전에는 이 블록이 `_ready()` 안에만 있어서, 꾸미기에서 색을 골라도
+## 이미 만들어진 스프라이트에는 아무 일도 일어나지 않았다(setup()은 값만
+## 저장한다). 프레임은 (활동, 기술)별로 캐시되므로 색이 바뀌면 캐시도 버린다.
+func _resolve_colors() -> void:
 	if not _is_setup:
 		push_warning("setup()이 호출되지 않았습니다. 기본 외형으로 동작합니다.")
 		_c_skin = Palette.color("character", "skin")
@@ -148,15 +157,34 @@ func _ready() -> void:
 		var outfit_key: String = _preset.get("outfit", "shirt")
 		_hair_style = _preset.get("hair", "hair_short")
 		_gender = _preset.get("gender", "male")
-		
+
 		_c_skin = Palette.color("character", skin_key)
 		_c_skin_dark = Color(_c_skin.r * SHADE_COEFF, _c_skin.g * SHADE_COEFF, _c_skin.b * SHADE_COEFF, _c_skin.a)
-		
+
 		_c_torso = Palette.color("character", outfit_key)
 		_c_torso_dark = Color(_c_torso.r * SHADE_COEFF, _c_torso.g * SHADE_COEFF, _c_torso.b * SHADE_COEFF, _c_torso.a)
-		
+
 		_c_bottom = _c_torso
 		_c_bottom_dark = _c_torso_dark
+
+## 외형을 **지금** 갈아 끼운다(꾸미기·서버 브로드캐스트·세이브 복원 공통).
+##
+## setup()과 다른 점: setup()은 트리에 붙기 전에 값만 넣는 용도이고, 이 함수는
+## 색을 다시 계산하고 프레임 캐시를 버려 화면까지 반영한다. 하고 있던 활동은
+## 그대로 유지된다(프레임만 다시 만든다).
+func apply_look(preset: Dictionary) -> void:
+	if preset.is_empty():
+		return
+	_preset = preset
+	_is_setup = true
+	if not is_inside_tree():
+		return   # _ready가 어차피 계산한다
+	_resolve_colors()
+	_frames_cache.clear()
+	_apply_frames()
+
+func _ready() -> void:
+	_resolve_colors()
 
 	_c_rope = Palette.color("character", "rope")
 	_c_bike_frame = Palette.color("character", "bike_frame")

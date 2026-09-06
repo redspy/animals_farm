@@ -156,6 +156,8 @@ var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화�
 var _custom: Dictionary = {}
 var _appearance_choices: Dictionary = {}
 var _look_ui: AppearanceUI = null
+## 서버가 없을 때 바꾼 외형 — 재접속하면 흘려보낸다(_pending_gathers와 같은 결).
+var _pending_custom: Dictionary = {}
 
 ## 달리기 경주 상태(서버가 소유). 국면·참가자 진행·남은 시간을 그린다.
 var _race: Dictionary = {}
@@ -288,7 +290,8 @@ func _build_world() -> void:
 	if typeof(saved_custom) == TYPE_DICTIONARY and not (saved_custom as Dictionary).is_empty():
 		_custom = (saved_custom as Dictionary).duplicate(true)
 		if _player.sprite != null:
-			_player.sprite.setup(_merged_look(_custom))
+			_player.sprite.apply_look(_merged_look(_custom))
+	_publish_look_state()
 
 	_my_extras = AvatarExtras.new()
 	_player.add_child(_my_extras)
@@ -2176,6 +2179,37 @@ func _on_npc_error(code: String, message: String, need: Dictionary, state: Dicti
 		if npc != null:
 			_talk_to(npc)
 
+## 외형 훅을 **값이 바뀔 때** 게시한다.
+##
+## `_publish_test_points()`는 기동 때 한 번만 도는 함수다(그 안에서 훅에 컨트롤을
+## 등록한다). 여기에만 외형을 넣어 뒀더니 초기값이 영원히 남아, 스프라이트는
+## 실제로 바뀌는데 테스트는 "반영되지 않았다"고 읽었다.
+func _publish_look_state() -> void:
+	if _hooks == null:
+		return
+	_hooks.set_state("myLook", _look_signature(_player.sprite if _player != null else null))
+	_hooks.set_state("remoteLook", _remote_look_signature())
+	_hooks.publish_now()
+
+## 스프라이트가 **실제로 쓰고 있는** 외형 요약(테스트 판정용).
+func _look_signature(sprite: PlayerSprite) -> String:
+	if sprite == null:
+		return ""
+	return sprite.look_signature()
+
+## **남의 캐릭터 전부**의 외형 요약 — 2탭 테스트가 이걸로 판정한다.
+##
+## 하나만 골라 내보내면 관찰자 소켓처럼 외형을 바꾸지 않는 접속이 먼저 잡혀서
+## "안 바뀐다"로 읽힌다(실측). 토큰 앞 4자리로 구분해 전부 담는다.
+func _remote_look_signature() -> String:
+	var parts: Array[String] = []
+	for token: String in _remotes.keys():
+		var remote: RemotePlayer = _remotes[token]
+		if remote != null and is_instance_valid(remote) and remote.sprite != null:
+			parts.append("%s:%s" % [token.substr(0, 4), remote.sprite.look_signature()])
+	parts.sort()
+	return ",".join(parts)
+
 ## 프리셋 위에 커스터마이즈를 덮은 외형 딕셔너리.
 func _merged_look(custom: Dictionary) -> Dictionary:
 	var merged := _preset.duplicate(true)
@@ -2187,11 +2221,14 @@ func _merged_look(custom: Dictionary) -> Dictionary:
 func _apply_my_custom(custom: Dictionary, persist: bool) -> void:
 	_custom = custom.duplicate(true)
 	_slot["custom"] = _custom
+	# 접속자 바의 내 초상화도 스프라이트에서 뜬 것이다.
+	_refresh_roster.call_deferred()
 	if _player != null and _player.sprite != null:
-		# 스프라이트를 다시 만들면 지금 하고 있는 운동 모습이 사라진다 —
-		# 색만 바꾸고 활동을 다시 적용한다.
-		_player.sprite.setup(_merged_look(_custom))
-		_player.sprite.set_activity(_activity, _trick)
+		# **apply_look을 쓴다.** setup()은 값만 저장하므로 이미 트리에 붙은
+		# 스프라이트에는 아무 일도 일어나지 않는다(색은 _ready에서 한 번만
+		# 계산되고 프레임은 캐시된다) — 예전에는 색을 골라도 화면이 그대로였다.
+		_player.sprite.apply_look(_merged_look(_custom))
+	_publish_look_state()
 	if persist:
 		_persist()
 
@@ -2204,6 +2241,10 @@ func _on_appearance(token: String, custom: Dictionary) -> void:
 		return
 	var remote: RemotePlayer = _remotes[token]
 	remote.apply_custom(custom)
+	_publish_look_state()
+	# 접속자 바의 초상화도 스프라이트에서 뜬 것이라 같이 갱신해야 한다 —
+	# 그러지 않으면 월드의 캐릭터만 바뀌고 바에는 옛 색이 남는다.
+	_refresh_roster.call_deferred()
 
 ## 꾸미기 화면을 연다(가방 화면의 [꾸미기] 버튼).
 func _open_look() -> void:
@@ -2217,7 +2258,13 @@ func _open_look() -> void:
 	_look_ui.committed.connect(func(custom: Dictionary) -> void:
 		_apply_my_custom(custom, true)
 		if _net != null and _net.connected:
-			_net.send_appearance(custom))
+			_net.send_appearance(custom)
+		else:
+			# 서버가 없으면 보관했다가 재접속 때 흘려보낸다 — 그러지 않으면
+			# welcome의 custom(옛 값)이 덮어써서 바꾼 외형이 사라진다
+			# (오프라인 채집을 _pending_gathers로 처리하는 것과 같은 이유).
+			_pending_custom = custom.duplicate(true)
+			_show_toast("서버에 연결되면 외형이 저장됩니다"))
 	_look_ui.token_import_requested.connect(_on_token_import)
 	_look_ui.closed.connect(func() -> void:
 		_look_ui = null
@@ -2231,28 +2278,42 @@ func _on_token_import(token: String) -> void:
 	var clean := token.strip_edges()
 	if not _is_uuid(clean):
 		_show_toast("토큰 형식이 아닙니다")
+		if _look_ui != null and is_instance_valid(_look_ui):
+			_look_ui.reset_import()
 		return
 	if clean == String(_slot.get("token", "")):
 		_show_toast("이미 이 토큰으로 접속해 있습니다")
+		if _look_ui != null and is_instance_valid(_look_ui):
+			_look_ui.reset_import()
 		return
 	_slot["token"] = clean
-	# 위치·가방·벨은 서버가 소유하므로 여기서 비운다 — 남겨 두면 옛 캐릭터의
-	# 값이 잠깐 보이고 서버 응답으로 덮인다(둘이 갈리는 것처럼 보인다).
+	# 위치·가방·벨·외형은 서버가 소유하므로 **전부** 비운다 — 남겨 두면 옛
+	# 캐릭터의 값이 잠깐 보이고 서버 응답으로 덮인다(둘이 갈리는 것처럼 보인다).
+	# pos를 안 비우면 _persist가 현재 좌표를 다시 써서 새 토큰이 옛 자리에서
+	# 시작하고, 서버 연결이 실패하면 계속 그 상태로 남는다.
 	_slot["inventory"] = {}
 	_slot["bells"] = 0
+	_slot["custom"] = {}
+	_slot["pos"] = {}
+	_custom = {}
 	_persist()
 	if _look_ui != null and is_instance_valid(_look_ui):
-		_look_ui.close()
+		# **확정 없이** 닫는다 — close()는 바뀐 외형을 서버로 보내는데, 그러면
+		# 새 토큰 슬롯에 옛 외형이 저장되고 옛 소켓으로 전송된다.
+		_look_ui.discard()
 	_show_toast("토큰을 가져왔습니다 — 다시 접속합니다")
 	# 재접속은 장면을 다시 여는 것이 가장 단순하고 확실하다(연결·상태·스프라이트
 	# 를 부분적으로 갈아끼우면 어디까지 옛 캐릭터인지 알기 어렵다).
 	get_tree().reload_current_scene.call_deferred()
 
-## UUID 형식인지(서버와 같은 규칙 — 형식만 본다).
+## UUID 형식인지(서버와 같은 규칙 — 형식만 본다). 정규식은 한 번만 컴파일한다.
+static var _uuid_re: RegEx = null
+
 func _is_uuid(text: String) -> bool:
-	var re := RegEx.new()
-	re.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-	return re.search(text) != null
+	if _uuid_re == null:
+		_uuid_re = RegEx.new()
+		_uuid_re.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+	return _uuid_re.search(text) != null
 
 ## 도감을 연다(가방 화면의 [도감] 버튼).
 func _open_dex() -> void:
@@ -2416,7 +2477,16 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 	if typeof(you.get("appearanceChoices")) == TYPE_DICTIONARY:
 		_appearance_choices = you["appearanceChoices"]
 	if typeof(you.get("custom")) == TYPE_DICTIONARY:
-		_apply_my_custom(you["custom"], false)
+		# 오프라인에서 바꿔 둔 것이 있으면 **그것이 이긴다**(방금 사용자가 고른
+		# 값이다). 서버에도 보내 두 곳을 맞춘다.
+		if not _pending_custom.is_empty():
+			var pending := _pending_custom
+			_pending_custom = {}
+			_apply_my_custom(pending, true)
+			if _net != null and _net.connected:
+				_net.send_appearance(pending)
+		else:
+			_apply_my_custom(you["custom"], false)
 	_refresh_hud()
 	_refresh_inventory_ui()
 	var sx := float(world_cfg.get("size_x", _world_size.x))
@@ -2448,6 +2518,7 @@ func _on_player_joined(player: Dictionary) -> void:
 	remote.setup(player, _presets.get(String(player.get("preset", "")), {}))
 	add_child(remote)
 	_remotes[token] = remote
+	_publish_look_state.call_deferred()
 	# 입장 문구는 서버가 system 메시지로 모두에게 보낸다 — 여기서 또 넣으면
 	# 두 번 표시된다.
 	# 스프라이트 프레임은 _ready에서 만들어지므로 한 프레임 뒤에 초상화를 읽는다.
@@ -3155,6 +3226,9 @@ func _publish_test_points() -> void:
 		if c != null and is_instance_valid(c):
 			_hooks.track(key, c)
 	_hooks.set_state("uiZoom", UiScale.zoom())
+	# 외형은 "서버가 방송했는가"가 아니라 **화면에 반영됐는가**를 봐야 한다 —
+	# 스프라이트 재적용을 빼먹어도 방송은 정상이었다(리뷰 지적).
+	_publish_look_state()
 	# 전체화면 상태는 값이 바뀔 때만 갱신되므로(폴링 비용 절약) 처음 한 번은
 	# 여기서 게시한다 — 훅은 _build_hud 뒤에 생겨 그때는 null이었다.
 	_hooks.set_state("fullscreen", 1 if _fullscreen_on else 0)
