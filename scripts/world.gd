@@ -157,7 +157,7 @@ var _race: Dictionary = {}
 ## 남은 시간은 **받은 시각 기준으로 내가 센다** — 서버가 매 틱 보내면 10Hz
 ## 방송이 되고, 절대 시각을 받으면 기기 시계 차이만큼 어긋난다.
 var _race_remain := 0.0
-var _race_countdown_label: Label = null
+var _race_was_mine := false
 
 ## 이웃 동물. 위치·대사는 데이터가, 부탁 상태와 정산은 서버가 소유한다.
 var _npcs: Array[Npc] = []
@@ -1942,7 +1942,13 @@ func _on_race(race: Dictionary, results: Array) -> void:
 				_show_toast("출발!")
 			"finished":
 				_show_race_results(results)
-	_refresh_exercise_ui()
+	# 버튼 열은 **국면이나 참가 여부가 바뀔 때만** 다시 만든다. 경주 상태는
+	# 러너가 체크포인트를 지날 때마다 오므로, 매번 재생성하면 한 판에 수십 번
+	# 버튼이 사라지고 다시 생긴다(마침 누르던 버튼이 없어지는 입력 유실).
+	var mine := _in_race()
+	if phase != prev or mine != _race_was_mine:
+		_race_was_mine = mine
+		_refresh_exercise_ui()
 	_refresh_zone_label()
 	if _hooks != null:
 		_hooks.set_state("racePhase", phase)
@@ -3210,7 +3216,7 @@ func _process(delta: float) -> void:
 	_update_camera(CAMERA_FOLLOW_SPEED * delta)
 	_update_fishing(delta)
 	# 경주 남은 시간은 **내가 센다**(서버가 매 틱 보내면 10Hz 방송이 된다).
-	if not String(_race.get("phase", "idle")).is_empty() and _race_remain > 0.0:
+	if String(_race.get("phase", "idle")) != "idle" and _race_remain > 0.0:
 		_race_remain = maxf(_race_remain - delta, 0.0)
 	_update_resync(delta)
 	_poll_resume(delta)

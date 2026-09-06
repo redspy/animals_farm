@@ -239,6 +239,11 @@ wss.on('connection', (ws) => {
     sockets.delete(ws.token);
     const leaving = world.players.get(ws.token);
     world.leave(ws.token);
+    // **경주 참가자였으면 빼낸다.** leave()는 레코드를 남기므로(online=false)
+    // 그 러너가 굳은 좌표로 영원히 "달리는 중"이 되어, 완주자가 있어도
+    // 타임아웃 90초를 다 채웠다. 혼자 참가한 사람이 탭을 닫으면 운동장이
+    // 약 118초 동안 race_busy로 잠겼다(리뷰 지적).
+    if (world.raceDrop(ws.token)) broadcastRace(true);
     // 축구하던 사람이 마지막이었으면 공도 치운다.
     if (world.refreshBall()) broadcastBall(true);
     broadcast({ t: 'leave', token: ws.token });
@@ -294,6 +299,7 @@ function handle(ws, msg) {
       sockets.delete(oldToken);
       const gone = world.players.get(oldToken);
       world.leave(oldToken);
+      if (world.raceDrop(oldToken)) broadcastRace(true);
       broadcast({ t: 'leave', token: oldToken });
       if (gone) {
         broadcast({ t: 'system', text: `${gone.name} 님이 나갔습니다`, kind: 'leave', token: oldToken });
@@ -317,7 +323,13 @@ function handle(ws, msg) {
     });
     sendTo(ws, { t: 'snapshot', ...world.snapshot() });
     // 새로 들어온 사람도 진행 중인 경주를 봐야 한다.
-    if (world.race.phase !== 'idle') sendTo(ws, { t: 'race', race: world.raceState() });
+    if (world.race.phase !== 'idle') {
+      // 결과 국면이면 **결과까지** 보낸다 — 없으면 클라이언트가 "경주가
+      // 끝났습니다"만 띄우고 등수·보상을 못 본다.
+      const msg = { t: 'race', race: world.raceState() };
+      if (world.race.phase === 'finished') msg.results = world.raceResults();
+      sendTo(ws, msg);
+    }
     lastParkSent = null;   // 새 접속자에게 다음 변화가 반드시 가도록
     broadcast({
       t: 'join',
@@ -577,7 +589,11 @@ setInterval(() => {
   if (world.tickPark(TICK_MS / 1000)) broadcastPark(false);
   // 경주 상태 기계도 같은 틱에서 돈다 — 체크포인트 통과를 보려면 최신 좌표가
   // 필요하고, 그 좌표가 이 틱에서 방송된다.
-  if (world.tickRace()) broadcastRace(true);
+  // **매 틱 호출한다.** tickRace가 true를 줄 때만 부르면 move() 안에서 세팅되는
+  // 실격(dq)은 다른 러너가 체크포인트를 지날 때까지 방송되지 않아, 실격된
+  // 사람이 모르고 계속 달린다(리뷰 지적). 변화 감지는 broadcastRace가 한다.
+  world.tickRace();
+  broadcastRace(false);
 }, TICK_MS);
 
 // **자정을 넘기면 접속자에게 부탁 상태를 다시 보낸다.**
