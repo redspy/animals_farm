@@ -12,8 +12,10 @@ class_name Balance
 const FALLBACK := {
 	"price": [0.0, 1000000.0],
 	"duration_sec": [1.0, 86400.0],
-	# 월드 단위 거리(배회 반경 등). 섬 반지름을 넘는 값은 의미가 없다.
-	"distance": [0.0, 40.0],
+	# NPC 배회 반경. **서버 폴백과 같아야 한다**(server/world.js의
+	# npcLimits.wander_radius 기본값 [0, 8]) — 클라이언트가 더 크게 그리면
+	# 눈앞의 NPC인데 서버는 계속 too_far로 거절한다.
+	"wander_radius": [0.0, 8.0],
 }
 
 ## 범위 배열이 쓸 수 있는 형태인지 검증한다([lo, hi] 숫자 2개, lo <= hi).

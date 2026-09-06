@@ -45,7 +45,7 @@ func setup(data: Dictionary) -> void:
 	wander_radius = Balance.clamp_value(
 		float(data.get("wander_radius", 3.0)),
 		limits.get("wander_radius", null),
-		"npcs.%s.wander_radius" % id, "distance")
+		"npcs.%s.wander_radius" % id, "wander_radius")
 	_dialogue = data.get("dialogue", {}) as Dictionary
 	_greet = _dialogue.get("greet", []) as Array
 	# 위상은 id에서 뽑는다 — 세 마리가 같은 리듬으로 움직이면 한 몸처럼 보인다.

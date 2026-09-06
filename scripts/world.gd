@@ -156,6 +156,8 @@ var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화�
 var _npcs: Array[Npc] = []
 ## 서버가 알려준 NPC별 상태: {npc_id: {done, request:{item,count}, reward}}
 var _npc_state: Dictionary = {}
+## 월드 아이템별 "버린 사람" — 도감 규칙을 서버와 맞추는 데 쓴다.
+var _drop_by: Dictionary = {}
 ## 도감(아이템별 누적 획득 수) — 서버가 단일 출처다.
 var _dex: Dictionary = {}
 ## 지금 대화창을 열어 둔 이웃 id.
@@ -2291,6 +2293,9 @@ func _on_item_added(item: Dictionary) -> void:
 	add_child(node)
 	_drops[id] = node
 	_drop_items[id] = String(item.get("item", ""))
+	# 누가 버렸는지 기억한다 — 내가 버린 것을 내가 주우면 도감에 세지 않는다
+	# (서버와 같은 규칙. 다르면 화면 도감만 올라가고 재접속에 되돌아간다).
+	_drop_by[id] = String(item.get("by", ""))
 
 func _on_item_removed(id: String, by: String) -> void:
 	# 내가 주운 것이면 도감에 올린다(서버도 같은 규칙으로 누적한다).
@@ -2298,6 +2303,9 @@ func _on_item_removed(id: String, by: String) -> void:
 	# 같은 값이 두 곳에 생긴다.
 	if by == String(_slot.get("token", "")):
 		var picked: String = _drop_items.get(id, "")
+		# 내가 버린 것을 내가 주운 경우는 세지 않는다(서버와 같은 규칙).
+		if String(_drop_by.get(id, "")) == by:
+			picked = ""
 		if not picked.is_empty():
 			_dex[picked] = int(_dex.get(picked, 0)) + 1
 			_refresh_dex_ui()
@@ -2307,6 +2315,7 @@ func _on_item_removed(id: String, by: String) -> void:
 	var item_id: String = _drop_items.get(id, "")
 	_drops.erase(id)
 	_drop_items.erase(id)
+	_drop_by.erase(id)
 	if by == String(_slot.get("token", "")):
 		_show_toast("%s 줍기!" % _label_of(item_id))
 

@@ -34,7 +34,10 @@ func setup(items_meta: Dictionary, dex: Dictionary, npcs: Array, npc_state: Dict
 	# **열려 있는 동안 다시 부르면 실제로 다시 그려야 한다.** 값만 대입하고
 	# _fill()을 _ready에서 한 번만 돌리면, resync로 상태가 바뀌어도 화면은
 	# 낡은 채로 남는다(리뷰 지적: 사실상 죽은 코드였다).
-	if is_node_ready():
+	#
+	# 단 **바뀐 게 없으면 다시 그리지 않는다.** 채집·줍기마다 셀 16개를
+	# queue_free하고 새로 만들면 도감을 열어 둔 채 채집할 때 매번 재생성된다.
+	if is_node_ready() and _signature() != _drawn:
 		_fill()
 
 func _ready() -> void:
@@ -140,7 +143,25 @@ func _select_tab(items: bool) -> void:
 		_npc_box.visible = not items
 	_fill_summary()
 
+## 지금 그려진 내용을 식별하는 문자열 — 바뀌었는지만 알면 되므로 가볍게 만든다.
+func _signature() -> String:
+	var parts: Array[String] = []
+	for id: Variant in _items_meta.keys():
+		var c := int(_dex.get(String(id), 0))
+		if c > 0:
+			parts.append("%s:%d" % [String(id), c])
+	for id: Variant in _npc_state.keys():
+		var s: Dictionary = _npc_state[id]
+		parts.append("%s:%s" % [String(id), "1" if bool(s.get("done", false)) else "0"])
+	return ",".join(parts)
+
+var _drawn := ""
+
 func _fill() -> void:
+	# **보고 있던 탭을 유지한다.** _fill 끝에서 무조건 아이템 탭으로 되돌리면,
+	# 이웃 탭을 보는 중에 나무 한 번 캐면 탭이 튄다(리뷰 지적).
+	var was_items := _grid == null or _grid.visible
+	_drawn = _signature()
 	# --- 아이템 탭 ---
 	for c in _grid.get_children():
 		_grid.remove_child(c)
@@ -216,7 +237,7 @@ func _fill() -> void:
 		_npc_box.add_child(row)
 		_hooks.track("dexNpc%d" % n_index, row)
 
-	_select_tab(true)
+	_select_tab(was_items)
 
 func _fill_summary() -> void:
 	if _summary == null:

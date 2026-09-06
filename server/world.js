@@ -1469,7 +1469,12 @@ export class WorldState {
       ball: this.ball.active
         ? { x: this.ball.x, z: this.ball.z, score: { ...this.score } }
         : null,
-      items: [...this.items.values()].map((i) => ({ id: i.id, item: i.item, x: i.x, z: i.z })),
+      // by(버린 사람)를 함께 보낸다 — 클라이언트가 "내가 버린 것"을 도감에서
+      // 빼려면 재접속·resync 뒤에도 그 정보가 있어야 한다(없으면 규칙이 두
+      // 곳에서 갈린다).
+      items: [...this.items.values()].map((i) => ({
+        id: i.id, item: i.item, x: i.x, z: i.z, by: i.by || '',
+      })),
       // 이미 캔 채집물을 새로 들어온 사람 화면에도 숨겨야 한다.
       gatherables: this.gatherableStates(),
     };

@@ -427,7 +427,13 @@ function handle(ws, msg) {
       const r = world.drop(ws.token, msg.item, msg.x, msg.z);
       if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
       sendTo(ws, { t: 'inventory', inventory: r.inventory });
-      broadcast({ t: 'item_add', item: r.item });
+      // 필드를 **골라** 보낸다(스냅샷과 같은 규칙). by는 클라이언트가 "내가
+      // 버린 것"을 구분해 도감에 세지 않는 데 쓴다 — 서버와 같은 규칙이어야
+      // 화면 도감과 서버 도감이 갈리지 않는다.
+      broadcast({
+        t: 'item_add',
+        item: { id: r.item.id, item: r.item.item, x: r.item.x, z: r.item.z, by: r.item.by },
+      });
       break;
     }
     case 'pickup': {
