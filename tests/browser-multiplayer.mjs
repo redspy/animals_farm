@@ -767,6 +767,13 @@ check(lookAfter === lookBefore && lookAfter !== '',
   `잘못된 토큰으로는 캐릭터가 바뀌지 않는다 (${lookBefore} → ${lookAfter})`);
 const stillOpen = await a.page.evaluate(() => window.afTest?.points?.tokenReveal != null);
 check(stillOpen, '거절되면 꾸미기 화면이 그대로 열려 있다');
+// 거절되면 **2단 확인이 초기화**돼야 한다 — 안 그러면 다음 붙여넣기가 한 번
+// 누름으로 실행된다. 버튼 문구를 직접 읽을 수 없으므로, 다시 한 번 눌러도
+// (즉 1단만 눌러도) 캐릭터가 바뀌지 않는 것으로 확인한다.
+await tapGodot(a.page, 'tokenImport');
+await a.page.waitForTimeout(800);
+const lookAfterSingle = await a.page.evaluate(() => String(window.afTest?.state?.myLook ?? ''));
+check(lookAfterSingle === lookBefore, '거절 뒤 한 번 누름으로는 실행되지 않는다(2단 확인 유지)');
 await a.page.screenshot({ path: `${OUT}/mp-16-꾸미기.png` });
 await tapGodot(a.page, 'lookClose');
 await a.page.waitForTimeout(300);

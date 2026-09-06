@@ -2202,11 +2202,15 @@ func _look_signature(sprite: PlayerSprite) -> String:
 ## 하나만 골라 내보내면 관찰자 소켓처럼 외형을 바꾸지 않는 접속이 먼저 잡혀서
 ## "안 바뀐다"로 읽힌다(실측). 토큰 앞 4자리로 구분해 전부 담는다.
 func _remote_look_signature() -> String:
+	# **토큰을 내보내지 않는다.** 토큰이 곧 신원이고 UI에서는 자기 토큰조차
+	# 가려서 보여주는데, 테스트 훅이 남의 토큰 앞자리를 JS 전역에 올리면 결이
+	# 어긋난다(TestHooks는 배포 웹 빌드에서도 켜져 있다). 정렬만 하면 판정에
+	# 충분하다 — 테스트는 "바뀌었는가"만 본다.
 	var parts: Array[String] = []
 	for token: String in _remotes.keys():
 		var remote: RemotePlayer = _remotes[token]
 		if remote != null and is_instance_valid(remote) and remote.sprite != null:
-			parts.append("%s:%s" % [token.substr(0, 4), remote.sprite.look_signature()])
+			parts.append(remote.sprite.look_signature())
 	parts.sort()
 	return ",".join(parts)
 
@@ -2260,10 +2264,13 @@ func _open_look() -> void:
 		if _net != null and _net.connected:
 			_net.send_appearance(custom)
 		else:
-			# 서버가 없으면 보관했다가 재접속 때 흘려보낸다 — 그러지 않으면
-			# welcome의 custom(옛 값)이 덮어써서 바꾼 외형이 사라진다
-			# (오프라인 채집을 _pending_gathers로 처리하는 것과 같은 이유).
+			# 서버가 없으면 **세이브에 표시를 남겨** 다음 접속에 흘려보낸다.
+			# 메모리 변수만 두면 "오프라인으로 바꾸고 탭을 닫았다가 서버가
+			# 살아난 뒤 다시 켜는" 흔한 경로에서 사라진다(리뷰 지적) —
+			# welcome이 서버의 옛 값으로 덮고 세이브까지 그 값으로 바뀐다.
 			_pending_custom = custom.duplicate(true)
+			_slot["custom_pending"] = true
+			_persist()
 			_show_toast("서버에 연결되면 외형이 저장됩니다"))
 	_look_ui.token_import_requested.connect(_on_token_import)
 	_look_ui.closed.connect(func() -> void:
@@ -2277,14 +2284,18 @@ func _open_look() -> void:
 func _on_token_import(token: String) -> void:
 	var clean := token.strip_edges()
 	if not _is_uuid(clean):
-		_show_toast("토큰 형식이 아닙니다")
 		if _look_ui != null and is_instance_valid(_look_ui):
-			_look_ui.reset_import()
+			# 안내는 화면 **안** 라벨로 준다 — 모달(layer 5) 뒤의 토스트는
+			# 가려서 읽히지 않는다(이 화면이 전용 라벨을 둔 이유와 같다).
+			_look_ui.reset_import("토큰 형식이 아닙니다(UUID 36자)")
+		else:
+			_show_toast("토큰 형식이 아닙니다")
 		return
 	if clean == String(_slot.get("token", "")):
-		_show_toast("이미 이 토큰으로 접속해 있습니다")
 		if _look_ui != null and is_instance_valid(_look_ui):
-			_look_ui.reset_import()
+			_look_ui.reset_import("이미 이 토큰으로 접속해 있습니다")
+		else:
+			_show_toast("이미 이 토큰으로 접속해 있습니다")
 		return
 	_slot["token"] = clean
 	# 위치·가방·벨·외형은 서버가 소유하므로 **전부** 비운다 — 남겨 두면 옛
@@ -2294,9 +2305,9 @@ func _on_token_import(token: String) -> void:
 	_slot["inventory"] = {}
 	_slot["bells"] = 0
 	_slot["custom"] = {}
-	_slot["pos"] = {}
 	_custom = {}
-	_persist()
+	# 위치는 _persist가 무조건 현재 좌표를 쓰므로 인자로 비우게 한다.
+	_persist(false)
 	if _look_ui != null and is_instance_valid(_look_ui):
 		# **확정 없이** 닫는다 — close()는 바뀐 외형을 서버로 보내는데, 그러면
 		# 새 토큰 슬롯에 옛 외형이 저장되고 옛 소켓으로 전송된다.
@@ -2477,11 +2488,17 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 	if typeof(you.get("appearanceChoices")) == TYPE_DICTIONARY:
 		_appearance_choices = you["appearanceChoices"]
 	if typeof(you.get("custom")) == TYPE_DICTIONARY:
-		# 오프라인에서 바꿔 둔 것이 있으면 **그것이 이긴다**(방금 사용자가 고른
-		# 값이다). 서버에도 보내 두 곳을 맞춘다.
-		if not _pending_custom.is_empty():
-			var pending := _pending_custom
+		# 오프라인에서 바꿔 둔 것이 있으면 **그것이 이긴다**(사용자가 고른 값이
+		# 서버의 옛 값보다 최신이다). 세이브의 표시도 함께 본다 — 그래야 탭을
+		# 닫았다 다시 켠 경우에도 살아난다.
+		var pending: Dictionary = _pending_custom
+		if pending.is_empty() and bool(_slot.get("custom_pending", false)):
+			var saved: Variant = _slot.get("custom", {})
+			if typeof(saved) == TYPE_DICTIONARY:
+				pending = (saved as Dictionary).duplicate(true)
+		if not pending.is_empty():
 			_pending_custom = {}
+			_slot["custom_pending"] = false
 			_apply_my_custom(pending, true)
 			if _net != null and _net.connected:
 				_net.send_appearance(pending)
@@ -3384,8 +3401,16 @@ func _update_drop_tags() -> void:
 		tag.visible = _player.position.distance_to(node.position) <= PICKUP_DISTANCE
 
 ## 슬롯에 현재 상태(위치·벨·가방)를 반영해 저장한다.
-func _persist() -> void:
-	_slot["pos"] = {"x": snappedf(_player.position.x, 0.01), "z": snappedf(_player.position.z, 0.01)}
+## 슬롯을 세이브에 쓴다.
+##
+## `store_pos`를 false로 주는 경우: **토큰 이전**. 그때는 위치를 비워야 하는데,
+## 여기서 무조건 현재 좌표를 다시 쓰면 비운 값이 되살아나 새 토큰 캐릭터가 옛
+## 자리에서 시작한다(서버 연결이 실패하면 계속 그 상태로 남는다).
+func _persist(store_pos: bool = true) -> void:
+	if store_pos:
+		_slot["pos"] = {"x": snappedf(_player.position.x, 0.01), "z": snappedf(_player.position.z, 0.01)}
+	else:
+		_slot["pos"] = {}
 	_slot["last_played_unix"] = int(Time.get_unix_time_from_system())
 	SaveManager.put_slot(_save, _slot_index, _slot)
 	SaveManager.save(_save)

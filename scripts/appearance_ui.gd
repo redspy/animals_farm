@@ -337,7 +337,11 @@ func discard() -> void:
 
 ## 불러오기가 거절됐을 때 2단 확인을 처음 상태로 되돌린다 — 그러지 않으면
 ## 다음 붙여넣기는 한 번 누름으로 즉시 실행된다(확인이 무력화된다).
-func reset_import() -> void:
+##
+## 안내도 함께 바꾼다: 버튼은 "불러오기"인데 힌트에 "정말 …사라집니다"가 남으면
+## 확인 대기 중인 것처럼 읽힌다.
+func reset_import(message: String = "") -> void:
 	_import_pending = false
 	if _import_confirm != null:
 		_import_confirm.text = "불러오기"
+	_toast(message)
