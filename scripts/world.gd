@@ -1932,6 +1932,19 @@ func _on_race(race: Dictionary, results: Array) -> void:
 	_race = race
 	_race_remain = float(race.get("remainMs", 0)) / 1000.0
 	var phase := String(race.get("phase", "idle"))
+	# **정렬 좌표를 내 아바타에 적용한다.** 서버가 카운트다운에서 출발선으로
+	# 옮기는데, 그 좌표를 화면이 모르면 최대 11유닛 어긋난 채 출발하고 그 차이가
+	# 첫 이동에서 속도 초과로 잡혀 **출발과 동시에 실격**된다. 놀이기구는
+	# 클라이언트가 좌석까지 걸어가서 앉으므로 이런 문제가 없었다.
+	if phase == "countdown" and _player != null:
+		var me := _my_race_runner()
+		if me.has("x") and me.has("z"):
+			var to := Vector3(float(me["x"]), 0.0, float(me["z"]))
+			if _player.position.distance_to(to) > 0.05:
+				_player.cancel_move_to()
+				_player.position = to
+				_update_camera(1.0)
+				_show_toast("출발선으로 이동했습니다")
 	if phase != prev:
 		match phase:
 			"lobby":

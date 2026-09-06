@@ -35,6 +35,8 @@ export const LIMITS = {
   // 상시 마진으로 달리는 것도 잡는다.
   RACE_SPEED_TOLERANCE: 1.25,
   RACE_OVERAGE_DQ: 3.0,
+  // 출발 직후 유예(ms). 정렬 좌표 적용이 한 틱 늦는 클라이언트를 위한 것.
+  RACE_GRACE_MS: 1200,
   // NPC 정산 간격 — 연타로 같은 부탁을 두 번 처리하려는 것을 막는다.
   NPC_MIN_INTERVAL_MS: 400,
   // 정산 허용 거리 = NPC 배회 반경 + 이 값. 클라이언트가 보는 NPC 위치는
@@ -316,7 +318,8 @@ export class WorldState {
 
     // 달리기 경주. 판정(체크포인트 순서·순위·보상)을 전부 서버가 갖는다.
     this.playgroundCfg = worldCfg.playground || {};
-    const raceCfg = (worldCfg.playground || {}).race || {};
+    const trackCfg = this.playgroundCfg.track || {};
+    const raceCfg = this.playgroundCfg.race || {};
     const raceLimits = raceCfg.limits || {};
     const rlim = (key, fallback) => raceLimits[key] || fallback;
     this.raceCfg = {
@@ -339,7 +342,14 @@ export class WorldState {
         rlim('finish_reward', [0, 1000])[0], rlim('finish_reward', [0, 1000])[1], 'race/finish_reward')),
       // 트랙 밴드(레인 안쪽 경계 비율). 체크포인트만으로는 인필드 횡단을 막지
       // 못한다 — 두 체크포인트 사이에 밴드를 벗어나면 다음 통과를 인정하지 않는다.
-      bandInner: Math.max(0.05, (Number(worldCfg.playground.track.outer_a) - Number(worldCfg.playground.track.lane) * 2) / Number(worldCfg.playground.track.outer_a)),
+      //
+      // **여기도 유효범위를 강제한다.** 예전에는 트랙 값을 무가드로 읽어서,
+      // outer_a가 없거나 문자열이면 NaN이 되고 `ratio >= NaN`이 항상 false라
+      // **모든 경주가 90초 타임아웃 + 보상 0**으로 끝났다(로그도 없었다).
+      bandInner: num(
+        (Number(trackCfg.outer_a) - Number(trackCfg.lane) * 2) / Number(trackCfg.outer_a),
+        0.58, 0.05, 0.95, 'race/bandInner(track.outer_a·lane에서 계산)'),
+      // 달걀 보정을 하므로 여유는 작게 둔다(경계 지터용 4%).
       bandOuter: 1.04,
     };
     if (this.raceCfg.checkpoints.length < 2) {
@@ -707,7 +717,7 @@ export class WorldState {
       // 초과 거리를 **누적**한다. 상한을 계속 밀어붙이는 클라이언트는 실격
       // 없이 정직한 주행보다 빠른데(클램프는 거부가 아니다), 누적을 보면 그
       // 상시 마진이 잡힌다. 한 번의 순간이동도 같은 기준으로 걸린다.
-      this.raceAddOverage(token, dist - maxDist);
+      this.raceAddOverage(token, dist - maxDist, now);
       const k = maxDist / dist;
       target.x = p.x + (target.x - p.x) * k;
       target.z = p.z + (target.z - p.z) * k;
@@ -1289,15 +1299,26 @@ export class WorldState {
     return this.raceCfg.checkpoints.length >= 2;
   }
 
-  // 트랙 밴드(달리는 레인) 안인지. 달걀 왜곡은 무시하고 타원 비율로 본다 —
-  // 판정에 쓰는 것은 "인필드를 가로질렀는가"이고, 그 정도 정확도로 충분하다.
+  // 트랙 밴드(달리는 레인) 안인지.
+  //
+  // **달걀 왜곡을 보정해야 한다.** 트랙은 z가 (1 − egg·cosθ)로 늘어난 달걀
+  // 곡선인데 순수 타원비로 보면 최대 4.7% 오차가 나고, 그 최대점이 남서쪽
+  // 체크포인트와 겹쳐서 **실제 트랙 위인데 이탈로 판정**됐다(리뷰 지적:
+  // 바깥 라인으로 sw 코너를 도는 러너의 통과가 인정되지 않았다).
+  // 같은 각도의 곡선 반지름으로 나누면 오차가 0.35%로 떨어진다.
   onTrackBand(x, z) {
     const tr = (this.playgroundCfg || {}).track || {};
     const a = Number(tr.outer_a) || 10.6;
     const b = Number(tr.outer_b) || 7.232;
+    const egg = Number(tr.egg) || 0;
     const cx = Number(tr.x) || 0;
     const cz = Number(tr.z) || 0;
-    const ratio = Math.hypot((x - cx) / a, (z - cz) / b);
+    const u = (x - cx) / a;
+    const v = (z - cz) / b;
+    const th = Math.atan2(v, u);
+    const c = Math.cos(th);
+    const shape = Math.max(1e-6, Math.hypot(c, Math.sin(th) * (1 - egg * c)));
+    const ratio = Math.hypot(u, v) / shape;
     return ratio >= this.raceCfg.bandInner && ratio <= this.raceCfg.bandOuter;
   }
 
@@ -1306,7 +1327,7 @@ export class WorldState {
     const runners = [];
     for (const [token, r] of this.race.runners) {
       const p = this.players.get(token);
-      runners.push({
+      const entry = {
         token,
         name: p ? p.name : '',
         lap: r.lap,
@@ -1314,7 +1335,16 @@ export class WorldState {
         rank: r.rank,
         finishMs: r.finishMs,
         dq: r.dq,
-      });
+      };
+      // **정렬 좌표를 함께 보낸다.** 서버가 출발선으로 옮긴 좌표를 클라이언트가
+      // 모르면 화면과 서버가 최대 11유닛 어긋난 채 출발하고, 그 차이가 첫
+      // move에서 속도 초과로 잡혀 **출발과 동시에 전원 실격**된다(리뷰 지적).
+      // 놀이기구는 클라이언트가 좌석까지 걸어가서 앉으므로 이 문제가 없었다.
+      if (this.race.phase === 'countdown' && p) {
+        entry.x = p.x;
+        entry.z = p.z;
+      }
+      runners.push(entry);
     }
     // 순위 → 진행도 순으로 정렬해 클라이언트가 그대로 그릴 수 있게 한다.
     runners.sort((a, b) => {
@@ -1341,7 +1371,6 @@ export class WorldState {
     if (now - (p.lastRaceAt || 0) < LIMITS.RACE_MIN_INTERVAL_MS) {
       return { error: { code: 'rate_limited', message: '너무 빠릅니다' } };
     }
-    p.lastRaceAt = now;
     if (!this.raceOpen()) return { error: { code: 'race_closed', message: '경주를 열 수 없습니다' } };
     // 운동장 안에서만 참가할 수 있다 — 섬 반대편에서 참가하면 출발선까지
     // 순간이동하거나, 시작하자마자 실격이다.
@@ -1351,10 +1380,13 @@ export class WorldState {
     if (this.race.phase !== 'idle' && this.race.phase !== 'lobby') {
       return { error: { code: 'race_busy', message: '지금은 참가할 수 없습니다' } };
     }
+    // **성공했을 때만** 간격 예산을 쓴다 — 운동장 밖에서 눌러 거절당한 사람이
+    // 곧바로 다시 누르면 rate_limited가 뜨는 것은 이상하다(포기 경로와도
+    // 규칙이 어긋났다).
+    p.lastRaceAt = now;
     if (this.race.phase === 'idle') {
       this.race.phase = 'lobby';
       this.race.endsAt = now + this.raceCfg.lobbySec * 1000;
-      this.race.seq += 1;
     }
     this.race.runners.set(token, { cp: -1, lap: 0, rank: 0, finishMs: 0, dq: false, reward: 0 });
     return { state: this.raceState(now) };
@@ -1432,24 +1464,19 @@ export class WorldState {
     this.race.runners.clear();
   }
 
-  // 속도 상한을 넘긴 이동이 감지되면 그 주행을 무효로 표시한다.
+  // 클램프된 초과 거리를 누적하고 기준을 넘으면 실격으로 표시한다.
   //
-  // 되돌리지 않는 이유: 벨 보상이 걸려 있어 "상한을 넘겨 앞서 나가기"를 막아야
-  // 하지만, 지터가 큰 클라이언트를 즉시 실격시키면 억울하다 — 그래서 상한
-  // 초과 **거리**가 명백할 때만(보정량이 한 틱 이동거리보다 클 때) 표시한다.
-  // 초과 거리를 누적하고 기준을 넘으면 실격으로 표시한다.
-  raceAddOverage(token, over) {
+  // 왜 누적인가: 초과분은 거부가 아니라 클램프라서, 계속 상한을 밀어붙이는
+  // 클라이언트는 실격 없이 정직한 주행보다 빠르다(자전거 7.6 → 12.16).
+  // 누적을 보면 한 번의 순간이동과 상시 마진이 같은 기준으로 걸린다.
+  raceAddOverage(token, over, now = Date.now()) {
     const r = this.race.runners.get(token);
     if (!r || this.race.phase !== 'running' || r.rank > 0 || r.dq) return false;
+    // 출발 직후 유예. 정렬 좌표를 늦게 받은 클라이언트가 한 번 크게 움직이는
+    // 것을 실격으로 보면 억울하다(방어의 목적은 상시 마진과 순간이동이다).
+    if (now - this.race.startedAt < LIMITS.RACE_GRACE_MS) return false;
     r.overage = (r.overage || 0) + Math.max(0, over);
     if (r.overage < LIMITS.RACE_OVERAGE_DQ) return false;
-    r.dq = true;
-    return true;
-  }
-
-  raceFlagSpeeding(token) {
-    const r = this.race.runners.get(token);
-    if (!r || this.race.phase !== 'running' || r.rank > 0) return false;
     r.dq = true;
     return true;
   }
@@ -1548,10 +1575,22 @@ export class WorldState {
   // 반복해서 긁는 경로를 막는다.
   _raceFinish(now) {
     const cfg = this.raceCfg;
-    // **"혼자면 완주 보상만"은 연결 수가 아니라 완주자 수로 본다.** 연결 수를
-    // 보면 탭 두 개로 참가한 뒤 하나만 달려도 1등 보상이 나갔다(리뷰 지적).
-    const finishers = [...this.race.runners.values()].filter((r) => r.rank > 0 && !r.dq).length;
-    const solo = finishers < 2;
+    // **"혼자면 완주 보상만"의 기준: 끝까지 함께한 참가자 수.**
+    //
+    // 세 가지를 동시에 만족해야 한다.
+    //  - 정상 경주를 벌하지 않는다: 3명이 참가해 1명만 완주해도 우승자는 300을
+    //    받아야 한다(완주자 수 기준은 이 경우 20벨을 줬다 — 리뷰 지적).
+    //  - "탭 두 개로 참가한 뒤 하나를 닫는" 편한 파밍을 막는다: 중간에 끊겨
+    //    완주도 실격도 아닌 참가자는 세지 않는다.
+    //  - 두 탭이 **실제로 코스를 다 도는** 경로는 남는다. 토큰이 곧 신원이라는
+    //    신뢰 경계(docs/protocol.md §0) 안의 문제이고, 그 수고 대비 벨은
+    //    낚시보다 낮다 — 문서에 남긴다.
+    const contenders = [...this.race.runners.entries()].filter(([token, r]) => {
+      if (r.rank > 0 || r.dq) return true;
+      const q = this.players.get(token);
+      return !!q && q.online;
+    }).length;
+    const solo = contenders < 2;
     for (const [token, r] of this.race.runners) {
       const p = this.players.get(token);
       if (!p || r.dq || r.rank === 0) continue;

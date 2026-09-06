@@ -1451,7 +1451,9 @@ test('속도 상한을 크게 넘기면 실격되고 보상이 없다', () => {
   w.tickRace(clock.t);
   clock.t += w.raceCfg.countdownSec * 1000 + 100;
   w.tickRace(clock.t);
-  // 순간이동에 가까운 이동 — 상한의 1.5배를 넘는다.
+  // 출발 직후 유예(정렬 좌표 적용 지연 대비)를 넘긴 뒤에 시도한다.
+  clock.t += 1500;
+  w.tickRace(clock.t);
   const p = w.players.get(TOKEN_A);
   p.lastMoveAt = clock.t;
   w.move(TOKEN_A, { x: p.x + 30, z: p.z, dir: 'right' }, clock.t + 150);
@@ -1601,6 +1603,8 @@ test('경주 중에는 속도 상한이 조여지고 초과가 누적되면 실�
   w.tickRace(clock.t);
   clock.t += w.raceCfg.countdownSec * 1000 + 100;
   w.tickRace(clock.t);
+  clock.t += 1500;                      // 출발 직후 유예를 지난다
+  w.tickRace(clock.t);
   const p = w.players.get(TOKEN_A);
   // 상시 마진(상한을 계속 밀어붙이는 클라이언트)도 누적으로 잡힌다.
   for (let i = 0; i < 20; i++) {
@@ -1610,4 +1614,48 @@ test('경주 중에는 속도 상한이 조여지고 초과가 누적되면 실�
     if (w.race.runners.get(TOKEN_A).dq) break;
   }
   assert.equal(w.race.runners.get(TOKEN_A).dq, true, '상한을 계속 넘겼는데 실격되지 않았다');
+});
+
+test('여럿이 달려 1명만 완주해도 우승자는 순위 보상을 받는다', () => {
+  // 완주자 수를 기준으로 삼았더니 정상 경주를 벌했다(3명 중 1명 완주 → 20벨).
+  const w = fresh();
+  const clock = { t: 18_000_000 };
+  standAtStart(w, TOKEN_A);
+  standAtStart(w, TOKEN_B);
+  w.raceJoin(TOKEN_A, clock.t);
+  w.raceJoin(TOKEN_B, clock.t);
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  w.tickRace(clock.t);
+  clock.t += w.raceCfg.countdownSec * 1000 + 100;
+  w.tickRace(clock.t);
+  const lap = Array.from({ length: w.raceCfg.checkpoints.length }, (_, i) => i);
+  runCheckpoints(w, TOKEN_A, [...lap, ...lap, 0], clock);
+  // B는 접속을 유지한 채 완주하지 못한다 → 타임아웃으로 종료.
+  clock.t += w.raceCfg.timeoutSec * 1000 + 100;
+  w.tickRace(clock.t);
+  assert.equal(w.race.phase, 'finished');
+  assert.equal(w.players.get(TOKEN_A).bells, w.raceCfg.rewards[0],
+    '함께 달린 사람이 있었는데 완주 보상만 받았다');
+  assert.equal(w.players.get(TOKEN_B).bells, 0);
+});
+
+test('정렬 좌표는 카운트다운 상태에 실려 나간다', () => {
+  // 서버가 출발선으로 옮긴 좌표를 클라이언트가 모르면 화면과 서버가 최대
+  // 11유닛 어긋난 채 출발하고, 그 차이가 첫 move에서 속도 초과로 잡혀
+  // 출발과 동시에 전원 실격된다.
+  const w = fresh();
+  const clock = { t: 19_000_000 };
+  standAtStart(w, TOKEN_A);
+  const p = w.players.get(TOKEN_A);
+  p.x = w.raceCfg.checkpoints[4].x;     // 트랙 반대편에서 참가
+  p.z = w.raceCfg.checkpoints[4].z;
+  w.raceJoin(TOKEN_A, clock.t);
+  clock.t += w.raceCfg.lobbySec * 1000 + 100;
+  w.tickRace(clock.t);
+  assert.equal(w.race.phase, 'countdown');
+  const me = w.raceState(clock.t).runners.find((r) => r.token === TOKEN_A);
+  assert.ok(Number.isFinite(me.x) && Number.isFinite(me.z), '정렬 좌표가 상태에 없다');
+  const start = w.raceCfg.checkpoints[0];
+  assert.ok(Math.hypot(me.x - start.x, me.z - start.z) < 2.0,
+    `정렬 좌표가 출발선 근처가 아니다 (${me.x}, ${me.z})`);
 });

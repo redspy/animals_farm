@@ -557,6 +557,9 @@ function broadcastPark(force = false) {
 // 주행 진행**만 비교하고, 남은 시간은 클라이언트가 자기 시계로 센다.
 let lastRaceKey = null;
 function broadcastRace(force) {
+  // 유휴 상태에서는 아무것도 하지 않는다 — 매 틱 raceState()를 만들고
+  // JSON.stringify까지 하면 접속자 0명일 때도 초당 10회 영구히 돈다.
+  if (!force && world.race.phase === 'idle' && world.race.runners.size === 0) return;
   const s = world.raceState();
   const key = JSON.stringify({
     phase: s.phase,
