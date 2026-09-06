@@ -1,0 +1,132 @@
+{
+  "_comment": "이웃 동물(NPC). **위치는 고정 데이터**이고 배회는 각 클라이언트가 같은 규칙으로 그린다(그네와 같은 결정 — 서버가 소유하면 3명×10Hz 브로드캐스트가 늘어난다). 서버가 소유하는 것은 **부탁 상태와 정산**뿐이다: 어떤 부탁인지는 (토큰, NPC, 날짜)의 결정적 해시로 고르므로 서버를 재시작해도 같은 부탁이 유지되고, 보상은 판매가 총합 × reward_multiplier를 **서버가** 계산한다(클라이언트가 금액을 주장하면 벨을 임의로 불릴 수 있다). 하루 1회 제한은 서버 날짜로 판정한다 — 기기 시계를 바꿔 반복하는 것을 막는다.",
+  "schema_version": 1,
+  "limits": {
+    "reward_multiplier": [
+      1.0,
+      5.0
+    ],
+    "request_count": [
+      1,
+      5
+    ],
+    "wander_radius": [
+      0.0,
+      8.0
+    ]
+  },
+  "reward_multiplier": 1.8,
+  "npcs": [
+    {
+      "id": "mochi",
+      "label": "모찌",
+      "species": "cat",
+      "x": -33.0,
+      "z": 10.0,
+      "wander_radius": 3.0,
+      "note": "서쪽 나무 그늘(놀이터 서쪽 바깥). 느긋하고 반말.",
+      "dialogue": {
+        "greet": [
+          "느긋하게 살자냥…",
+          "오늘 날씨 좋네.",
+          "낮잠 자기 딱이야."
+        ],
+        "need": "%s 좀 가져다줄래? %d개면 돼.",
+        "thanks": "고맙다냥! 이거 받아.",
+        "done": "오늘은 충분해. 내일 또 부탁할게."
+      },
+      "requests": [
+        {
+          "item": "wood",
+          "count": 3
+        },
+        {
+          "item": "fruit",
+          "count": 2
+        },
+        {
+          "item": "weed",
+          "count": 3
+        },
+        {
+          "item": "ladybug",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "dungdang",
+      "label": "둥당",
+      "species": "bear",
+      "x": 31.0,
+      "z": -16.0,
+      "wander_radius": 3.0,
+      "note": "남동쪽 언덕(축구장 밖). 우렁차고 다정함.",
+      "dialogue": {
+        "greet": [
+          "어이, 잘 왔다!",
+          "몸은 튼튼히 해야 해.",
+          "운동장 한 바퀴 어때?"
+        ],
+        "need": "%s %d개만 구해다 주게. 크게 갚지.",
+        "thanks": "고맙네! 자, 받아 두게.",
+        "done": "오늘은 됐네. 푹 쉬게!"
+      },
+      "requests": [
+        {
+          "item": "fruit",
+          "count": 3
+        },
+        {
+          "item": "shell",
+          "count": 2
+        },
+        {
+          "item": "wood",
+          "count": 2
+        },
+        {
+          "item": "cicada",
+          "count": 1
+        }
+      ]
+    },
+    {
+      "id": "pparang",
+      "label": "빠랑",
+      "species": "duck",
+      "x": -8.0,
+      "z": -17.5,
+      "wander_radius": 2.5,
+      "note": "남쪽 물가(낚시터 근처) — 낚시 동선과 자연히 만나게 둔다.",
+      "dialogue": {
+        "greet": [
+          "빠빠! 물이 차가워!",
+          "낚시했어? 나도 낚시 좋아!",
+          "빨리빨리 다녀와!"
+        ],
+        "need": "%s! %d개! 나 그거 좋아해!",
+        "thanks": "빠빠! 최고야! 이거 줄게!",
+        "done": "오늘은 배불러! 내일 또!"
+      },
+      "requests": [
+        {
+          "item": "anchovy",
+          "count": 2
+        },
+        {
+          "item": "shell",
+          "count": 3
+        },
+        {
+          "item": "crucian",
+          "count": 1
+        },
+        {
+          "item": "weed",
+          "count": 2
+        }
+      ]
+    }
+  ]
+}

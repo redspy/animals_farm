@@ -62,7 +62,10 @@
     "bubble_border": "#e8a7b8",
     "emote_glow": "#ffffffcc",
     "resync_dim": "#0d1a1466",
-    "resync_dim_web": "#0d1a1426"
+    "resync_dim_web": "#0d1a1426",
+    "row_bg": "#3f4a3a",
+    "row_text": "#f2f4ea",
+    "row_dim": "#a8b09c"
   },
   "character": {
     "skin": "#ffd9b3",
@@ -92,5 +95,18 @@
     "rod": "#8b5a2b",
     "line": "#e8f0f4",
     "bobber": "#e04a3f"
+  },
+  "npc": {
+    "_comment": "이웃 동물 색. 종별 몸(body)·포인트(accent) 2색만 쓴다 — 실루엣 차이는 귀·부리·꼬리로 만들고 색은 구분용이다.",
+    "cat_body": "#d9a05b",
+    "cat_accent": "#f2e0c9",
+    "bear_body": "#7b5a3f",
+    "bear_accent": "#e8d5b8",
+    "duck_body": "#f2e07a",
+    "duck_accent": "#e8892b",
+    "eye": "#2b2b33",
+    "bubble_bg": "#fdfaf2",
+    "bubble_text": "#33323a",
+    "mark": "#e8b93b"
   }
 }

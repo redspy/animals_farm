@@ -34,6 +34,11 @@ signal activity_received(token: String, activity: String, trick: String)
 ## 축구공. ball이 비어 있으면 "공이 없다"(아무도 축구를 하지 않는다).
 signal ball_received(ball: Dictionary)
 signal goal_scored(side: String, score: Dictionary)
+
+## 이웃 동물 부탁: 정산 결과(보상·가방·NPC별 상태)와 거절 사유(부족한 수 포함).
+signal npc_done(npc: String, reward: int, given: Dictionary, bells: int,
+	inventory: Dictionary, state: Dictionary)
+signal npc_error(code: String, message: String, need: Dictionary)
 ## 놀이기구 상태(시소 기울기·뺑뺑이 각도). 서버가 소유한다.
 signal park_state(state: Dictionary)
 
@@ -192,8 +197,21 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			park_state.emit(msg.get("park", {}))
 		"system":
 			system_message.emit(String(msg.get("text", "")), String(msg.get("kind", "")))
+		"npc_done":
+			npc_done.emit(
+				String(msg.get("npc", "")), int(msg.get("reward", 0)),
+				msg.get("given", {}), int(msg.get("bells", 0)),
+				msg.get("inventory", {}), msg.get("state", {})
+			)
 		"error":
-			server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")))
+			# 부탁 거절은 **부족한 수**를 함께 실어 온다 — 일반 오류 토스트로
+			# 흘리면 "몇 개 더 필요한지"를 가방 화면에서 세어야 한다.
+			var need: Variant = msg.get("need", null)
+			if typeof(need) == TYPE_DICTIONARY:
+				npc_error.emit(String(msg.get("code", "")), String(msg.get("message", "")),
+					need as Dictionary)
+			else:
+				server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")))
 		_:
 			push_warning("알 수 없는 서버 메시지: %s" % String(msg.get("t", "")))
 
@@ -248,6 +266,10 @@ func send_resync() -> void:
 
 func send_gather(index: int) -> void:
 	_send({"t": "gather", "index": index})
+
+## 이웃에게 부탁한 물건을 건넨다. **차감·보상은 서버가 계산한다.**
+func send_npc_deliver(npc_id: String) -> void:
+	_send({"t": "npc_deliver", "npc": npc_id})
 
 ## item_id가 비어 있으면 팔 수 있는 것 전부.
 func send_sell(item_id: String = "") -> void:

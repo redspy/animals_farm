@@ -175,9 +175,14 @@ const server = useTls
 
 // 상태 파일 경로는 테스트가 갈아끼울 수 있게 열어 둔다 — 전송 계층 테스트가
 // 개발용 월드(server/data/world.json)에 테스트 플레이어를 남기면 안 된다.
-const world = new WorldState(
-  process.env.WORLD_STATE_PATH ? { statePath: process.env.WORLD_STATE_PATH } : {}
-);
+//
+// 데이터 디렉터리도 같은 이유로 열어 둔다: 브라우저 테스트가 **결정적인 부탁**을
+// 확인하려면(NPC가 무엇을 요구하는지) 데이터 사본을 갈아끼워야 한다. 그러지
+// 않으면 요구 아이템이 실러캔스일 수도 있어 테스트가 그 흐름을 끝까지 못 본다.
+const world = new WorldState({
+  ...(process.env.WORLD_STATE_PATH ? { statePath: process.env.WORLD_STATE_PATH } : {}),
+  ...(process.env.AF_DATA_DIR ? { dataDir: process.env.AF_DATA_DIR } : {}),
+});
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 /** token -> socket. 같은 토큰으로 다시 들어오면 이전 연결을 끊는다. */
@@ -304,6 +309,9 @@ function handle(ws, msg) {
         token: p.token, name: p.name, preset: p.preset,
         x: p.x, z: p.z, dir: p.dir,
         inventory: p.inventory, bells: p.bells,
+        // 이웃의 부탁과 도감은 **내 진행도**라 나에게만 보낸다(남에게 방송할
+        // 이유가 없고, 방송하면 스냅샷이 인원수만큼 커진다).
+        npc: world.npcState(ws.token), dex: p.dex || {},
       },
       world: { size_x: world.sizeX, size_z: world.sizeZ },
     });
@@ -376,12 +384,29 @@ function handle(ws, msg) {
           token: me.token, name: me.name, preset: me.preset,
           x: me.x, z: me.z, dir: me.dir,
           inventory: me.inventory, bells: me.bells,
+          npc: world.npcState(ws.token), dex: me.dex || {},
         },
         world: { size_x: world.sizeX, size_z: world.sizeZ },
         resync: true,
       });
       sendTo(ws, { t: 'snapshot', ...world.snapshot() });
     lastParkSent = null;   // 새 접속자에게 다음 변화가 반드시 가도록
+      break;
+    }
+    case 'npc_deliver': {
+      // 부탁 정산. **금액·차감은 서버가 계산한다**(docs/protocol.md).
+      const r = world.npcDeliver(ws.token, msg.npc);
+      if (r.error) {
+        // 부족한 경우엔 몇 개가 부족한지 함께 보낸다 — "부족하다"만 알려주면
+        // 플레이어가 가방 화면을 왕복해야 한다.
+        sendTo(ws, { t: 'error', ...r.error, ...(r.need ? { need: r.need } : {}) });
+        break;
+      }
+      sendTo(ws, {
+        t: 'npc_done',
+        npc: r.npc, reward: r.reward, given: r.given,
+        bells: r.bells, inventory: r.inventory, state: r.state,
+      });
       break;
     }
     case 'sell': {

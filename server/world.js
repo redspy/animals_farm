@@ -29,6 +29,11 @@ export const LIMITS = {
   // 걷기 상한(= 아무 운동도 하지 않을 때). 리터럴로 두면 WALK_SPEED와 갈린다.
   get MAX_SPEED() { return this.WALK_SPEED * this.SPEED_TOLERANCE; },
   MOVE_MIN_INTERVAL_MS: 80,   // 10Hz + 여유
+  // NPC 정산 간격 — 연타로 같은 부탁을 두 번 처리하려는 것을 막는다.
+  NPC_MIN_INTERVAL_MS: 400,
+  // 정산 허용 거리 = NPC 배회 반경 + 이 값. 클라이언트가 보는 NPC 위치는
+  // 시간 함수라 기기마다 조금 다르므로, 대화 거리(2.2)보다 넉넉해야 한다.
+  NPC_TALK_PAD: 3.5,
   ACTIVITY_MIN_INTERVAL_MS: 250,   // 운동 전환은 전원 브로드캐스트라 도배를 막는다
   GATHER_MIN_INTERVAL_MS: 250,  // 초당 4건 — 연타 채집 도배 방지
   CHAT_MIN_INTERVAL_MS: 500,  // 초당 2건
@@ -349,6 +354,51 @@ export class WorldState {
       availableAt: 0,
     }));
 
+    // 이웃 동물(NPC). 위치·대사는 클라이언트가 그리고, 서버는 **부탁과 정산**만
+    // 소유한다(data/npcs.json 주석 참고).
+    const npcCfg = readJson(join(dataDir, 'npcs.json'), { npcs: [] });
+    const npcLimits = npcCfg.limits || {};
+    this.npcRewardMultiplier = num(
+      npcCfg.reward_multiplier, 1.8,
+      (npcLimits.reward_multiplier || [1.0, 5.0])[0],
+      (npcLimits.reward_multiplier || [1.0, 5.0])[1],
+      'npcs.json/reward_multiplier');
+    const countRange = npcLimits.request_count || [1, 5];
+    this.npcs = new Map();
+    for (const raw of npcCfg.npcs || []) {
+      const id = String(raw.id || '');
+      if (!id) continue;
+      // 정의에 없는 아이템을 요구하면 그 부탁은 절대 완료할 수 없다(가격도
+      // 계산할 수 없다) — 로드할 때 걸러내고 알린다.
+      const requests = (raw.requests || [])
+        .map((r) => ({
+          item: String(r.item || ''),
+          count: Math.min(Number(countRange[1]),
+            Math.max(Number(countRange[0]), Math.floor(Number(r.count) || 1))),
+        }))
+        .filter((r) => {
+          if (this.itemIds.has(r.item)) return true;
+          console.warn(`[world] npcs.json의 ${id} 부탁 아이템 "${r.item}"이 items.json에 없습니다 — 무시합니다`);
+          return false;
+        });
+      if (requests.length === 0) {
+        console.warn(`[world] NPC ${id}에 유효한 부탁이 없습니다 — 부탁을 주지 않습니다`);
+      }
+      this.npcs.set(id, {
+        id,
+        label: String(raw.label || id),
+        x: Number(raw.x) || 0,
+        z: Number(raw.z) || 0,
+        // 배회 반경 + 여유가 정산 허용 거리다. 배회는 클라이언트가 시간
+        // 함수로 그리므로(scripts/npc.gd) 보이는 위치가 기기마다 조금 다르다.
+        wanderRadius: num(raw.wander_radius, 3.0,
+          (npcLimits.wander_radius || [0, 8])[0],
+          (npcLimits.wander_radius || [0, 8])[1],
+          `npcs.json/${id}/wander_radius`),
+        requests,
+      });
+    }
+
     const emoteCfg = readJson(join(dataDir, 'emotes.json'), { emotes: [] });
     this.emoteIds = new Set((emoteCfg.emotes || []).map((e) => String(e.id)));
 
@@ -501,6 +551,11 @@ export class WorldState {
         dir: 'down',
         inventory: {},
         bells: 0,
+        // NPC별 마지막 완료 날짜(서버 날짜 문자열). 기기 시계로 반복하는 것을
+        // 막으려면 서버 시계로 판정해야 한다.
+        npcDone: {},
+        // 도감 — 아이템별 **누적** 획득 수. 팔거나 버려도 줄지 않는다(기록이다).
+        dex: {},
         online: false,
         lastMoveAt: 0,
         lastChatAt: 0,
@@ -536,6 +591,9 @@ export class WorldState {
       this._markDirty();
     }
     p.online = true;
+    // 옛 레코드(필드 추가 이전)를 만나도 뒤에서 undefined를 만지지 않게 채운다.
+    if (!p.npcDone || typeof p.npcDone !== 'object') p.npcDone = {};
+    if (!p.dex || typeof p.dex !== 'object') p.dex = {};
     return { player: p };
   }
 
@@ -1101,6 +1159,7 @@ export class WorldState {
     p.lastGatherAt = now;
     g.availableAt = now + g.respawnSec * 1000;
     p.inventory[item] = Number(p.inventory[item] || 0) + 1;
+    this.recordDex(p, item);
     this._markDirty();
     return { inventory: p.inventory, gathered: { index: g.index, item, availableAt: g.availableAt } };
   }
@@ -1144,6 +1203,114 @@ export class WorldState {
       .map((g) => ({ index: g.index, availableAt: g.availableAt }));
   }
 
+  // ---- 이웃 동물(NPC) 부탁 ----
+
+  // 오늘 날짜 문자열(서버 시계). 하루 1회 제한의 기준이다 — 클라이언트 날짜를
+  // 쓰면 기기 시계를 넘겨 부탁을 무한 반복할 수 있다.
+  dayKey(now = Date.now()) {
+    const d = new Date(now);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // (토큰, NPC, 날짜)의 **결정적** 해시로 부탁을 고른다.
+  //
+  // 왜 결정적인가: 서버가 재시작해도, 스냅샷을 다시 받아도 같은 부탁이어야
+  // 한다. 무작위로 고르면 "가져왔는데 다른 걸 요구한다"가 되고, 상태를 따로
+  // 저장하면 세이브 스키마가 늘어난다.
+  npcRequest(token, npcId, now = Date.now()) {
+    const npc = this.npcs.get(String(npcId));
+    if (!npc || npc.requests.length === 0) return null;
+    const seed = `${token}|${npcId}|${this.dayKey(now)}`;
+    let h = 2166136261;
+    for (let i = 0; i < seed.length; i++) {
+      h ^= seed.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return npc.requests[h % npc.requests.length];
+  }
+
+  // 부탁 보상 = 판매가 총합 × reward_multiplier. **서버가 계산한다** —
+  // 클라이언트가 금액을 주장하면 벨을 임의로 불릴 수 있다.
+  npcReward(request) {
+    if (!request) return 0;
+    const price = this.priceOf(request.item);
+    return Math.max(0, Math.floor(price * request.count * this.npcRewardMultiplier));
+  }
+
+  // 이 플레이어가 보는 NPC 상태(welcome/snapshot과 정산 응답에 함께 실린다).
+  npcState(token, now = Date.now()) {
+    const p = this.players.get(token);
+    const today = this.dayKey(now);
+    const out = {};
+    for (const npc of this.npcs.values()) {
+      const request = this.npcRequest(token, npc.id, now);
+      const done = !!(p && p.npcDone && p.npcDone[npc.id] === today);
+      out[npc.id] = {
+        done,
+        request: request ? { item: request.item, count: request.count } : null,
+        reward: request ? this.npcReward(request) : 0,
+      };
+    }
+    return out;
+  }
+
+  // 부탁한 물건을 건넨다. 가방·벨의 단일 출처가 서버이므로 여기서 정산한다.
+  npcDeliver(token, npcId, now = Date.now()) {
+    const p = this.players.get(token);
+    if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
+    if (now - (p.lastNpcAt || 0) < LIMITS.NPC_MIN_INTERVAL_MS) {
+      return { error: { code: 'rate_limited', message: '너무 빠릅니다' } };
+    }
+    const npc = this.npcs.get(String(npcId));
+    if (!npc) return { error: { code: 'unknown_npc', message: '없는 이웃입니다' } };
+    const today = this.dayKey(now);
+    if (p.npcDone[npc.id] === today) {
+      return { error: { code: 'already_done', message: '오늘은 이미 도와줬습니다' } };
+    }
+    // **거리를 검사한다.** 없으면 섬 반대편에서 부탁을 정산할 수 있다. 기준은
+    // 데이터의 고정 좌표이고, 배회 반경 + 여유(NPC_TALK_PAD)만큼 넉넉히 준다.
+    const dist = Math.hypot(p.x - npc.x, p.z - npc.z);
+    if (dist > npc.wanderRadius + LIMITS.NPC_TALK_PAD) {
+      return { error: { code: 'too_far', message: '이웃에게서 너무 멉니다' } };
+    }
+    const request = this.npcRequest(token, npc.id, now);
+    if (!request) return { error: { code: 'no_request', message: '지금은 부탁이 없습니다' } };
+    const have = Number(p.inventory[request.item] || 0);
+    if (have < request.count) {
+      return {
+        error: { code: 'not_enough', message: '물건이 부족합니다' },
+        // 부족한 수를 알려 준다 — "부족하다"만 말하면 가방 화면을 왕복해야 한다.
+        need: { item: request.item, count: request.count, have },
+      };
+    }
+    p.lastNpcAt = now;
+    const left = have - request.count;
+    if (left <= 0) delete p.inventory[request.item];
+    else p.inventory[request.item] = left;
+    const reward = this.npcReward(request);
+    p.bells = Math.max(0, Math.floor(p.bells + reward));
+    p.npcDone[npc.id] = today;
+    this._markDirty();
+    return {
+      npc: npc.id,
+      reward,
+      given: { item: request.item, count: request.count },
+      bells: p.bells,
+      inventory: p.inventory,
+      state: this.npcState(token, now),
+    };
+  }
+
+  // ---- 도감 ----
+
+  // 획득을 도감에 누적한다. **팔거나 버려도 줄지 않는다** — 도감은 "무엇을
+  // 가졌는지"가 아니라 "무엇을 만났는지"의 기록이다.
+  recordDex(p, item, count = 1) {
+    if (!p || !item) return;
+    if (!p.dex) p.dex = {};
+    p.dex[item] = Number(p.dex[item] || 0) + count;
+  }
+
   // ---- 아이템 (서버 권위) ----
 
   drop(token, item, x, z) {
@@ -1179,6 +1346,8 @@ export class WorldState {
     }
     this.items.delete(entity.id);
     p.inventory[entity.item] = Number(p.inventory[entity.item] || 0) + 1;
+    // 남이 버린 것을 주워도 "만난 것"은 만난 것이다 — 도감에 누적한다.
+    this.recordDex(p, entity.item);
     this._markDirty();
     return { item: entity, inventory: p.inventory };
   }
@@ -1301,6 +1470,8 @@ export class WorldState {
       players: [...this.players.values()].map((p) => ({
         token: p.token, name: p.name, preset: p.preset,
         x: p.x, z: p.z, dir: p.dir, inventory: p.inventory, bells: p.bells,
+        // NPC 부탁 완료 날짜와 도감은 진행도다 — 재시작해도 남아야 한다.
+        npcDone: p.npcDone || {}, dex: p.dex || {},
       })),
       items: [...this.items.values()],
       gatherables: this.gatherableStates(),
@@ -1337,8 +1508,12 @@ export class WorldState {
         dir: ['up', 'down', 'left', 'right'].includes(p.dir) ? p.dir : 'down',
         inventory: p.inventory && typeof p.inventory === 'object' ? p.inventory : {},
         bells: Number.isFinite(Number(p.bells)) ? Math.max(0, Math.floor(Number(p.bells))) : 0,
+        // 없으면 빈 값 — 옛 상태 파일에는 이 필드가 없다(마이그레이션 불필요).
+        npcDone: p.npcDone && typeof p.npcDone === 'object' ? p.npcDone : {},
+        dex: p.dex && typeof p.dex === 'object' ? p.dex : {},
         online: false,
         lastMoveAt: 0, lastChatAt: 0, lastEmoteAt: 0, lastGatherAt: 0, lastSellAt: 0,
+        lastNpcAt: 0,
       });
     }
     for (const i of data.items || []) {

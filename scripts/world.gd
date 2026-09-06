@@ -71,6 +71,10 @@ const DROP_MESH_RADIUS := 0.18
 ## 집는다** — 1.3은 실제로 그렇게 느껴졌다(2026-09-04 사용자 보고). 나무 수관
 ## 반지름(0.95)에 손가락 여유만 더한 값으로 좁혔다.
 const TAP_PICK_RADIUS := 1.0
+## 이웃 동물은 **배회하므로** 탭 반경을 넓게 잡는다. 기준 좌표에서 최대
+## wander_radius × 0.7만큼 떨어져 있어(scripts/npc.gd) 1.0으로는 눈에 보이는
+## 동물을 탭해도 빈 땅으로 처리된다(실측).
+const NPC_TAP_RADIUS := 2.2
 ## 대상에 다가갈 때 얼마나 가까이 설지 — 상호작용 사거리(1.6)보다 조금 안쪽.
 const APPROACH_DISTANCE := 1.1
 ## 목표 지점 마커 크기.
@@ -148,6 +152,17 @@ var _zoom_label: Label = null
 var _fullscreen_button: Button = null
 var _fullscreen_on := false
 var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화면)
+## 이웃 동물. 위치·대사는 데이터가, 부탁 상태와 정산은 서버가 소유한다.
+var _npcs: Array[Npc] = []
+## 서버가 알려준 NPC별 상태: {npc_id: {done, request:{item,count}, reward}}
+var _npc_state: Dictionary = {}
+## 도감(아이템별 누적 획득 수) — 서버가 단일 출처다.
+var _dex: Dictionary = {}
+## 지금 대화창을 열어 둔 이웃 id.
+var _talking := ""
+var _npc_ui: NpcUI = null
+var _dex_ui: DexUI = null
+
 ## HUD 글자 상자 — 폭 상한을 리사이즈 때 다시 잡아야 해서 들고 있는다.
 var _hud_box: VBoxContainer = null
 ## 좁은 화면 판정에 따라 자리가 바뀌는 노드들 — 판정이 런타임에 뒤집히므로
@@ -316,6 +331,15 @@ func _build_environment() -> void:
 		_park = Park.new()
 		_park.setup(park_cfg, _park_phys)
 		add_child(_park)
+
+	# 이웃 동물 — 위치는 데이터가 정하고 배회는 시간 함수다(scripts/npc.gd).
+	for n: Variant in DataFiles.load_dict("res://data/npcs.json").get("npcs", []):
+		if typeof(n) != TYPE_DICTIONARY:
+			continue
+		var npc := Npc.new()
+		npc.setup(n as Dictionary)
+		add_child(npc)
+		_npcs.append(npc)
 
 	# 바위 조형물 — 통과 불가 장애물.
 	for o: Variant in _obstacles:
@@ -1004,6 +1028,10 @@ func _unhandled_input(event: InputEvent) -> void:
 		return
 	if _inventory_ui != null and is_instance_valid(_inventory_ui):
 		return
+	if _dex_ui != null and is_instance_valid(_dex_ui):
+		return
+	if _npc_ui != null and is_instance_valid(_npc_ui):
+		return
 	if _resync != null and _resync.is_active():
 		# 동기화가 끝나기 전 조작을 받으면, 맞추던 위치를 다시 어긋내게 된다.
 		return
@@ -1284,6 +1312,8 @@ func _publish_fullscreen_hotspot() -> void:
 		or not is_instance_valid(_fullscreen_button) \
 		or not _fullscreen_button.is_visible_in_tree() \
 		or (_inventory_ui != null and is_instance_valid(_inventory_ui)) \
+		or (_dex_ui != null and is_instance_valid(_dex_ui)) \
+		or (_npc_ui != null and is_instance_valid(_npc_ui)) \
 		or (_touch != null and _touch.is_sheet_open())
 	var spec := ""
 	if not blocked:
@@ -1840,6 +1870,166 @@ func _drop_one() -> void:
 	_net.send_drop(item_id, _player.position)
 
 ## 가방 화면을 연다. 이미 열려 있으면 무시.
+## 서버가 알려준 NPC별 부탁 상태를 반영한다(느낌표 표시 포함).
+func _apply_npc_state(state: Dictionary) -> void:
+	_npc_state = state
+	for npc in _npcs:
+		var s: Dictionary = state.get(npc.id, {})
+		var has_request := typeof(s.get("request", null)) == TYPE_DICTIONARY \
+			and not bool(s.get("done", false))
+		npc.set_has_request(has_request)
+	if _dex_ui != null and is_instance_valid(_dex_ui):
+		_refresh_dex_ui()
+	if _hooks != null:
+		# E2E가 부탁 내용을 알아야 그 아이템을 모아 올 수 있다.
+		_hooks.set_state("npcRequests", _npc_request_summary())
+
+## "mochi:wood:3,dungdang:fruit:2" 형태 — 테스트가 파싱하기 쉬운 최소 형식.
+func _npc_request_summary() -> String:
+	var parts: Array[String] = []
+	for npc in _npcs:
+		var s: Dictionary = _npc_state.get(npc.id, {})
+		if bool(s.get("done", false)):
+			parts.append("%s:done" % npc.id)
+			continue
+		var r: Variant = s.get("request", null)
+		if typeof(r) != TYPE_DICTIONARY:
+			parts.append("%s:none" % npc.id)
+			continue
+		parts.append("%s:%s:%d" % [npc.id, String((r as Dictionary).get("item", "")),
+			int((r as Dictionary).get("count", 0))])
+	return ",".join(parts)
+
+## 탭한 지점 근처의 이웃(없으면 null).
+func _npc_near(point: Vector3) -> Npc:
+	var best := NPC_TAP_RADIUS
+	var found: Npc = null
+	for npc in _npcs:
+		var d := Vector2(npc.position.x - point.x, npc.position.z - point.z).length()
+		if d <= best:
+			best = d
+			found = npc
+	return found
+
+func _npc_by_id(npc_id: String) -> Npc:
+	for npc in _npcs:
+		if npc.id == npc_id:
+			return npc
+	return null
+
+## 이웃과 대화한다(다가간 뒤 호출된다).
+func _talk_to(npc: Npc) -> void:
+	if npc == null or not is_instance_valid(npc):
+		return
+	if not npc.can_talk(_player.position):
+		_show_toast("조금 더 가까이 가야 합니다")
+		return
+	_talking = npc.id
+	var state: Dictionary = _npc_state.get(npc.id, {})
+	var done := bool(state.get("done", false))
+	var request: Variant = state.get("request", null)
+	var text := npc.next_greeting()
+	var can_deliver := false
+	if done:
+		text = npc.dialogue("done", "오늘은 충분해. 내일 또 부탁할게.")
+	elif typeof(request) == TYPE_DICTIONARY:
+		var req := request as Dictionary
+		var item_id := String(req.get("item", ""))
+		var need := int(req.get("count", 0))
+		var have := int((_slot.get("inventory", {}) as Dictionary).get(item_id, 0))
+		var label := _label_of(item_id)
+		if have >= need:
+			can_deliver = true
+			text = "%s\n%s" % [text, npc.dialogue("need", "%s %d개만!") % [label, need]]
+		else:
+			# **몇 개 부족한지 숫자로** 알려준다 — "부족하다"만 말하면 가방
+			# 화면을 왕복하게 만든다.
+			text = "%s\n%s (%d/%d 있음)" % [
+				text, npc.dialogue("need", "%s %d개만!") % [label, need], have, need]
+	npc.say(text.split("\n")[0])
+	if _npc_ui == null or not is_instance_valid(_npc_ui):
+		_npc_ui = NpcUI.new()
+		_npc_ui.deliver_requested.connect(_on_npc_deliver)
+		_npc_ui.closed.connect(func() -> void:
+			_npc_ui = null
+			_talking = ""
+			_publish_fullscreen_hotspot.call_deferred())
+		add_child(_npc_ui)
+		# 자식이 _ready를 지난 뒤에 내용을 채운다.
+		var id := npc.id
+		var lbl := npc.label
+		var body := text
+		var deliverable := can_deliver
+		(func() -> void:
+			if _npc_ui != null and is_instance_valid(_npc_ui):
+				_npc_ui.show_talk(id, lbl, body, deliverable)).call_deferred()
+	else:
+		_npc_ui.show_talk(npc.id, npc.label, text, can_deliver)
+	_publish_fullscreen_hotspot.call_deferred()
+
+func _on_npc_deliver(npc_id: String) -> void:
+	if _net == null or not _net.connected:
+		_show_toast("서버에 연결돼 있지 않아 건넬 수 없습니다")
+		return
+	_net.send_npc_deliver(npc_id)
+
+## 정산 성공. 벨·가방·부탁 상태는 **서버 값으로 덮는다**(단일 출처).
+func _on_npc_done(npc_id: String, reward: int, given: Dictionary, bells: int,
+		inventory: Dictionary, state: Dictionary) -> void:
+	_slot["bells"] = bells
+	if typeof(inventory) == TYPE_DICTIONARY:
+		_slot["inventory"] = inventory
+	if typeof(state) == TYPE_DICTIONARY:
+		_apply_npc_state(state)
+	var npc := _npc_by_id(npc_id)
+	if npc != null:
+		npc.say(npc.dialogue("thanks", "고마워!"))
+	var item_label := _label_of(String(given.get("item", "")))
+	_show_toast("%s %d개를 건네고 %d벨을 받았다" % [item_label, int(given.get("count", 0)), reward])
+	if _npc_ui != null and is_instance_valid(_npc_ui):
+		_npc_ui.close()
+	_refresh_hud()
+	_refresh_inventory_ui()
+	_persist()
+
+## 정산 거절. 부족한 경우엔 **몇 개 부족한지** 보여준다.
+func _on_npc_error(code: String, message: String, need: Dictionary) -> void:
+	if code == "not_enough":
+		_show_toast("%s %d개가 필요하다 (%d개 있음)" % [
+			_label_of(String(need.get("item", ""))),
+			int(need.get("count", 0)), int(need.get("have", 0))])
+	else:
+		_show_toast(message)
+	if _npc_ui != null and is_instance_valid(_npc_ui) and not _talking.is_empty():
+		# 버튼을 다시 살려 준다(눌렀는데 아무 일도 없는 상태로 굳지 않게).
+		var npc := _npc_by_id(_talking)
+		if npc != null:
+			_talk_to(npc)
+
+## 도감을 연다(가방 화면의 [도감] 버튼).
+func _open_dex() -> void:
+	if _dex_ui != null and is_instance_valid(_dex_ui):
+		return
+	_dex_ui = DexUI.new()
+	_dex_ui.setup(_items, _dex, _npc_data(), _npc_state)
+	_dex_ui.closed.connect(func() -> void:
+		_dex_ui = null
+		_publish_fullscreen_hotspot.call_deferred())
+	add_child(_dex_ui)
+	_publish_fullscreen_hotspot.call_deferred()
+
+func _refresh_dex_ui() -> void:
+	if _dex_ui == null or not is_instance_valid(_dex_ui):
+		return
+	_dex_ui.setup(_items, _dex, _npc_data(), _npc_state)
+
+## 도감의 이웃 탭에 쓸 데이터(id·이름).
+func _npc_data() -> Array:
+	var out: Array = []
+	for npc in _npcs:
+		out.append({"id": npc.id, "label": npc.label})
+	return out
+
 func _open_inventory() -> void:
 	# 모달이 뜨면 전체화면 핫스팟을 **즉시** 내린다 — 0.25초 주기 갱신만
 	# 믿으면 그 사이 오른쪽 위를 탭할 때 가방을 닫으려다 전체화면이 켜진다.
@@ -1851,6 +2041,7 @@ func _open_inventory() -> void:
 	_inventory_ui.drop_requested.connect(_on_inventory_drop)
 	_inventory_ui.sell_requested.connect(func(item_id: String) -> void: _sell(item_id))
 	_inventory_ui.sell_all_requested.connect(func() -> void: _sell(""))
+	_inventory_ui.dex_requested.connect(_open_dex)
 	_inventory_ui.closed.connect(func() -> void:
 		_inventory_ui = null
 		# 내리는 쪽만 즉시면 반쪽이다 — 닫자마자 전체화면을 누르면 0.25초
@@ -1905,6 +2096,8 @@ func _start_net() -> void:
 	_net.item_added.connect(_on_item_added)
 	_net.item_removed.connect(_on_item_removed)
 	_net.gathered.connect(_on_server_gathered)
+	_net.npc_done.connect(_on_npc_done)
+	_net.npc_error.connect(_on_npc_error)
 	_net.inventory_received.connect(_on_inventory)
 	_net.sold.connect(_on_sold)
 	_net.rename_received.connect(_on_rename)
@@ -1961,6 +2154,11 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 	if you.has("bells"):
 		# 벨의 단일 출처는 서버다. 기기를 바꿔도 같은 값이 보인다.
 		_slot["bells"] = int(you["bells"])
+	# 부탁·도감도 서버가 단일 출처다(하루 1회 제한을 기기 시계로 우회할 수 없게).
+	if typeof(you.get("npc")) == TYPE_DICTIONARY:
+		_apply_npc_state(you["npc"])
+	if typeof(you.get("dex")) == TYPE_DICTIONARY:
+		_dex = you["dex"]
 	_refresh_hud()
 	_refresh_inventory_ui()
 	var sx := float(world_cfg.get("size_x", _world_size.x))
@@ -2089,6 +2287,14 @@ func _on_item_added(item: Dictionary) -> void:
 	_drop_items[id] = String(item.get("item", ""))
 
 func _on_item_removed(id: String, by: String) -> void:
+	# 내가 주운 것이면 도감에 올린다(서버도 같은 규칙으로 누적한다).
+	# 아이템 종류는 이미 _drop_items가 들고 있다 — 노드 메타를 새로 쓰면
+	# 같은 값이 두 곳에 생긴다.
+	if by == String(_slot.get("token", "")):
+		var picked: String = _drop_items.get(id, "")
+		if not picked.is_empty():
+			_dex[picked] = int(_dex.get(picked, 0)) + 1
+			_refresh_dex_ui()
 	if not _drops.has(id):
 		return
 	(_drops[id] as Node).queue_free()
@@ -2111,6 +2317,11 @@ func _on_server_gathered(index: int, item: String, available_at: float, by: Stri
 		break
 	if by == String(_slot.get("token", "")):
 		_show_toast("%s 채집!" % _label_of(item))
+		# 도감의 단일 출처는 서버지만, 서버가 매번 dex 전체를 보내지는 않는다
+		# (welcome/스냅샷에만 싣는다 — 방송 비용). 내가 캔 것은 여기서 함께
+		# 올려 도감이 즉시 반영되게 하고, 다음 접속에 서버 값으로 덮인다.
+		_dex[item] = int(_dex.get(item, 0)) + 1
+		_refresh_dex_ui()
 		# 무엇이 잡혔는지는 서버가 정한다 — E2E가 그 결과를 확인할 수 있게
 		# 마지막 획득을 공개한다(가방 개수만으로는 물고기인지 알 수 없다).
 		if _hooks != null:
@@ -2418,6 +2629,18 @@ func _on_world_tapped(screen_pos: Vector2, from_stick: bool = false) -> void:
 		_show_marker(g.global_position)
 		return
 
+	# 이웃을 탭하면 다가가서 말을 건다. 채집물보다 **뒤에** 보는 이유: 동물이
+	# 나무 옆을 지날 때 채집을 못 하면 그게 더 답답하다.
+	var npc := _npc_near(point)
+	if npc != null:
+		if _hooks != null:
+			_hooks.set_state("tapBranch", "npc:%s" % npc.id)
+		_tap_intent = {"kind": "npc", "id": npc.id}
+		_tap_gatherable = null
+		_player.move_to(npc.approach_point(_player.position))
+		_show_marker(npc.position)
+		return
+
 	# 놀이기구를 탭하면 그 자리까지 걸어가서 탄다.
 	if _park != null and _current_zone == "park" and not _is_riding():
 		var mount := _park.mount_near(point)
@@ -2567,6 +2790,9 @@ func _on_player_arrived() -> void:
 			var parts := id.split(":")
 			if parts.size() == 2:
 				_mount_ride(parts[0], int(parts[1]))
+		"npc":
+			# 걸어가는 동안 동물이 배회로 멀어졌을 수 있다 — 거리를 다시 본다.
+			_talk_to(_npc_by_id(id))
 		"kick":
 			# 도착하는 동안 남이 공을 차 갔을 수 있다 — 거리를 다시 본다.
 			if _ball_in_kick_range():
@@ -2683,6 +2909,19 @@ func _publish_test_points() -> void:
 		if g == null:
 			return Vector2(-1, -1)
 		return _camera.unproject_position(g.global_position + Vector3(0, 0.6, 0))
+	)
+	_hooks.track_dynamic("nearestNpc", func() -> Vector2:
+		# 이웃은 배회하므로 **지금 보이는 위치**를 알려줘야 테스트가 탭할 수 있다.
+		var best := INF
+		var found: Npc = null
+		for npc in _npcs:
+			var d := _player.position.distance_to(npc.position)
+			if d < best:
+				best = d
+				found = npc
+		if found == null:
+			return Vector2(-1, -1)
+		return _camera.unproject_position(found.position + Vector3(0, 0.8, 0))
 	)
 	_hooks.track_dynamic("nearestDrop", func() -> Vector2:
 		var best := INF

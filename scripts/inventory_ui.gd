@@ -13,6 +13,8 @@ class_name InventoryUI
 signal drop_requested(item_id: String)
 signal sell_requested(item_id: String)
 signal sell_all_requested
+## 도감 열기 — 가방과 같은 진입 경로로 둔다(최상위 버튼을 늘리지 않는다).
+signal dex_requested
 signal closed
 
 const PANEL_MIN := Vector2(460, 300)
@@ -87,6 +89,16 @@ func _ready() -> void:
 	_sell_all_btn.pressed.connect(func() -> void: sell_all_requested.emit())
 	box.add_child(_sell_all_btn)
 	_hooks.track("invSellAll", _sell_all_btn)
+
+	# 도감은 가방과 성격이 가깝다(내가 모은 것) — 여기서 열게 해서 오른쪽 위
+	# 버튼 열을 더 길게 만들지 않는다.
+	var dex_btn := Button.new()
+	dex_btn.text = "도감"
+	dex_btn.custom_minimum_size = Vector2(0, ROW_HEIGHT)
+	dex_btn.focus_mode = Control.FOCUS_NONE
+	dex_btn.pressed.connect(func() -> void: dex_requested.emit())
+	box.add_child(dex_btn)
+	_hooks.track("invDex", dex_btn)
 
 	var close_btn := Button.new()
 	close_btn.text = "닫기"

@@ -1075,3 +1075,161 @@ test('어떤 월·시각에도 뽑기 후보가 2종 이상이다', () => {
   }
   assert.equal(singles.length, 0, `후보가 1종뿐인 시간대: ${singles.slice(0, 8).join(', ')}`);
 });
+
+// ---------------------------------------------------------------------------
+// F3 이웃 동물(NPC) 부탁 · 도감
+// ---------------------------------------------------------------------------
+
+// 이웃 옆에 세운다 — 정산에는 거리 검사가 있다(섬 반대편에서 부탁을 처리할 수
+// 없어야 한다).
+function standAtNpc(w, token, npcId) {
+  const npc = w.npcs.get(npcId);
+  assert.ok(npc, `${npcId} NPC가 데이터에 없다`);
+  const p = w.players.get(token);
+  p.x = npc.x;
+  p.z = npc.z;
+  return npc;
+}
+
+test('부탁은 (토큰·NPC·날짜)로 결정적이다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  w.join({ token: TOKEN_B, name: '나', preset: 'f1' });
+  const at = new Date(2026, 8, 6, 12, 0).getTime();
+  const a1 = w.npcRequest(TOKEN_A, 'mochi', at);
+  const a2 = w.npcRequest(TOKEN_A, 'mochi', at);
+  assert.deepEqual(a1, a2, '같은 조건에서 부탁이 달라졌다 — 재시작·스냅샷마다 요구가 바뀐다');
+  // 날짜가 바뀌면 부탁도 바뀔 수 있어야 한다(항상 같으면 하루 제한이 무의미).
+  const nextMonth = new Date(2026, 9, 6, 12, 0).getTime();
+  const later = w.npcRequest(TOKEN_A, 'mochi', nextMonth);
+  assert.ok(later, '다음 날 부탁이 없다');
+  // 토큰이 다르면 서로 다른 부탁을 받을 수 있다(같아도 되지만 계산은 독립)
+  assert.ok(w.npcRequest(TOKEN_B, 'mochi', at));
+});
+
+test('없는 이웃·부족한 물건은 거부하고 가방을 건드리지 않는다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  assert.equal(w.npcDeliver(TOKEN_A, 'nobody').error.code, 'unknown_npc');
+  const req = w.npcRequest(TOKEN_A, 'mochi');
+  const p = w.players.get(TOKEN_A);
+  standAtNpc(w, TOKEN_A, 'mochi');
+  p.inventory[req.item] = req.count - 1;
+  const r = w.npcDeliver(TOKEN_A, 'mochi');
+  assert.equal(r.error.code, 'not_enough');
+  assert.equal(r.need.have, req.count - 1, '부족한 수를 알려주지 않으면 가방 화면을 왕복해야 한다');
+  assert.equal(p.inventory[req.item], req.count - 1, '거절인데 가방이 줄었다');
+  assert.equal(p.bells, 0);
+});
+
+test('부탁을 완료하면 서버가 차감·정산하고 하루 1회로 막는다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const at = new Date(2026, 8, 6, 12, 0).getTime();
+  const req = w.npcRequest(TOKEN_A, 'mochi', at);
+  const p = w.players.get(TOKEN_A);
+  standAtNpc(w, TOKEN_A, 'mochi');
+  p.inventory[req.item] = req.count + 1;      // 여유분 1개
+  const r = w.npcDeliver(TOKEN_A, 'mochi', at);
+  assert.ok(!r.error, `정산이 거부됐다: ${r.error && r.error.code}`);
+  // 보상 = 판매가 × 개수 × 배수. 클라이언트가 금액을 주장하지 않는다.
+  const expected = Math.floor(w.priceOf(req.item) * req.count * w.npcRewardMultiplier);
+  assert.equal(r.reward, expected);
+  assert.equal(r.bells, expected);
+  assert.equal(p.inventory[req.item], 1, '요구한 개수만 차감해야 한다');
+  assert.equal(r.state.mochi.done, true);
+  // 같은 날 두 번째는 거부.
+  assert.equal(w.npcDeliver(TOKEN_A, 'mochi', at + 5000).error.code, 'already_done');
+  // 다른 이웃은 여전히 가능하다(NPC별 제한).
+  assert.equal(w.npcState(TOKEN_A, at).dungdang.done, false);
+  // 날이 바뀌면 다시 가능하다.
+  assert.equal(w.npcState(TOKEN_A, at + 24 * 3600 * 1000).mochi.done, false);
+});
+
+test('정산 연타는 레이트 리밋으로 막는다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const at = 9_000_000;
+  const req = w.npcRequest(TOKEN_A, 'mochi', at);
+  const p = w.players.get(TOKEN_A);
+  standAtNpc(w, TOKEN_A, 'mochi');
+  p.inventory[req.item] = req.count * 2;
+  assert.ok(!w.npcDeliver(TOKEN_A, 'mochi', at).error);
+  // 두 번째는 다른 이웃이라도 간격 제한에 걸린다(연타 방지).
+  assert.equal(w.npcDeliver(TOKEN_A, 'mochi', at + 10).error.code, 'rate_limited');
+});
+
+test('부탁 아이템이 items.json에 없으면 로드할 때 걸러진다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'af-npc-'));
+  const src = JSON.parse(readFileSync('data/npcs.json', 'utf-8'));
+  src.npcs[0].requests = [{ item: 'unicorn', count: 1 }, { item: 'wood', count: 2 }];
+  writeFileSync(join(dir, 'npcs.json'), JSON.stringify(src));
+  for (const name of ['world.json', 'items.json', 'activities.json', 'gatherables.json', 'emotes.json', 'characters.json', 'palette.json']) {
+    try { writeFileSync(join(dir, name), readFileSync(join('data', name))); } catch { /* 없는 파일은 건너뜀 */ }
+  }
+  const w = new WorldState({ dataDir: dir, persist: false });
+  const reqs = w.npcs.get(src.npcs[0].id).requests;
+  assert.equal(reqs.length, 1, '정의에 없는 아이템을 요구하면 그 부탁은 영원히 완료할 수 없다');
+  assert.equal(reqs[0].item, 'wood');
+});
+
+test('도감은 채집·줍기로 누적되고 판매·드랍으로 줄지 않는다', () => {
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const p = w.players.get(TOKEN_A);
+  const g = w.gatherables.find((s) => s.kind === 'tree');
+  p.x = g.x; p.z = g.z;
+  const r = w.gather(TOKEN_A, g.index, 5_000_000);
+  const item = r.gathered.item;
+  assert.equal(p.dex[item], 1);
+  // 드랍 → 다른 사람이 줍기: 주운 쪽 도감이 늘어난다.
+  const dropped = w.drop(TOKEN_A, item, p.x, p.z);
+  assert.ok(!dropped.error, `드랍이 거부됐다: ${dropped.error && dropped.error.code}`);
+  assert.equal(p.dex[item], 1, '버렸다고 도감이 줄었다 — 도감은 기록이다');
+  w.join({ token: TOKEN_B, name: '나', preset: 'f1' });
+  const b = w.players.get(TOKEN_B);
+  b.x = p.x; b.z = p.z;
+  assert.ok(!w.pickup(TOKEN_B, dropped.item.id).error);
+  assert.equal(b.dex[item], 1, '주운 쪽 도감이 늘지 않았다');
+  // 판매해도 줄지 않는다.
+  b.inventory[item] = 1;
+  w.sell(TOKEN_B, null, 5_100_000);
+  assert.equal(b.dex[item], 1, '팔았다고 도감이 줄었다');
+});
+
+test('NPC 진행도와 도감은 재시작해도 남는다', () => {
+  const statePath = join(mkdtempSync(join(tmpdir(), 'af-npcsave-')), 'world.json');
+  const w = new WorldState({ statePath });
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const at = new Date(2026, 8, 6, 12, 0).getTime();
+  const req = w.npcRequest(TOKEN_A, 'mochi', at);
+  const p = w.players.get(TOKEN_A);
+  standAtNpc(w, TOKEN_A, 'mochi');
+  p.inventory[req.item] = req.count;
+  p.dex = { wood: 7 };
+  assert.ok(!w.npcDeliver(TOKEN_A, 'mochi', at).error);
+  assert.ok(w.save(), '상태 저장이 실패했다');
+  const w2 = new WorldState({ statePath });
+  const p2 = w2.players.get(TOKEN_A);
+  assert.equal(p2.dex.wood, 7, '도감이 재시작에 사라졌다');
+  assert.equal(w2.npcState(TOKEN_A, at).mochi.done, true, '하루 1회 제한이 재시작으로 풀렸다');
+});
+
+test('멀리서는 부탁을 정산할 수 없다', () => {
+  // 없으면 섬 반대편에서 부탁만 눌러 벨을 받을 수 있다. 기준은 데이터의 고정
+  // 좌표이고, 배회 반경 + 여유를 준다(배회는 클라이언트가 그린다).
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '가', preset: 'f1' });
+  const req = w.npcRequest(TOKEN_A, 'mochi');
+  const p = w.players.get(TOKEN_A);
+  p.inventory[req.item] = req.count;
+  const npc = w.npcs.get('mochi');
+  // 허용 거리 바로 밖.
+  p.x = npc.x + npc.wanderRadius + LIMITS.NPC_TALK_PAD + 0.5;
+  p.z = npc.z;
+  assert.equal(w.npcDeliver(TOKEN_A, 'mochi').error.code, 'too_far');
+  assert.equal(p.bells, 0);
+  // 허용 거리 안.
+  p.x = npc.x + npc.wanderRadius;
+  assert.ok(!w.npcDeliver(TOKEN_A, 'mochi', Date.now() + 1000).error);
+});
