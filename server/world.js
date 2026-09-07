@@ -401,13 +401,17 @@ export class WorldState {
     this.race = { phase: 'idle', endsAt: 0, startedAt: 0, runners: new Map() };
 
     const gatherCfg = readJson(join(dataDir, 'gatherables.json'), { spawns: [] });
-    const gatherLimits = (gatherCfg.limits || {}).respawn_sec || [10, 86400];
+    // 형식을 검사해서 읽는다 — `limits.respawn_sec = 5`처럼 배열이 아닌 값이면
+    // 인덱스가 undefined가 되고 비교가 조용히 false여서 NaN이 퍼졌다(가격에서
+    // 겪은 것과 같은 부류다 — 2026-09-08 Codex 감사가 세 곳을 더 찾았다).
+    const glim = (key, fallback) => rangeOf(gatherCfg.limits, key, 'gatherables.json', fallback);
+    const gatherLimits = glim('respawn_sec', [10, 86400]);
     // 확률 테이블(낚시·벌레). **서버가 굴린다** — 클라이언트가 아이템을 주장하면
     // 비싼 것만 반복해서 잡을 수 있고, 시간·월 조건도 기기 시계로 우회된다.
     // hours는 [시작, 끝)이고 시작 > 끝이면 자정을 넘는 구간이다. months는 있으면
     // 그 달에만 나온다(계절 문자열을 쓰지 않는 이유: 서버(JS)와 클라이언트
     // (GDScript)가 같은 매핑을 각자 구현하면 두 곳이 갈린다).
-    const weightRange = (gatherCfg.limits || {}).catch_weight || [1, 1000];
+    const weightRange = glim('catch_weight', [1, 1000]);
     this.catchTables = {};
     for (const [kind, rows] of Object.entries(gatherCfg.catch_tables || {})) {
       const entries = (rows || [])
@@ -495,8 +499,7 @@ export class WorldState {
         // 배회 반경 + 여유가 정산 허용 거리다. 배회는 클라이언트가 시간
         // 함수로 그리므로(scripts/npc.gd) 보이는 위치가 기기마다 조금 다르다.
         wanderRadius: num(raw.wander_radius, 3.0,
-          (npcLimits.wander_radius || [0, 8])[0],
-          (npcLimits.wander_radius || [0, 8])[1],
+          ...nlim('wander_radius', [0, 8]),
           `npcs.json/${id}/wander_radius`),
         requests,
       });
@@ -1751,10 +1754,17 @@ export class WorldState {
 
   // 부탁 보상 = 판매가 총합 × reward_multiplier. **서버가 계산한다** —
   // 클라이언트가 금액을 주장하면 벨을 임의로 불릴 수 있다.
+  //
+  // 가격을 확정할 수 없으면 **null**을 돌려준다. 예전에는 `null * count * 1.8`이
+  // 0이 되어 조용히 보상 0으로 정산됐는데, npcDeliver는 아이템을 지우고 그날
+  // 부탁까지 완료로 찍으므로 **되돌릴 수 없는 손실**이었다(리뷰 지적). sell이
+  // "0벨에 파는 것도 손실"이라며 가방에 남기는 것과 반대 동작이었다.
   npcReward(request) {
-    if (!request) return 0;
+    if (!request) return null;
     const price = this.priceOf(request.item);
-    return Math.max(0, Math.floor(price * request.count * this.npcRewardMultiplier));
+    if (price === null) return null;
+    const reward = Math.floor(price * request.count * this.npcRewardMultiplier);
+    return Number.isFinite(reward) ? Math.max(0, reward) : null;
   }
 
   // 이 플레이어가 보는 NPC 상태(welcome/snapshot과 정산 응답에 함께 실린다).
@@ -1813,11 +1823,21 @@ export class WorldState {
         state: this.npcState(token, now),
       };
     }
+    // **보상을 먼저 확정한다.** 가격을 모르는 아이템이면 아무것도 소비하지 않고
+    // 거절한다 — 소비 뒤에 알면 아이템도 부탁도 되돌릴 수 없다.
+    const reward = this.npcReward(request);
+    if (reward === null) {
+      console.warn(`[world] ${request.item}의 가격을 확정할 수 없어 부탁 정산을 거절: ${npc.id}`);
+      return {
+        error: { code: 'bad_item_price', message: '이 물건의 가격 데이터가 잘못돼 정산할 수 없습니다' },
+        state: this.npcState(token, now),
+      };
+    }
     const left = have - request.count;
     if (left <= 0) delete p.inventory[request.item];
     else p.inventory[request.item] = left;
-    const reward = this.npcReward(request);
-    p.bells = Math.max(0, Math.floor(p.bells + reward));
+    const next = Number(p.bells) + reward;
+    p.bells = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : p.bells;
     p.npcDone[npc.id] = today;
     this._markDirty();
     return {
@@ -1898,7 +1918,11 @@ export class WorldState {
     // 범위는 아이템 항목 자체가 들고 있다(`price_range`) — meta를 limits 자리에
     // 그대로 넘긴다. 다른 파일처럼 최상위 limits가 아니라서 alim/rlim/nlim 같은
     // 헬퍼를 쓰지 않는 **유일한 직접 호출**이다(tests가 그 사실을 고정한다).
-    const range = rangeOf(meta, 'price_range', `items.json/${itemId}`, null);
+    // 범위가 아예 없으면 **클라이언트와 같은 폴백 범위**를 쓴다
+    // (scripts/balance.gd의 FALLBACK["price"]) — 서버만 원값을 쓰면 sell_price가
+    // 음수인 데이터에서 화면 금액과 정산이 갈린다(리뷰 지적). 데이터에 범위를
+    // 빠뜨린 것 자체는 items.json 린트가 잡는다.
+    const range = rangeOf(meta, 'price_range', `items.json/${itemId}`, [0, 1000000]);
     let price = Number(meta.sell_price);
     if (!Number.isFinite(price)) {
       console.warn(`[world] ${itemId}의 sell_price가 숫자가 아니라 팔 수 없음: ${meta.sell_price}`);
@@ -1969,7 +1993,11 @@ export class WorldState {
     // 정산 직전 마지막 방어 — 여기서 NaN이 들어가면 세이브에 그대로 남아
     // 재접속해도 복구되지 않는다(벨이 NaN인 캐릭터는 다시 못 고친다).
     const next = Number(p.bells) + total;
-    p.bells = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : p.bells;
+    // 기존 벨이 이미 비유한이면 그것을 유지하면 **판 물건만 사라진다** —
+    // 정산액만이라도 남긴다(_loadState가 벨을 정화하므로 도달은 어렵다).
+    p.bells = Number.isFinite(next)
+      ? Math.max(0, Math.floor(next))
+      : Math.max(0, Math.floor(total));
     this._markDirty();
     return { sold, total, bells: p.bells, inventory: p.inventory, unsold };
   }

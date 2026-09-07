@@ -21,6 +21,7 @@ const LIMIT_READERS = [
   { fn: 'alim', file: 'activities.json', limitsOf: (d) => d.limits || {} },
   { fn: 'rlim', file: 'world.json', limitsOf: (d) => ((d.playground || {}).race || {}).limits || {} },
   { fn: 'nlim', file: 'npcs.json', limitsOf: (d) => d.limits || {} },
+  { fn: 'glim', file: 'gatherables.json', limitsOf: (d) => d.limits || {} },
 ];
 
 // 큰따옴표·백틱도 받는다(작은따옴표만 보면 표기를 바꾼 호출이 조용히 빠진다).
@@ -969,6 +970,43 @@ function joinedWith(w, itemId, count = 3, bells = 100) {
   p.bells = bells;
   return { token, p };
 }
+
+test('items.json의 모든 아이템이 price_range를 갖는다(데이터 린트)', () => {
+  // 범위가 없으면 서버는 폴백 [0, 1000000]을 쓰는데, 그건 "출처"가 아니라 마지막
+  // 안전장치다. 새 아이템에서 빠뜨리면 사실상 아무 상한도 없는 상태가 되고,
+  // 헬퍼 기반 린트(LIMIT_READERS)는 이 경로를 구조적으로 못 본다(리뷰 지적).
+  const items = JSON.parse(readFileSync(join('data', 'items.json'), 'utf-8')).items || {};
+  const missing = Object.keys(items).filter((id) => {
+    const r = items[id].price_range;
+    return !(Array.isArray(r) && r.length === 2
+      && Number.isFinite(Number(r[0])) && Number.isFinite(Number(r[1]))
+      && Number(r[0]) <= Number(r[1]));
+  });
+  assert.deepEqual(missing, [], `price_range가 없거나 형식이 잘못된 아이템: ${missing.join(', ')}`);
+});
+
+test('부탁 아이템의 가격을 확정할 수 없으면 소비하지 않고 거절한다', () => {
+  // `null * count * 1.8`이 0이 되어 조용히 보상 0으로 정산됐고, npcDeliver는
+  // 아이템을 지우고 그날 부탁까지 완료로 찍었다 — 되돌릴 수 없는 손실이었다.
+  const w = worldWithItems('af-npcprice-', (items) => {
+    for (const id of Object.keys(items.items)) items.items[id].sell_price = '비쌈';
+  });
+  const token = TOKEN_A;
+  w.join({ token, name: '테스터', preset: 'p1' });
+  const p = w.players.get(token);
+  const npc = [...w.npcs.values()][0];
+  const state = w.npcState(token);
+  const req = state[npc.id] && state[npc.id].request;
+  assert.ok(req, '부탁이 없어 검증할 수 없다');
+  p.inventory[req.item] = req.count;
+  p.x = npc.x; p.z = npc.z;
+  const before = { bells: p.bells, count: p.inventory[req.item] };
+  const r = w.npcDeliver(token, npc.id);
+  assert.ok(r.error, '가격을 모르는 부탁이 정산됐다');
+  assert.equal(p.inventory[req.item], before.count, '아이템이 소비됐다');
+  assert.equal(p.bells, before.bells, '벨이 바뀌었다');
+  assert.ok(!p.npcDone[npc.id], '그날 부탁이 완료로 찍혔다');
+});
 
 test('price_range가 [lo, hi] 형식이 아니면 무시하고 원가로 판다(벨이 NaN이 되지 않는다)', () => {
   // `price_range: ["x", 100]`이면 lo가 NaN이 되고 Math.max(NaN, price)가 NaN이라

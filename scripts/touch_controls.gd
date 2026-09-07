@@ -303,8 +303,9 @@ func _input(event: InputEvent) -> void:
 			_stick_moved = true
 		_stick_visual.queue_redraw()
 
-## 모달(가방·도감·꾸미기·NPC)을 열 때 world.gd가 부른다 — 스틱을 잡은 채 모달을
-## 열면 손을 떼도 마지막 벡터가 남아 닫은 뒤 그 방향으로 끌려간다.
+## 모달(가방·도감·꾸미기·NPC 대화창)을 열 때 world.gd가 **네 경로 모두에서** 부른다
+## — 스틱을 잡은 채 모달을 열면 손을 떼도 마지막 벡터가 남아 닫은 뒤 그 방향으로
+## 끌려간다. 처음에는 가방 경로에만 넣어서 NPC 대화창이 빠져 있었다(리뷰 지적).
 func release_stick() -> void:
 	_release_stick()
 

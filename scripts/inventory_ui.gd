@@ -172,9 +172,16 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 		row.add_theme_constant_override("separation", 8)
 		_list.add_child(row)
 
+		# **-1(가격 미상)은 숫자로 찍지 않는다.** 그대로 넣으면 "개당 -1벨"이 뜨는데,
+		# 서버는 그 아이템을 팔지 않고 가방에 남긴다 — 화면이 서버와 다른 말을 하게
+		# 된다(리뷰 지적). 클라 빌드와 서버 데이터 버전이 다를 때 실제로 도달한다.
+		var priced := price >= 0
 		var name_label := Label.new()
-		name_label.text = "%s x%d · %d벨" % [label_text, count, price] if narrow \
-			else "%s x%d  (개당 %d벨)" % [label_text, count, price]
+		if not priced:
+			name_label.text = "%s x%d · 가격 미상" % [label_text, count]
+		else:
+			name_label.text = "%s x%d · %d벨" % [label_text, count, price] if narrow \
+				else "%s x%d  (개당 %d벨)" % [label_text, count, price]
 		name_label.custom_minimum_size = Vector2(maxf(row_w - btn_w * 2 - 40, 80.0), ROW_HEIGHT)
 		# 글자가 길면 줄을 밀어내 패널이 화면을 넘는다(하한일 뿐이므로) — 자른다.
 		name_label.clip_text = true
@@ -194,6 +201,8 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 
 		var sell_btn := Button.new()
 		sell_btn.text = "판매"
+		# 팔 수 없는 것은 버튼도 잠근다 — 눌러도 서버가 거절할 뿐이다.
+		sell_btn.disabled = not priced
 		sell_btn.custom_minimum_size = Vector2(btn_w, ROW_HEIGHT)
 		sell_btn.clip_text = true
 		sell_btn.focus_mode = Control.FOCUS_NONE

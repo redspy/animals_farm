@@ -2129,6 +2129,10 @@ func _talk_to(npc: Npc) -> void:
 		_show_toast("조금 더 가까이 가야 합니다")
 		return
 	_talking = npc.id
+	# 스틱을 잡은 채 이웃을 탭하면 벡터가 남는다 — 대화창은 월드에서 바로 뜨므로
+	# 가방 경로(_open_inventory)의 해제가 여기엔 적용되지 않았다(리뷰 지적).
+	if _touch != null:
+		_touch.release_stick()
 	var state: Dictionary = _npc_state.get(npc.id, {})
 	var done := bool(state.get("done", false))
 	var request: Variant = state.get("request", null)
@@ -2290,6 +2294,8 @@ func _on_appearance(token: String, custom: Dictionary) -> void:
 func _open_look() -> void:
 	if _look_ui != null and is_instance_valid(_look_ui):
 		return
+	if _touch != null:
+		_touch.release_stick()
 	_look_ui = AppearanceUI.new()
 	_look_ui.setup(_appearance_choices, _custom, _merged_look(_custom),
 		String(_slot.get("token", "")))
@@ -2366,6 +2372,8 @@ func _is_uuid(text: String) -> bool:
 func _open_dex() -> void:
 	if _dex_ui != null and is_instance_valid(_dex_ui):
 		return
+	if _touch != null:
+		_touch.release_stick()
 	_dex_ui = DexUI.new()
 	_dex_ui.setup(_items, _dex, _npc_data(), _npc_state)
 	_dex_ui.closed.connect(func() -> void:
@@ -3001,6 +3009,12 @@ func _screen_to_ground(screen_pos: Vector2) -> Variant:
 ## TouchControls가 **떼는 시점에** 끌지 않았음을 확인하고 알려주므로, 그 경로만
 ## 가드를 통과시킨다.
 func _on_world_tapped(screen_pos: Vector2, from_stick: bool = false) -> void:
+	# **모달이 열려 있으면 월드 탭을 받지 않는다.** TouchControls._input은 Control의
+	# GUI 입력보다 먼저 돌아서, 가방의 전체화면 dim 버튼이 막아 주지 못한다 —
+	# 가방을 연 채 화면 왼쪽 아래를 탭하면 가방이 닫히는 동시에 그 지점으로
+	# 이동·채집이 걸렸다(리뷰 지적). 판정은 _modal_open() 한 곳에서만 한다.
+	if _modal_open():
+		return
 	if _hooks != null:
 		# E2E가 "클릭이 게임에 도달했는지"를 확인할 수 있게 횟수를 남긴다.
 		_hooks.set_state("worldTaps", int(_hooks_tap_count + 1))
