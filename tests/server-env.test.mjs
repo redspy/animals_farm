@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { envOf, envIsOffIn } from '../server/env.js';
+import { envOf, envIsOff, envIsOffIn } from '../server/env.js';
 
 // cmd의 `set VAR=값 && cmd`가 값에 뒤 공백을 담는 함정. 배포에서 두 번 물렸으므로
 // (TLS가 "off "가 되어 https로 떴고, 그 상태로 http 헬스체크가 실패했다) 여기에
@@ -28,5 +28,22 @@ test('TLS=off 판정은 공백·대소문자를 무시한다', () => {
   // 값이 없으면 off가 아니다 — 인증서가 있으면 https로 뜨는 기존 동작을 지킨다.
   for (const v of ['', '   ', 'on', undefined]) {
     assert.ok(!envIsOffIn({ TLS: v }, 'TLS'), `${JSON.stringify(v)}가 off로 읽힌다`);
+  }
+});
+
+test('envIsOff 래퍼가 process.env를 읽는다', () => {
+  // 래퍼를 `envIsOffIn(key, process.env)`로 잘못 적어도 envIsOffIn 테스트는 전부
+  // 통과하고 배포에서만 https로 뜬다(과거 두 번 물린 그 사고) — 래퍼도 직접 본다.
+  const before = process.env.TLS;
+  try {
+    process.env.TLS = 'off ';
+    assert.ok(envIsOff('TLS'), '래퍼가 process.env를 읽지 않는다');
+    process.env.TLS = 'on';
+    assert.ok(!envIsOff('TLS'));
+    delete process.env.TLS;
+    assert.ok(!envIsOff('TLS'), '값이 없을 때 off로 읽혔다(인증서가 있으면 https로 떠야 한다)');
+  } finally {
+    if (before === undefined) delete process.env.TLS;
+    else process.env.TLS = before;
   }
 });

@@ -240,13 +240,18 @@ func _ready() -> void:
 	# 다르면 여기서 _ready가 멈추고 월드 조립·접속까지 날아간다(이유는
 	# scripts/data_files.gd의 dict_or_empty 주석).
 	#
-	# **범위는 _ready와 _build_world의 데이터·세이브 읽기 전부다.** activities.json만
-	# 막았다가 더 앞줄이, 그다음엔 _build_world의 순회가 같은 지뢰라는 지적을
-	# 연달아 받았다(리뷰 5·6차) — 새로 데이터를 읽을 때도 같은 헬퍼를 쓸 것.
+	# **범위는 _ready와 _build_world가 직접 읽는 값까지다.** activities.json만 막았다가
+	# 더 앞줄이, 그다음엔 _build_world의 순회가, 그다음엔 숫자 leaf가 같은 지뢰라는
+	# 지적을 연달아 받았다(리뷰 5·6·7차) — 새로 데이터를 읽을 때도 같은 헬퍼를 쓸 것.
+	#
+	# ⚠️ **아직 raw 캐스트가 남은 곳**: 여기서 넘겨받은 설정을 각자 읽는 콜리들
+	# (gatherable.gd·npc.gd·park.gd·playground.gd의 `float(cfg.get(...))`). 실패하면
+	# 결과는 같다(월드 조립 중단). 한 번에 옮기지 않은 이유는 그 파일들이 자기
+	# 유효범위 검사(Balance.clamp_value)와 얽혀 있어 함께 손봐야 하기 때문이다.
 	_items = DataFiles.dict_or_empty(DataFiles.load_dict("res://data/items.json").get("items", {}), "items.json의 items")
 	_world_size = Vector2(
-		float(_world_cfg.get("size_x", 50.7)),
-		float(_world_cfg.get("size_z", 28.5))
+		DataFiles.float_or(_world_cfg.get("size_x", 50.7), 50.7, "world.json의 size_x"),
+		DataFiles.float_or(_world_cfg.get("size_z", 28.5), 28.5, "world.json의 size_z")
 	)
 	_zones = DataFiles.array_or_empty(_world_cfg.get("zones", []), "world.json의 zones")
 	_obstacles = DataFiles.array_or_empty(_world_cfg.get("obstacles", []), "world.json의 obstacles")
@@ -300,9 +305,16 @@ func _build_world() -> void:
 	# 기억한다" — 컨셉). 서버에 붙으면 서버 값이 우선이다(docs/protocol.md §4).
 	# 세이브에서 온다 — 손상되면 월드가 안 뜨고 인게임 복구 수단이 없다.
 	var pos: Dictionary = DataFiles.dict_or_empty(_slot.get("pos", {}), "세이브 슬롯의 pos")
+	# **경계로 자른다.** 타입만 막으면 값이 섬 밖일 수 있다 — 맵 크기는 실제로 바뀐
+	# 이력이 있고(50.7×28.5 → 76.05×42.75), 줄이는 방향으로 한 번만 바꾸면 예전
+	# 세이브의 좌표가 바다 위가 된다. position은 여기서 직접 대입하므로 이동 입력이
+	# 들어오기 전까지 클램프를 타지 않고, 서버에 붙기 전(오프라인) 구간도 그렇다.
+	# "1e999"처럼 INF가 되는 문자열도 이 클램프가 함께 막는다(리뷰 지적).
 	_player.position = Vector3(
-		DataFiles.float_or(pos.get("x", 0.0), 0.0, "세이브 슬롯의 pos.x"), 0.0,
-		DataFiles.float_or(pos.get("z", 0.0), 0.0, "세이브 슬롯의 pos.z"))
+		clampf(DataFiles.float_or(pos.get("x", 0.0), 0.0, "세이브 슬롯의 pos.x"),
+			-_world_size.x * 0.5, _world_size.x * 0.5), 0.0,
+		clampf(DataFiles.float_or(pos.get("z", 0.0), 0.0, "세이브 슬롯의 pos.z"),
+			-_world_size.y * 0.5, _world_size.y * 0.5))
 	add_child(_player)
 
 	# 내 캐릭터도 남들과 같은 이름표·말풍선을 쓴다 — 나만 다르게 보이면
@@ -762,7 +774,6 @@ func _build_hud() -> void:
 		_touch.emote_selected.connect(_send_emote)
 		# 터치 UI의 판매 확인 시트는 가방 화면으로 대체됐다 — 무엇을 파는지
 		# 고르지 못하는 "전부 판매"만 있는 것이 위험했다.
-		_touch.sell_requested.connect(func() -> void: _sell(""))
 		add_child(_touch)
 
 ## 좁은 화면(폰) 여부. 판정은 UiScale이 갖는다 — 뷰포트 크기로 직접 재면
@@ -792,8 +803,9 @@ func _make_label(layer: CanvasLayer, preset: int, color: Color, outline: Color) 
 	layer.add_child(l)
 	return l
 
-## 가방 줄을 탭하면 판매 확인을 띄운다. 터치 UI가 없는 환경에서는 기존 S 키가
-## 그대로 즉시 판매한다.
+## 가방 줄을 탭하면 **가방 화면**을 연다. 예전에는 전량 판매 확인 시트를 띄웠는데,
+## 아이템별 판매가 생긴 뒤로는 같은 자리에서 가방을 여는 편이 일관된다(S/I 키도
+## 가방을 연다) — 쓰이지 않게 된 시트 코드는 제거했다(2026-09-08 Codex 감사 지적).
 func _on_bag_clicked(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
 		return

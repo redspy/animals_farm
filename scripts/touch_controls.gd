@@ -21,7 +21,6 @@ signal action_pressed          # 채집/줍기 (기존 Space)
 signal chat_pressed
 signal drop_pressed
 signal emote_selected(emote_id: String)
-signal sell_requested          # (남겨둠) 확인 시트에서 전부 판매를 확정한 경우
 signal inventory_pressed       # 가방 화면 열기
 ## 조이스틱 사용 여부가 바뀔 때. 세이브에 남겨 다음 접속에도 유지한다.
 signal joystick_toggled(enabled: bool)
@@ -84,7 +83,6 @@ var _stick_pressed_ms := 0
 var _stick_moved := false
 var _stick_visual: Control
 var _emote_sheet: Control
-var _sell_sheet: Control
 var _emotes: Array = []
 var _hooks: TestHooks
 
@@ -104,7 +102,6 @@ func _ready() -> void:
 	_build_buttons()
 	_build_stick_visual()
 	_build_emote_sheet()
-	_build_sell_sheet()
 
 ## 채팅 버튼 영역을 캔버스 비율로 셸에 게시한다.
 ##
@@ -272,9 +269,6 @@ func _input(event: InputEvent) -> void:
 	# 시트가 열려 있으면 조이스틱을 잡지 않는다(시트 밖 탭으로 닫기 위함).
 	if _emote_sheet != null and _emote_sheet.visible:
 		return
-	if _sell_sheet != null and _sell_sheet.visible:
-		return
-
 	if not joystick_enabled:
 		return
 
@@ -395,49 +389,6 @@ func _build_emote_sheet() -> void:
 		if _hooks != null:
 			_hooks.track("emoteItem%d" % grid.get_child_count(), b)
 
-func _build_sell_sheet() -> void:
-	_sell_sheet = _make_sheet()
-
-	var panel := PanelContainer.new()
-	panel.set_anchors_preset(Control.PRESET_CENTER)
-	# PRESET_CENTER는 앵커만 화면 중앙에 두고, 크기는 grow 방향으로 자란다.
-	# 기본값(END)이면 중앙에서 **오른쪽/아래로만** 자라 패널이 한쪽으로 치우치고,
-	# 폰에서는 화면 밖으로 나갔다(2026-09-05 실측). 양쪽으로 자라게 한다.
-	panel.grow_horizontal = Control.GROW_DIRECTION_BOTH
-	panel.grow_vertical = Control.GROW_DIRECTION_BOTH
-	panel.custom_minimum_size = Vector2(UiScale.panel_width(420.0), 190)
-	_sell_sheet.add_child(panel)
-
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 10)
-	panel.add_child(box)
-
-	var label := Label.new()
-	label.text = "가방에 있는 물건을 전부 팔까요?\n판매는 되돌릴 수 없습니다."
-	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	label.add_theme_color_override("font_color", Palette.color("ui", "warn_text"))
-	box.add_child(label)
-
-	var yes := Button.new()
-	yes.text = "전부 판매"
-	yes.custom_minimum_size = Vector2(0, BTN_MED)
-	yes.focus_mode = Control.FOCUS_NONE
-	yes.pressed.connect(func() -> void:
-		_sell_sheet.visible = false
-		sheet_toggled.emit()
-		sell_requested.emit()
-	)
-	box.add_child(yes)
-
-	var no := Button.new()
-	no.text = "취소"
-	no.custom_minimum_size = Vector2(0, BTN_MED)
-	no.focus_mode = Control.FOCUS_NONE
-	no.pressed.connect(func() -> void:
-		_sell_sheet.visible = false
-		sheet_toggled.emit())
-	box.add_child(no)
-
 func _toggle_emote_sheet(show_it: bool) -> void:
 	if _emote_sheet != null:
 		_emote_sheet.visible = show_it
@@ -445,14 +396,6 @@ func _toggle_emote_sheet(show_it: bool) -> void:
 	if show_it:
 		_release_stick()
 
-## world.gd가 가방 줄 탭을 받아 호출한다.
-func show_sell_confirm() -> void:
-	if _sell_sheet != null:
-		_sell_sheet.visible = true
-		sheet_toggled.emit()
-	_release_stick()
-
 ## 시트가 열려 있는 동안에는 게임 조작을 받지 않아야 한다.
 func is_sheet_open() -> bool:
-	return (_emote_sheet != null and _emote_sheet.visible) \
-		or (_sell_sheet != null and _sell_sheet.visible)
+	return _emote_sheet != null and _emote_sheet.visible
