@@ -772,8 +772,6 @@ func _build_hud() -> void:
 		_touch.drop_pressed.connect(_drop_one)
 		_touch.inventory_pressed.connect(_open_inventory)
 		_touch.emote_selected.connect(_send_emote)
-		# 터치 UI의 판매 확인 시트는 가방 화면으로 대체됐다 — 무엇을 파는지
-		# 고르지 못하는 "전부 판매"만 있는 것이 위험했다.
 		add_child(_touch)
 
 ## 좁은 화면(폰) 여부. 판정은 UiScale이 갖는다 — 뷰포트 크기로 직접 재면
@@ -1083,15 +1081,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 안 그러면 "s"를 치는 순간 물건이 팔리고, 시트 뒤에서 캐릭터가 움직인다.
 	if _chat != null and _chat.is_open():
 		return
-	if _touch != null and _touch.is_sheet_open():
-		return
-	if _inventory_ui != null and is_instance_valid(_inventory_ui):
-		return
-	if _dex_ui != null and is_instance_valid(_dex_ui):
-		return
-	if _look_ui != null and is_instance_valid(_look_ui):
-		return
-	if _npc_ui != null and is_instance_valid(_npc_ui):
+	if _modal_open():
 		return
 	if _resync != null and _resync.is_active():
 		# 동기화가 끝나기 전 조작을 받으면, 맞추던 위치를 다시 어긋내게 된다.
@@ -1372,11 +1362,7 @@ func _publish_fullscreen_hotspot() -> void:
 	var blocked := _fullscreen_button == null \
 		or not is_instance_valid(_fullscreen_button) \
 		or not _fullscreen_button.is_visible_in_tree() \
-		or (_inventory_ui != null and is_instance_valid(_inventory_ui)) \
-		or (_dex_ui != null and is_instance_valid(_dex_ui)) \
-		or (_look_ui != null and is_instance_valid(_look_ui)) \
-		or (_npc_ui != null and is_instance_valid(_npc_ui)) \
-		or (_touch != null and _touch.is_sheet_open())
+		or _modal_open()
 	var spec := ""
 	if not blocked:
 		var vp := get_viewport()
@@ -2400,14 +2386,27 @@ func _npc_data() -> Array:
 		out.append({"id": npc.id, "label": npc.label})
 	return out
 
+## 화면을 덮는 모달이 하나라도 열려 있는가. **한 곳에서만 판정한다** — 예전에는
+## 이 목록이 _unhandled_input·전체화면 핫스팟·이동 게이트 세 군데에 흩어져 있었고,
+## 이동 게이트만 `_touch.is_sheet_open()`(감정 시트)만 봐서 **키보드·탭은 막히는데
+## 조이스틱만 뚫렸다** — 가방을 연 채 스틱으로 걸어 다닐 수 있었다(리뷰 지적).
+func _modal_open() -> bool:
+	return (_inventory_ui != null and is_instance_valid(_inventory_ui)) \
+		or (_dex_ui != null and is_instance_valid(_dex_ui)) \
+		or (_look_ui != null and is_instance_valid(_look_ui)) \
+		or (_npc_ui != null and is_instance_valid(_npc_ui)) \
+		or (_touch != null and _touch.is_sheet_open())
+
 func _open_inventory() -> void:
 	# 모달이 뜨면 전체화면 핫스팟을 **즉시** 내린다 — 0.25초 주기 갱신만
 	# 믿으면 그 사이 오른쪽 위를 탭할 때 가방을 닫으려다 전체화면이 켜진다.
 	_publish_fullscreen_hotspot.call_deferred()
+	if _touch != null:
+		_touch.release_stick()
 	if _inventory_ui != null and is_instance_valid(_inventory_ui):
 		return
 	_inventory_ui = InventoryUI.new()
-	_inventory_ui.setup(_items)
+	_inventory_ui.setup(_items, _price_of)
 	_inventory_ui.drop_requested.connect(_on_inventory_drop)
 	_inventory_ui.sell_requested.connect(func(item_id: String) -> void: _sell(item_id))
 	_inventory_ui.sell_all_requested.connect(func() -> void: _sell(""))
@@ -3500,7 +3499,7 @@ func _process(delta: float) -> void:
 		# 터치 조이스틱 입력을 플레이어에 넘긴다(키보드와 병행 — player.gd가
 		# 더 큰 쪽을 쓴다). 시트가 열려 있으면 이동을 멈춘다.
 		var touch_vec := Vector2.ZERO
-		if _touch != null and not _touch.is_sheet_open():
+		if _touch != null and not _modal_open():
 			touch_vec = _touch.move_vector
 		_player.set_touch_vector(touch_vec)
 	if _net != null and _player != null and _player.sprite != null:

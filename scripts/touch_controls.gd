@@ -303,6 +303,11 @@ func _input(event: InputEvent) -> void:
 			_stick_moved = true
 		_stick_visual.queue_redraw()
 
+## 모달(가방·도감·꾸미기·NPC)을 열 때 world.gd가 부른다 — 스틱을 잡은 채 모달을
+## 열면 손을 떼도 마지막 벡터가 남아 닫은 뒤 그 방향으로 끌려간다.
+func release_stick() -> void:
+	_release_stick()
+
 func _release_stick() -> void:
 	_stick_touch_index = -1
 	move_vector = Vector2.ZERO

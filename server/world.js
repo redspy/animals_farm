@@ -1891,15 +1891,31 @@ export class WorldState {
   priceOf(itemId) {
     const meta = this.itemDefs[itemId];
     if (!meta) return null;
-    let price = Number(meta.sell_price) || 0;
-    const range = meta.price_range;
-    if (Array.isArray(range) && range.length === 2) {
-      const lo = Number(range[0]);
-      const hi = Number(range[1]);
+    // **범위 형식을 검사한다.** `price_range: ["x", 100]`이면 lo가 NaN이 되고
+    // `Math.max(NaN, price)`가 NaN이라 가격이 통째로 NaN이 됐다 — 그 NaN이
+    // `bells + total`로 흘러 **벨이 NaN이 되고 아이템은 삭제**됐다(2026-09-08
+    // Codex 감사가 실제로 재현). 비교가 조용히 false가 되는 탓에 경고도 안 났다.
+    // 범위는 아이템 항목 자체가 들고 있다(`price_range`) — meta를 limits 자리에
+    // 그대로 넘긴다. 다른 파일처럼 최상위 limits가 아니라서 alim/rlim/nlim 같은
+    // 헬퍼를 쓰지 않는 **유일한 직접 호출**이다(tests가 그 사실을 고정한다).
+    const range = rangeOf(meta, 'price_range', `items.json/${itemId}`, null);
+    let price = Number(meta.sell_price);
+    if (!Number.isFinite(price)) {
+      console.warn(`[world] ${itemId}의 sell_price가 숫자가 아니라 팔 수 없음: ${meta.sell_price}`);
+      return null;
+    }
+    if (range) {
+      const [lo, hi] = range;
       if (price < lo || price > hi) {
         console.warn(`[world] ${itemId} 가격 ${price}이 유효범위 [${lo}, ${hi}] 밖 — 클램프`);
       }
       price = Math.min(hi, Math.max(lo, price));
+    }
+    // 여기까지 와서 유한하지 않으면 **팔지 않는다.** 값이 이상할 때 0원에 파는
+    // 것도 손실이고, NaN을 정산에 태우면 벨이 통째로 망가진다.
+    if (!Number.isFinite(price)) {
+      console.warn(`[world] ${itemId}의 가격을 확정할 수 없어 팔 수 없음`);
+      return null;
     }
     return price;
   }
@@ -1934,7 +1950,15 @@ export class WorldState {
         unsold.push(id);
         continue;
       }
-      total += price * count;
+      const amount = price * count;
+      if (!Number.isFinite(amount)) {
+        // 개수까지 곱한 뒤에도 한 번 더 본다 — 가방 수량이 손상된 세이브에서
+        // 오면(Infinity 등) 여기서 처음 드러난다.
+        console.warn(`[world] ${id} 정산액이 숫자가 아니라 건너뜀: ${price} × ${count}`);
+        unsold.push(id);
+        continue;
+      }
+      total += amount;
       sold[id] = count;
       delete p.inventory[id];
     }
@@ -1942,7 +1966,10 @@ export class WorldState {
       return { error: { code: 'nothing_sold', message: '팔 수 있는 물건이 없습니다' } };
     }
     p.lastSellAt = now;
-    p.bells = Math.max(0, Math.floor(p.bells + total));
+    // 정산 직전 마지막 방어 — 여기서 NaN이 들어가면 세이브에 그대로 남아
+    // 재접속해도 복구되지 않는다(벨이 NaN인 캐릭터는 다시 못 고친다).
+    const next = Number(p.bells) + total;
+    p.bells = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : p.bells;
     this._markDirty();
     return { sold, total, bells: p.bells, inventory: p.inventory, unsold };
   }

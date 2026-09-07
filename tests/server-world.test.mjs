@@ -948,6 +948,68 @@ function dataDirWith(prefix, mutate) {
   return dir;
 }
 
+// items.json을 바꿔 로드한다(가격 손상 회귀용).
+function worldWithItems(prefix, mutate) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(dir, name), readFileSync(join('data', name)));
+  }
+  const items = JSON.parse(readFileSync(join('data', 'items.json'), 'utf-8'));
+  mutate(items);
+  writeFileSync(join(dir, 'items.json'), JSON.stringify(items));
+  return new WorldState({ dataDir: dir, persist: false });
+}
+
+function joinedWith(w, itemId, count = 3, bells = 100) {
+  const token = TOKEN_A;
+  w.join({ token, name: '테스터', preset: 'p1' });
+  const p = w.players.get(token);
+  p.inventory[itemId] = count;
+  p.bells = bells;
+  return { token, p };
+}
+
+test('price_range가 [lo, hi] 형식이 아니면 무시하고 원가로 판다(벨이 NaN이 되지 않는다)', () => {
+  // `price_range: ["x", 100]`이면 lo가 NaN이 되고 Math.max(NaN, price)가 NaN이라
+  // 가격이 통째로 NaN이 됐다. 그 NaN이 bells로 흘러 **벨은 NaN, 아이템은 삭제**
+  // 됐고, 벨이 NaN인 캐릭터는 세이브에 남아 되돌릴 수 없었다(2026-09-08 Codex
+  // 감사가 실제로 재현). 비교가 조용히 false라 경고도 없었다.
+  const w = worldWithItems('af-badrange-', (items) => {
+    items.items.wood.price_range = ['x', 100];
+  });
+  const { token, p } = joinedWith(w, 'wood');
+  const before = p.bells;
+  const r = w.sell(token, 'wood');
+  assert.ok(!r.error, `판매가 거절됐다: ${JSON.stringify(r.error)}`);
+  assert.ok(Number.isFinite(r.total), '정산액이 숫자가 아니다');
+  assert.ok(Number.isFinite(p.bells) && p.bells > before, `벨이 손상됐다: ${p.bells}`);
+});
+
+test('sell_price가 숫자가 아니면 팔지 않고 가방에 남긴다', () => {
+  // 0벨로 조용히 파는 것도 손실이다 — 서버는 그 아이템을 남기고 알린다.
+  const w = worldWithItems('af-badprice-', (items) => {
+    items.items.wood.sell_price = '비쌈';
+  });
+  const { token, p } = joinedWith(w, 'wood');
+  assert.equal(w.priceOf('wood'), null);
+  const r = w.sell(token, 'wood');
+  assert.ok(r.error, '팔 수 없는 아이템이 팔렸다');
+  assert.equal(p.inventory.wood, 3, '가방에서 사라졌다');
+  assert.equal(p.bells, 100, '벨이 바뀌었다');
+});
+
+test('가방 수량이 손상돼 정산액이 무한대가 되면 그 아이템만 건너뛴다', () => {
+  const w = worldWithItems('af-infcount-', () => {});
+  const { token, p } = joinedWith(w, 'wood');
+  p.inventory.wood = Number.POSITIVE_INFINITY;
+  p.inventory.shell = 2;
+  const r = w.sell(token);
+  assert.ok(Number.isFinite(p.bells), `벨이 손상됐다: ${p.bells}`);
+  assert.ok((r.unsold || []).includes('wood'), '무한 수량 아이템이 정산에 들어갔다');
+  assert.ok(r.sold && r.sold.shell === 2, '정상 아이템까지 막혔다');
+});
+
 test('활동 speed가 유효범위를 벗어나면 걷기 속도로 폴백한다(이동 상한도 함께 닫힌다)', () => {
   // 하한(>0)만 보던 동안에는 `"speed": 50` 오타가 speedCapOf(×1.6)를 거쳐 서버
   // 이동 상한을 80까지 열었다 — 속도핵 방어가 데이터 오타로 무력화됐다.
@@ -992,9 +1054,14 @@ test('범위 헬퍼가 추가·삭제되면 린트 표도 함께 바뀌어야 �
   // 위 정규식은 **화살표 정의만** 잡는다 — `function plim() { return rangeOf(...) }`
   // 형태로 네 번째 헬퍼를 만들면 defined에 안 잡혀 표를 잊어도 통과했다(리뷰 지적).
   // rangeOf를 부르는 지점 수와 대조해서 그 형태까지 막는다(정의 1개 + 헬퍼마다 1회).
+  // 헬퍼를 거치지 않는 rangeOf 직접 호출. 지금은 priceOf 하나뿐이다 —
+  // items.json은 범위를 최상위 limits가 아니라 **아이템 항목마다** 들고 있어서
+  // (`price_range`) 파일 단위 헬퍼가 성립하지 않는다. 늘어나면 이 숫자를 올리기
+  // 전에 "정말 헬퍼로 못 묶는지" 확인할 것.
+  const DIRECT_RANGEOF_CALLS = 1;
   const rangeOfSites = [...WORLD_SRC.matchAll(/\brangeOf\(/g)].length;
-  assert.equal(rangeOfSites - 1, defined.length,
-    `rangeOf를 부르는 곳(${rangeOfSites - 1})과 화살표 헬퍼 수(${defined.length})가 다르다 — 다른 형태의 헬퍼가 생겼다면 LIMIT_READERS와 이 린트를 함께 손볼 것`);
+  assert.equal(rangeOfSites - 1, defined.length + DIRECT_RANGEOF_CALLS,
+    `rangeOf 호출 지점(${rangeOfSites - 1})이 화살표 헬퍼(${defined.length}) + 직접 호출(${DIRECT_RANGEOF_CALLS})과 다르다 — 다른 형태의 헬퍼가 생겼다면 LIMIT_READERS와 이 린트를 함께 손볼 것`);
 });
 
 test('서버가 범위를 요구하는 키는 전부 데이터의 limits에 있다(데이터 린트)', () => {

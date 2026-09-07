@@ -24,13 +24,20 @@ const ROW_HEIGHT := 46.0
 const BTN_WIDTH := 92.0
 
 var _items_meta: Dictionary = {}
+var _price_of: Callable = Callable()
 var _list: VBoxContainer
 var _summary: Label
 var _sell_all_btn: Button
 var _hooks: TestHooks
 
-func setup(items_meta: Dictionary) -> void:
+## `price_of`는 world.gd의 보정 함수(`_price_of`)를 그대로 받는다. **원값을 직접
+## 읽지 않는 이유**: 데이터가 범위를 벗어나면 화면에 보인 금액과 서버 정산이
+## 갈린다(서버는 클램프한다) — 화면만 60벨이라고 말하는 상태가 된다.
+## -1은 "가격을 확정할 수 없어 팔 수 없음"이다(서버도 그 아이템을 남긴다).
+func setup(items_meta: Dictionary, price_of: Callable = Callable()) -> void:
 	_items_meta = items_meta
+	if price_of.is_valid():
+		_price_of = price_of
 
 func _ready() -> void:
 	_hooks = TestHooks.new()
@@ -158,6 +165,8 @@ func refresh(inventory: Dictionary, bells: int) -> void:
 		var meta: Dictionary = _items_meta.get(item_id, {})
 		var label_text := String(meta.get("label", item_id))
 		var price := int(meta.get("sell_price", 0))
+		if _price_of.is_valid():
+			price = int(_price_of.call(item_id))
 
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 8)
