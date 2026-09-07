@@ -13,7 +13,8 @@
 ## 디렉터리 구조
 
 ```
-.godot-version       Godot 고정 버전의 단일 출처 (deploy.bat/build-web.sh/verify-project.sh가 읽음)
+.godot-version       Godot 고정 버전의 기본 단일 출처 (deploy.bat/build-web.sh/verify-project.sh가 읽음
+                     — GODOT_VERSION / EXPECTED_GODOT_VERSION 환경변수로 덮을 수 있다, docs/deploy.md §2)
 project.godot        Godot 프로젝트 (GL Compatibility 고정)
 export_presets.cfg   Web export 프리셋 (nothreads)
 scenes/main.tscn     진입 씬 — scripts/main.gd(라우터)가 선택 화면/월드를 갈아 끼우고,

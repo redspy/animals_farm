@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { WorldState, LIMITS } from '../server/world.js';
@@ -908,28 +908,41 @@ test('시소 push가 데이터에서 과하면 로드할 때 잘린다', () => {
     `과한 push가 상한으로 잘리지 않았다 (${w.parkCfg.seesawPush} vs ${limit})`);
 });
 
-// 서버가 activities.json에서 num()으로 읽는 키(= 유효범위가 필요한 키).
-const SERVER_READ_KEYS = new Set([
-  'soccer.kick_range', 'soccer.kick_speed', 'soccer.dribble_range', 'soccer.dribble_speed',
-  'soccer.friction_per_sec', 'soccer.bounce', 'soccer.kick_min_interval_ms',
-  'park.seesaw_gravity', 'park.seesaw_push', 'park.seesaw_damping', 'park.seesaw_max_angle',
-  'park.seesaw_push_min_interval_ms', 'park.carousel_push_min_interval_ms',
-  'park.carousel_push', 'park.carousel_max_speed', 'park.carousel_friction',
-  'park.swing_amp_steps',
-]);
+// 데이터 파일을 임시 디렉터리에 통째로 복사하고, 일부만 바꿔 로드한다.
+// 예전에는 테스트마다 "나머지 파일 7종" 목록을 손으로 복제했는데, npcs.json이
+// 늘어나면서 사본마다 목록이 갈리기 시작했다(리뷰 지적) — 디렉터리를 읽으면
+// 파일이 늘어도 따라온다.
+function dataDirWith(prefix, mutate) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(dir, name), readFileSync(join('data', name)));
+  }
+  if (mutate) {
+    const src = JSON.parse(readFileSync(join('data', 'activities.json'), 'utf-8'));
+    mutate(src);
+    writeFileSync(join(dir, 'activities.json'), JSON.stringify(src));
+  }
+  return dir;
+}
+
+// 서버가 activities.json에서 실제로 범위를 요구하는 키를 **소스에서 뽑는다.**
+// 손으로 적은 목록은 한 방향만 막는다 — 데이터에 키를 추가하고 범위를 잊으면
+// 잡히지만, 서버에 alim() 호출을 새로 넣고 목록 갱신을 잊으면 조용히 통과한다.
+// 잊기 쉬운 쪽은 후자다(리뷰 지적). 체크포인트 린트처럼 소스를 읽어 대조한다.
+const SERVER_READ_KEYS = new Set(
+  [...readFileSync('server/world.js', 'utf-8').matchAll(/alim\('([^']+)'/g)].map((m) => m[1]),
+);
+
 
 test('활동 speed가 유효범위를 벗어나면 걷기 속도로 폴백한다(이동 상한도 함께 닫힌다)', () => {
   // 하한(>0)만 보던 동안에는 `"speed": 50` 오타가 speedCapOf(×1.6)를 거쳐 서버
   // 이동 상한을 80까지 열었다 — 속도핵 방어가 데이터 오타로 무력화됐다.
-  const dir = mkdtempSync(join(tmpdir(), 'af-speed-'));
-  const src = JSON.parse(readFileSync('data/activities.json', 'utf-8'));
-  for (const a of src.activities) if (a.id === 'bike') a.speed = 50;
-  writeFileSync(join(dir, 'activities.json'), JSON.stringify(src));
-  for (const name of ['world.json', 'items.json', 'gatherables.json', 'emotes.json', 'characters.json', 'palette.json', 'npcs.json']) {
-    try { writeFileSync(join(dir, name), readFileSync(join('data', name))); } catch { /* 없는 파일은 건너뜀 */ }
-  }
+  const dir = dataDirWith('af-speed-', (src) => {
+    for (const a of src.activities) if (a.id === 'bike') a.speed = 50;
+  });
   const w = new WorldState({ dataDir: dir, persist: false });
-  assert.equal(w.activities.get('bike').speed, 4.2, '범위 밖 speed가 걷기 속도로 폴백되지 않았다');
+  assert.equal(w.activities.get('bike').speed, LIMITS.WALK_SPEED, '범위 밖 speed가 걷기 속도로 폴백되지 않았다');
   const cap = w.speedCapOf({ activity: 'bike' });
   assert.ok(cap < 7, `이동 상한이 여전히 열려 있다 (${cap})`);
 });
@@ -937,48 +950,34 @@ test('활동 speed가 유효범위를 벗어나면 걷기 속도로 폴백한다
 test('활동 speed의 유효범위는 데이터가 소유한다(limits를 좁히면 기본값이 거절된다)', () => {
   // 범위가 코드에 하드코딩돼 있으면 이 테스트는 통과할 수 없다 — 규칙(§3)이
   // 실제로 데이터를 출처로 쓰고 있는지 확인하는 테스트다.
-  const dir = mkdtempSync(join(tmpdir(), 'af-speedlim-'));
-  const src = JSON.parse(readFileSync('data/activities.json', 'utf-8'));
-  src.limits.speed = [0.1, 5.0];    // 자전거(7.6)를 범위 밖으로 만든다
-  writeFileSync(join(dir, 'activities.json'), JSON.stringify(src));
-  for (const name of ['world.json', 'items.json', 'gatherables.json', 'emotes.json', 'characters.json', 'palette.json', 'npcs.json']) {
-    try { writeFileSync(join(dir, name), readFileSync(join('data', name))); } catch { /* 없는 파일은 건너뜀 */ }
-  }
+  const dir = dataDirWith('af-speedlim-', (src) => {
+    src.limits.speed = [0.1, 5.0];    // 자전거(7.6)를 범위 밖으로 만든다
+  });
   const w = new WorldState({ dataDir: dir, persist: false });
-  assert.equal(w.activities.get('bike').speed, 4.2, '데이터의 limits가 적용되지 않았다');
+  assert.equal(w.activities.get('bike').speed, LIMITS.WALK_SPEED, '데이터의 limits가 적용되지 않았다');
   assert.equal(w.activities.get('soccer').speed, 4.4, '범위 안 값까지 폴백됐다');
 });
 
 test('limits 형식이 깨져 있으면 폴백 범위를 쓴다(무엇이든 통과시키지 않는다)', () => {
   // `limits[key] || fallback`으로 꺼내 쓰던 동안에는 배열이 아닌 값이 들어오면
   // 비교가 undefined와의 비교가 되어 **모든 값이 통과**했다(조용한 실패).
-  const dir = mkdtempSync(join(tmpdir(), 'af-badlim-'));
-  const src = JSON.parse(readFileSync('data/activities.json', 'utf-8'));
-  src.limits.speed = 5;                       // [lo, hi]가 아니다
-  for (const a of src.activities) if (a.id === 'bike') a.speed = 999;
-  writeFileSync(join(dir, 'activities.json'), JSON.stringify(src));
-  for (const name of ['world.json', 'items.json', 'gatherables.json', 'emotes.json', 'characters.json', 'palette.json', 'npcs.json']) {
-    try { writeFileSync(join(dir, name), readFileSync(join('data', name))); } catch { /* 없는 파일은 건너뜀 */ }
-  }
+  const dir = dataDirWith('af-badlim-', (src) => {
+    src.limits.speed = 5;                       // [lo, hi]가 아니다
+    for (const a of src.activities) if (a.id === 'bike') a.speed = 999;
+  });
   const w = new WorldState({ dataDir: dir, persist: false });
-  assert.equal(w.activities.get('bike').speed, 4.2, '깨진 limits가 범위 검사를 통째로 무력화했다');
+  assert.equal(w.activities.get('bike').speed, LIMITS.WALK_SPEED, '깨진 limits가 범위 검사를 통째로 무력화했다');
 });
 
-test('activities.json의 limits가 실제 값을 모두 덮는다(데이터 린트)', () => {
-  // 범위를 데이터로 옮긴 뒤 값을 새로 추가하면 범위를 잊기 쉽다 — 잊으면 코드
-  // 폴백으로 조용히 되돌아가므로 여기서 잡는다.
-  const src = JSON.parse(readFileSync('data/activities.json', 'utf-8'));
-  const limits = src.limits || {};
-  assert.ok(Array.isArray(limits.speed), 'limits.speed가 없다');
-  for (const group of ['soccer', 'park']) {
-    for (const key of Object.keys(src[group] || {})) {
-      if (key.startsWith('_')) continue;
-      // swing_period_sec처럼 연출 전용 값은 서버가 읽지 않는다 — 서버가 num()으로
-      // 읽는 키만 범위를 요구한다.
-      if (!SERVER_READ_KEYS.has(`${group}.${key}`)) continue;
-      assert.ok(Array.isArray(limits[`${group}.${key}`]),
-        `limits에 ${group}.${key} 범위가 없다`);
-    }
+test('서버가 범위를 요구하는 키는 전부 activities.json의 limits에 있다(데이터 린트)', () => {
+  // 양방향으로 막는다: 서버에 alim() 호출을 새로 넣고 데이터에 범위를 적지
+  // 않으면(잊기 쉬운 쪽) 여기서 걸리고, 반대로 코드가 읽지 않는 키에 범위를
+  // 적어 두는 것은 막지 않는다(연출 전용 값 — swing_period_sec 등).
+  const limits = JSON.parse(readFileSync('data/activities.json', 'utf-8')).limits || {};
+  assert.ok(SERVER_READ_KEYS.size > 0, '서버 소스에서 alim() 호출을 찾지 못했다(정규식이 낡았다)');
+  for (const key of SERVER_READ_KEYS) {
+    assert.ok(Array.isArray(limits[key]) && limits[key].length === 2,
+      `limits에 ${key} 범위가 없다 — 없으면 코드 폴백으로 조용히 되돌아간다`);
   }
 });
 

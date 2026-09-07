@@ -17,9 +17,10 @@ class_name SaveManager
 ##   "last_slot": 0,        # 마지막으로 고른 슬롯 인덱스(-1이면 없음)
 ##   "settings": { "ui_zoom": 1.0, "joystick": true },   # 기기 UI 설정(슬롯 공용)
 ##   "first_played_unix": 0,
-##   "last_played_unix": 0   # save()가 매번 갱신. **읽는 곳은 없다** — 일일 갱신은
-##                           # 슬롯의 last_played_unix를 쓴다(world.gd). v1의 잔재이며
-##                           # 남겨 두는 이유는 구버전 세이브와의 왕복 호환뿐이다.
+##   "last_played_unix": 0   # save()가 매번 갱신. 런타임 로직은 읽지 않고 **migrate()만**
+##                           # 읽는다(v0→v1 채우기, v1→v2에서 첫 슬롯 시드). 일일 갱신은
+##                           # 슬롯의 last_played_unix를 쓴다(world.gd) — 이 값으로 판단하면
+##                           # 다른 캐릭터로 접속했을 때 하루가 안 지난 것으로 처리된다.
 ## }
 ##
 ## `custom`·`custom_pending`·`settings`는 **선택 필드**다 — 없으면 기본값으로 읽는다.

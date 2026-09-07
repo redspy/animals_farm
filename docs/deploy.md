@@ -39,7 +39,7 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
 4. Node.js 20+ 설치(서버 실행용). 서버가 WebSocket(`ws`)을 쓰므로 **의존성 설치가 필요하다** — `deploy.bat`이 `npm ci --omit=dev`(실패 시 `npm install --omit=dev`)로 처리한다.
 5. 포트: **3001** (connect_dise가 3000을 쓰므로 충돌을 피한다). 바꾸려면 `GAME_PORT` 환경변수 또는 `deploy.bat` 기본값을 수정.
 
-버전 고정의 **기본 단일 출처**는 저장소 루트의 **`.godot-version`** 파일이다(`deploy.bat`, `scripts/build-web.sh`, `scripts/verify-project.sh`가 모두 이 파일을 읽는다). 다만 환경변수로 덮을 수 있다 — `deploy.bat`은 이미 설정된 `GODOT_VERSION`을, 로컬 스크립트는 `EXPECTED_GODOT_VERSION`을 우선한다(파일이 없을 때의 폴백은 `4.7.1`). 임시로 다른 버전을 시험할 때 쓰는 문이며, **덮은 상태로 배포하면 파일과 실제 빌드가 갈린다**. 엔진 버전을 올릴 때는 (a) `.godot-version`, (b) 서버의 실제 바이너리·템플릿, (c) `project.godot`의 `config/features`를 함께 올린다.
+버전 고정의 **기본 단일 출처**는 저장소 루트의 **`.godot-version`** 파일이다(`deploy.bat`, `scripts/build-web.sh`, `scripts/verify-project.sh`가 모두 이 파일을 읽는다). 다만 환경변수로 덮을 수 있다 — `deploy.bat`은 이미 설정된 `GODOT_VERSION`을, 로컬 스크립트는 `EXPECTED_GODOT_VERSION`을 우선한다. 파일이 없을 때 `4.7.1`로 폴백하는 것은 **로컬 스크립트뿐**이고, `deploy.bat`은 빈 값이 되어 Godot 경로가 깨진다. 임시로 다른 버전을 시험할 때 쓰는 문이며, **덮은 상태로 배포하면 파일과 실제 빌드가 갈린다**. 엔진 버전을 올릴 때는 (a) `.godot-version`, (b) 서버의 실제 바이너리·템플릿, (c) `project.godot`의 `config/features`를 함께 올린다.
 
 ## 3. 웹 export와 브라우저 헤더
 
@@ -49,10 +49,11 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
 
   | 기동 | 조건 | 주소 | COOP/COEP |
   |---|---|---|---|
-  | HTTPS | `server/certs/dev-{cert,key}.pem`(또는 `TLS_CERT`/`TLS_KEY`)이 있고 `TLS != off` | `https://…`, `wss://…/ws` | 보냄 |
+  | HTTPS | `server/certs/dev-{cert,key}.pem`(또는 `TLS_CERT`/`TLS_KEY`)이 있고 `TLS != off` | `https://…`, `wss://…/ws` | 보냄(+ `Cross-Origin-Resource-Policy`) |
   | HTTP | 인증서가 없거나 `TLS=off` | `http://…`, `ws://…/ws` | 안 보냄 |
 
   즉 **개발 인증서를 한 번 만들어 두면 `node server/index.js`가 https로 뜬다**(`scripts/make-dev-cert.sh`). 아래 §4의 `curl http://…`를 그대로 재현하려면 `TLS=off`를 붙여야 한다.
+- ⚠️ **배포는 `TLS=off`로 스킴을 고정한다**(`deploy.bat` Step 7). `server/certs/`는 추적되지 않아 `git reset --hard`로도 지워지지 않으므로, 배포 서버에 인증서가 한 번 남으면 서버는 정상 기동하는데 Step 8의 http 헬스체크만 실패해 "배포 실패"로 보이고 `server_error.log`에는 단서가 없다(2026-09-08 Codex 감사 지적). https로 서비스하려면 Step 7의 `TLS=off`와 Step 8의 헬스체크 URL을 함께 바꿀 것.
 - WebSocket은 정적 파일과 **같은 포트의 `/ws`** 로 붙는다. 클라이언트는 페이지를 서빙한 origin에서 주소를 유도하므로(`net.gd::default_url`) 별도 설정이 없다 — https면 `wss://`가 되고, 리버스 프록시를 쓸 경우 `/ws` 업그레이드를 통과시켜야 한다.
 - `.wasm`은 `application/wasm`, `.pck`는 `application/octet-stream`으로 서빙한다. MIME이 틀리면 브라우저가 스트리밍 컴파일을 거부해 로딩이 느려지거나 실패한다.
 
@@ -120,7 +121,7 @@ npm run test:browser            # build/web를 서버에 올려 Chromium으로 �
 | 웹 export 산출물(index.html/.wasm/.pck) | ✅ 로컬 실측 생성 |
 | 정적 서버 MIME·COOP/COEP·`/healthz` | ✅ 로컬 실측 통과 |
 | 브라우저 기동·입력·채집·판매 1사이클 | ✅ 로컬 실측 통과(`npm run test:browser`, Chromium) |
-| 서버 규칙(검증·소유권·레이트 리밋·활동·놀이터·낚시·NPC·경주·외형) | ✅ 유닛 테스트 **112종** 통과(`npm run test:server`) |
+| 서버 규칙(검증·소유권·레이트 리밋·활동·놀이터·낚시·NPC·경주·외형) | ✅ 유닛 테스트 **116종** 통과(`npm run test:server`) |
 | 낚시·벌레(대기→물기→타이밍, 헛챔질·놓침) | ✅ 로컬 실측 통과(`npm run test:fishing`) |
 | 이웃 부탁·도감(부족→수집→정산→도감 2탭) | ✅ 로컬 실측 통과(`npm run test:npc`) |
 | 달리기 경주(존 전용 버튼·참가/포기·국면 전이) | ✅ 로컬 실측 통과(`npm run test:race`) |

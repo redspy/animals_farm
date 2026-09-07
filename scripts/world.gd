@@ -252,7 +252,15 @@ func _ready() -> void:
 	for a: Variant in _activities:
 		if typeof(a) == TYPE_DICTIONARY:
 			_activity_by_id[String((a as Dictionary).get("id", ""))] = a
-	_activity_limits = act_cfg.get("limits", {})
+	# 딕셔너리가 아닌 값이 오면 타입 있는 변수 대입에서 **런타임 에러로 _ready가
+	# 그 자리에서 멈춘다**(뒤따르는 soccer/park/fishing 초기화까지 날아간다).
+	# 데이터가 깨졌을 때 폴백한다는 이 규칙의 요점이 클라이언트에서만 깨져
+	# 있었다(리뷰 지적).
+	var limits_raw: Variant = act_cfg.get("limits", {})
+	if typeof(limits_raw) != TYPE_DICTIONARY:
+		push_warning("activities.json의 limits가 딕셔너리가 아니라 무시: %s" % str(limits_raw))
+		limits_raw = {}
+	_activity_limits = limits_raw
 	_soccer_cfg = act_cfg.get("soccer", {})
 	_park_phys = act_cfg.get("park", {})
 	_fish_cfg = act_cfg.get("fishing", {})

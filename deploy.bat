@@ -83,7 +83,13 @@ echo [Step 7] Starting server (static + WebSocket) on :%GAME_PORT%...
 REM Start-Process로 띄운 프로세스는 GitHub Actions 러너의 Job Object에 묶여
 REM job 종료 시 함께 죽는다(connect_dise에서 실측). 작업 스케줄러로 띄우면
 REM 러너 job과 무관한 독립 프로세스가 되어 살아남는다.
-schtasks /Create /TN "AnimalsFarmServer" /TR "cmd /c cd /d %cd% && set PORT=%GAME_PORT% && node server\index.js > server.log 2>server_error.log" /SC ONCE /ST 23:59 /F >nul 2>&1
+REM TLS=off로 **스킴을 고정한다.** server/index.js는 인증서가 있으면 자동으로
+REM https로 뜨는데(개발 편의), server/certs/는 추적되지 않아 git reset --hard로도
+REM 지워지지 않는다 — 배포 서버에 인증서가 한 번 남으면 서버는 정상 기동하는데
+REM Step 8의 http 헬스체크만 실패해서 "배포 실패"로 보이고, server_error.log에는
+REM 아무 단서가 없다(2026-09-08 Codex 감사 지적). https로 서비스하려면 여기와
+REM Step 8의 URL을 함께 바꿔야 한다.
+schtasks /Create /TN "AnimalsFarmServer" /TR "cmd /c cd /d %cd% && set PORT=%GAME_PORT% && set TLS=off && node server\index.js > server.log 2>server_error.log" /SC ONCE /ST 23:59 /F >nul 2>&1
 schtasks /Run /TN "AnimalsFarmServer"
 if %ERRORLEVEL% neq 0 (
     echo ERROR: schtasks failed to launch server task

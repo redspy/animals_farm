@@ -146,6 +146,11 @@ export class WorldState {
     // 예전에는 아래 num() 호출에 범위를 직접 박아 뒀는데, 그것이 바로 §3이
     // 금지한 하드코딩이었다(2026-09-08 Codex 감사 + Claude 리뷰 동시 지적).
     const alim = (key, fallback) => rangeOf(actCfg.limits, key, 'activities.json', fallback);
+    // 범위는 **루프 밖에서 한 번** 만든다. 안에서 부르면 형식이 깨졌을 때 경고가
+    // 활동 수만큼(그네 진폭은 단계 수만큼) 반복돼, 고칠 곳을 알려 주려던 로그가
+    // 오히려 노이즈가 된다(리뷰 지적).
+    const speedRange = alim('speed', [0.1, 12.0]);
+    const swingAmpRange = alim('park.swing_amp_steps', [0.05, 1.4]);
     this.activities = new Map();
     for (const a of actCfg.activities || []) {
       if (!a || !a.id) continue;
@@ -159,7 +164,6 @@ export class WorldState {
       // 아니라 걷기 속도로 폴백하는 이유: 클라이언트도 같은 규칙으로 폴백하므로
       // (`world.gd::_activity_speed`) 양쪽이 같은 값을 쓰고, 클램프된 값은
       // 아무도 의도하지 않은 숫자라 "왜 이 속도인가"를 설명할 수 없다.
-      const speedRange = alim('speed', [0.1, 12.0]);
       const speed = Number(a.speed);
       const valid = Number.isFinite(speed) && speed >= speedRange[0] && speed <= speedRange[1];
       if (!valid && a.speed !== undefined) {
@@ -225,7 +229,7 @@ export class WorldState {
       // 그네 진폭 단계 — 값 개수가 곧 진폭의 유효 범위다(trick 검증에 쓴다).
       swingAmpSteps: Array.isArray(pk.swing_amp_steps)
         ? pk.swing_amp_steps
-          .map((v, i) => num(v, 0.3, ...alim('park.swing_amp_steps', [0.05, 1.4]), `park.swing_amp_steps[${i}]`))
+          .map((v, i) => num(v, 0.3, ...swingAmpRange, `park.swing_amp_steps[${i}]`))
         : [0.28, 0.55, 0.85],
     };
     // **값끼리의 정합성**을 확인한다. 개별 범위만 보면 "2.2"가 통과해서 판이
@@ -774,7 +778,9 @@ export class WorldState {
       target.x = p.x + (target.x - p.x) * k;
       target.z = p.z + (target.z - p.z) * k;
     }
-    // 실제 순서는 **속도 상한 → 바위 → 캐릭터 → 바위 → 경계 클램프**다. 캐릭터를
+    // 실제 순서는 **경계 클램프 → 좌석 리시 → 속도 상한 → 바위 → 캐릭터 → 바위
+    // → 경계 클램프**다(맨 앞 클램프는 위 clampPos, 거리는 그 결과로 잰다 —
+    // 경계 밖으로의 순간이동은 잘린 거리로 판정된다). 캐릭터를
     // 마지막에 두면 겹침을 피하다 바위에 박히므로 바위를 다시 한 번 적용하고,
     // 경계는 맨 마지막에 자른다(섬 밖으로 밀려나는 것이 가장 눈에 띈다).
     //
