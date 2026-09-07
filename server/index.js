@@ -28,8 +28,20 @@ import { dirname } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(join(__dirname, '..', 'build', 'web'));
-const PORT = Number(process.env.PORT || 3001);
-const HOST = process.env.HOST || '0.0.0.0';
+/**
+ * 환경변수는 **전부 trim해서 읽는다.** cmd의 `set VAR=값 && cmd`는 `&&` 앞 공백까지
+ * 값에 담는다 — `TLS`에서 이미 한 번 물렸고(값이 "off "가 되어 배포가 https로 떴다),
+ * 같은 함정이 경로·호스트에도 그대로 있다: `TLS_CERT="…pem "`이면 existsSync가
+ * false가 되어 **조용히 http로 떨어지고**, `HOST=" 0.0.0.0"`이면 listen이 던진다.
+ * 배치 인용 규칙에 서버 동작이 걸리지 않게 한 곳에서 자른다(리뷰 지적).
+ */
+const env = (key, fallback = '') => {
+  const v = String(process.env[key] ?? '').trim();
+  return v === '' ? fallback : v;
+};
+
+const PORT = Number(env('PORT', '3001'));
+const HOST = env('HOST', '0.0.0.0');
 
 // Godot 웹 빌드는 기본 셸에서 **보안 컨텍스트가 아니면 실행을 거부**한다
 // ("Secure Context - Check web server configuration (use HTTPS)"). localhost는
@@ -44,13 +56,11 @@ const HOST = process.env.HOST || '0.0.0.0';
 // 인증서가 있으면 여전히 https를 쓴다(있는 쪽이 낫다: COOP/COEP를 켤 수 있고
 // 뒤에 카메라/마이크 같은 보안 컨텍스트 전용 API가 필요해질 수 있다).
 // 개발용 인증서는 ./scripts/make-dev-cert.sh 로 만든다.
-const TLS_CERT = process.env.TLS_CERT || join(__dirname, 'certs', 'dev-cert.pem');
-const TLS_KEY = process.env.TLS_KEY || join(__dirname, 'certs', 'dev-key.pem');
+const TLS_CERT = env('TLS_CERT', join(__dirname, 'certs', 'dev-cert.pem'));
+const TLS_KEY = env('TLS_KEY', join(__dirname, 'certs', 'dev-key.pem'));
 // TLS=off 로 강제로 http 기동(비보안 컨텍스트 동작을 검증할 때 쓴다).
-// TLS 값은 **정규화해서 비교한다.** cmd의 `set TLS=off && node ...`는 && 앞 공백까지
-// 값에 담아 "off "를 넘기는데, 엄격 비교면 그걸 통과해 배포가 https로 떴다(리뷰 지적).
-// 배치 인용 규칙에 서버 동작이 걸리지 않게 여기서 자른다.
-const useTls = String(process.env.TLS || '').trim().toLowerCase() !== 'off'
+// `TLS=off`면 인증서가 있어도 http로 뜬다(위 env()가 공백을 잘라 준다).
+const useTls = env('TLS').toLowerCase() !== 'off'
   && existsSync(TLS_CERT) && existsSync(TLS_KEY);
 
 // gzip으로 보낼 확장자. wasm이 39MB, pck가 4MB라 무압축으로 보내면 폰에서
@@ -184,8 +194,8 @@ const server = useTls
 // 확인하려면(NPC가 무엇을 요구하는지) 데이터 사본을 갈아끼워야 한다. 그러지
 // 않으면 요구 아이템이 실러캔스일 수도 있어 테스트가 그 흐름을 끝까지 못 본다.
 const world = new WorldState({
-  ...(process.env.WORLD_STATE_PATH ? { statePath: process.env.WORLD_STATE_PATH } : {}),
-  ...(process.env.AF_DATA_DIR ? { dataDir: process.env.AF_DATA_DIR } : {}),
+  ...(env('WORLD_STATE_PATH') ? { statePath: env('WORLD_STATE_PATH') } : {}),
+  ...(env('AF_DATA_DIR') ? { dataDir: env('AF_DATA_DIR') } : {}),
 });
 const wss = new WebSocketServer({ server, path: '/ws' });
 
