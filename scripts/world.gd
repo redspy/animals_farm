@@ -239,55 +239,40 @@ func _ready() -> void:
 	# 아래 대입들은 전부 타입 있는 변수로 들어간다 — 형태가 다르면 여기서 _ready가
 	# 멈춘다(위 _dict_or_empty 주석). activities.json만 막았다가 더 앞줄이 같은
 	# 지뢰라는 지적을 받아 부팅 경로 전체를 같은 규칙으로 통일했다.
-	_items = _dict_or_empty(DataFiles.load_dict("res://data/items.json").get("items", {}), "items.json의 items")
+	_items = DataFiles.dict_or_empty(DataFiles.load_dict("res://data/items.json").get("items", {}), "items.json의 items")
 	_world_size = Vector2(
 		float(_world_cfg.get("size_x", 50.7)),
 		float(_world_cfg.get("size_z", 28.5))
 	)
-	_zones = _array_or_empty(_world_cfg.get("zones", []), "world.json의 zones")
-	_obstacles = _array_or_empty(_world_cfg.get("obstacles", []), "world.json의 obstacles")
-	for p: Variant in DataFiles.load_dict("res://data/characters.json").get("presets", []):
+	_zones = DataFiles.array_or_empty(_world_cfg.get("zones", []), "world.json의 zones")
+	_obstacles = DataFiles.array_or_empty(_world_cfg.get("obstacles", []), "world.json의 obstacles")
+	# 배열이 아니면 for가 "Unable to iterate" 런타임 에러를 낸다 — 여기서 멈추면
+	# 아래 월드 조립이 전부 날아간다(리뷰 지적: 이 블록에서 유일하게 무가드였다).
+	for p: Variant in DataFiles.array_or_empty(
+			DataFiles.load_dict("res://data/characters.json").get("presets", []),
+			"characters.json의 presets"):
 		if typeof(p) == TYPE_DICTIONARY:
 			_presets[String((p as Dictionary).get("id", ""))] = p
-	_emotes = _array_or_empty(DataFiles.load_dict("res://data/emotes.json").get("emotes", []), "emotes.json의 emotes")
+	_emotes = DataFiles.array_or_empty(DataFiles.load_dict("res://data/emotes.json").get("emotes", []), "emotes.json의 emotes")
 	var act_cfg := DataFiles.load_dict("res://data/activities.json")
 	# 타입이 다른 값을 타입 있는 변수에 대입하면 **런타임 에러로 _ready가 그 자리에서
 	# 멈춘다** — 뒤따르는 _build_world()·_start_net()까지 날아가 월드가 빈 화면으로
 	# 뜬다. 그래서 activities.json에서 읽는 값은 전부 형태를 확인하고 폴백한다
 	# (처음에는 limits에만 가드를 붙였는데, 바로 다음 세 줄이 같은 지뢰였다 —
 	# 리뷰 지적).
-	_activities = _array_or_empty(act_cfg.get("activities", []), "activities.json의 activities")
+	_activities = DataFiles.array_or_empty(act_cfg.get("activities", []), "activities.json의 activities")
 	for a: Variant in _activities:
 		if typeof(a) == TYPE_DICTIONARY:
 			_activity_by_id[String((a as Dictionary).get("id", ""))] = a
-	_activity_limits = _dict_or_empty(act_cfg.get("limits", {}), "activities.json의 limits")
-	_soccer_cfg = _dict_or_empty(act_cfg.get("soccer", {}), "activities.json의 soccer")
-	_park_phys = _dict_or_empty(act_cfg.get("park", {}), "activities.json의 park")
-	_fish_cfg = _dict_or_empty(act_cfg.get("fishing", {}), "activities.json의 fishing")
+	_activity_limits = DataFiles.dict_or_empty(act_cfg.get("limits", {}), "activities.json의 limits")
+	_soccer_cfg = DataFiles.dict_or_empty(act_cfg.get("soccer", {}), "activities.json의 soccer")
+	_park_phys = DataFiles.dict_or_empty(act_cfg.get("park", {}), "activities.json의 park")
+	_fish_cfg = DataFiles.dict_or_empty(act_cfg.get("fishing", {}), "activities.json의 fishing")
 	_build_world()
 	_apply_daily_respawn()
 	_refresh_hud()
 	_refresh_roster.call_deferred()
 	_start_net()
-
-## 데이터에서 읽은 값의 형태를 확인한다. 타입이 다른 값을 타입 있는 변수에
-## 대입하면 **런타임 에러로 _ready가 그 자리에서 멈추고**, 뒤따르는
-## _build_world()·_start_net()까지 날아가 월드가 빈 화면으로 뜬다. 데이터가
-## 깨졌을 때 화면이 통째로 안 뜨는 것보다 그 부분만 비우고 경고를 남기는 편이 낫다.
-##
-## `what`에는 "items.json의 items"처럼 **파일까지 포함한 라벨**을 넘긴다 — 문구에
-## 파일명을 박아 두면 다른 파일에 재사용할 때 경고가 거짓말이 된다(리뷰 지적).
-func _dict_or_empty(v: Variant, what: String) -> Dictionary:
-	if typeof(v) != TYPE_DICTIONARY:
-		push_warning("%s가 딕셔너리가 아니라 무시: %s" % [what, str(v)])
-		return {}
-	return v as Dictionary
-
-func _array_or_empty(v: Variant, what: String) -> Array:
-	if typeof(v) != TYPE_ARRAY:
-		push_warning("%s가 배열이 아니라 무시: %s" % [what, str(v)])
-		return []
-	return v as Array
 
 func _build_world() -> void:
 	_build_environment()

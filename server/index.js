@@ -7,6 +7,8 @@ import { gzipSync, brotliCompressSync, constants as zlibConstants } from 'zlib';
 import { extname, join, normalize, resolve } from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+// 환경변수는 전부 trim해서 읽는다(server/env.js에 이유와 테스트가 있다).
+import { env, envIsOff } from './env.js';
 
 // Godot 웹 export 결과물(build/web/)을 정적 서빙하고, 같은 포트에서 /ws
 // WebSocket으로 실시간 멀티플레이를 중계하는 서버.
@@ -28,18 +30,6 @@ import { dirname } from 'path';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(join(__dirname, '..', 'build', 'web'));
-/**
- * 환경변수는 **전부 trim해서 읽는다.** cmd의 `set VAR=값 && cmd`는 `&&` 앞 공백까지
- * 값에 담는다 — `TLS`에서 이미 한 번 물렸고(값이 "off "가 되어 배포가 https로 떴다),
- * 같은 함정이 경로·호스트에도 그대로 있다: `TLS_CERT="…pem "`이면 existsSync가
- * false가 되어 **조용히 http로 떨어지고**, `HOST=" 0.0.0.0"`이면 listen이 던진다.
- * 배치 인용 규칙에 서버 동작이 걸리지 않게 한 곳에서 자른다(리뷰 지적).
- */
-const env = (key, fallback = '') => {
-  const v = String(process.env[key] ?? '').trim();
-  return v === '' ? fallback : v;
-};
-
 const PORT = Number(env('PORT', '3001'));
 const HOST = env('HOST', '0.0.0.0');
 
@@ -59,8 +49,8 @@ const HOST = env('HOST', '0.0.0.0');
 const TLS_CERT = env('TLS_CERT', join(__dirname, 'certs', 'dev-cert.pem'));
 const TLS_KEY = env('TLS_KEY', join(__dirname, 'certs', 'dev-key.pem'));
 // TLS=off 로 강제로 http 기동(비보안 컨텍스트 동작을 검증할 때 쓴다).
-// `TLS=off`면 인증서가 있어도 http로 뜬다(위 env()가 공백을 잘라 준다).
-const useTls = env('TLS').toLowerCase() !== 'off'
+// `TLS=off`면 인증서가 있어도 http로 뜬다(공백은 env가 잘라 준다 — server/env.js).
+const useTls = !envIsOff('TLS')
   && existsSync(TLS_CERT) && existsSync(TLS_KEY);
 
 // gzip으로 보낼 확장자. wasm이 39MB, pck가 4MB라 무압축으로 보내면 폰에서

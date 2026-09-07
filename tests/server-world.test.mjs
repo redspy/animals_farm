@@ -989,11 +989,18 @@ test('범위 헬퍼가 추가·삭제되면 린트 표도 함께 바뀌어야 �
   const defined = [...WORLD_SRC.matchAll(/const (\w+) = \([^)]*\)\s*=>\s*rangeOf\(/g)].map((m) => m[1]);
   assert.deepEqual(new Set(defined), new Set(LIMIT_READERS.map((r) => r.fn)),
     '범위 헬퍼가 추가/삭제됐는데 LIMIT_READERS가 낡았다');
+  // 위 정규식은 **화살표 정의만** 잡는다 — `function plim() { return rangeOf(...) }`
+  // 형태로 네 번째 헬퍼를 만들면 defined에 안 잡혀 표를 잊어도 통과했다(리뷰 지적).
+  // rangeOf를 부르는 지점 수와 대조해서 그 형태까지 막는다(정의 1개 + 헬퍼마다 1회).
+  const rangeOfSites = [...WORLD_SRC.matchAll(/\brangeOf\(/g)].length;
+  assert.equal(rangeOfSites - 1, defined.length,
+    `rangeOf를 부르는 곳(${rangeOfSites - 1})과 화살표 헬퍼 수(${defined.length})가 다르다 — 다른 형태의 헬퍼가 생겼다면 LIMIT_READERS와 이 린트를 함께 손볼 것`);
 });
 
 test('서버가 범위를 요구하는 키는 전부 데이터의 limits에 있다(데이터 린트)', () => {
   // activities.json뿐 아니라 world.json(playground.race)·npcs.json까지 본다 —
   // design.md §3이 이 셋을 나란히 "데이터가 단일 출처"로 적어 놨다.
+  let total = 0;
   for (const reader of LIMIT_READERS) {
     const keys = limitKeysFrom(reader.fn);
     assert.ok(keys.length > 0,
@@ -1003,7 +1010,12 @@ test('서버가 범위를 요구하는 키는 전부 데이터의 limits에 있�
       assert.ok(Array.isArray(limits[key]) && limits[key].length === 2,
         `${reader.file}의 limits에 ${key} 범위가 없다 — 없으면 코드 폴백으로 조용히 되돌아간다`);
     }
+    total += new Set(keys).size;
   }
+  // **개수 하한은 헬퍼 이름 대조와 다른 구멍을 막는다.** 정규식을 손대다 `\s*`를
+  // 빠뜨려 `alim(\n  'speed'` 형태를 놓치면 keys.length > 0은 여전히 참이라
+  // 통과한다(리뷰 지적). 키를 **의도적으로** 줄였으면 이 숫자를 갱신할 것.
+  assert.ok(total >= 26, `범위를 대조한 키가 ${total}개뿐이다 — 추출이 일부만 잡고 있다(의도적으로 줄였다면 하한을 갱신할 것)`);
 });
 
 // ---------------------------------------------------------------------------

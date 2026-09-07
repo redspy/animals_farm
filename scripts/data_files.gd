@@ -26,6 +26,27 @@ static func load_dict(path: String) -> Dictionary:
 	_cache[path] = result
 	return result
 
+## 읽어 온 값의 형태를 확인해서 넘긴다. 타입이 다른 값을 **타입 있는 변수**에
+## 대입하면(또는 배열 아닌 값을 for로 돌면) 런타임 에러가 나고 그 함수가 그 자리에서
+## 멈춘다 — `_ready`에서 터지면 뒤따르는 월드 조립·접속까지 날아가 빈 화면이 된다.
+##
+## 이 규칙이 로더 옆에 있는 이유: 부팅 최상단(main.gd)에서 죽으면 월드 쪽 가드는
+## 도달조차 못 한다(리뷰 지적 — characters.json이 그 경로였다).
+##
+## `what`에는 "items.json의 items"처럼 **파일까지 포함한 라벨**을 넘긴다. 문구에
+## 파일명을 박아 두면 다른 파일에 재사용할 때 경고가 거짓말이 된다.
+static func dict_or_empty(v: Variant, what: String) -> Dictionary:
+	if typeof(v) != TYPE_DICTIONARY:
+		push_warning("%s가 딕셔너리가 아니라 무시: %s" % [what, str(v)])
+		return {}
+	return v as Dictionary
+
+static func array_or_empty(v: Variant, what: String) -> Array:
+	if typeof(v) != TYPE_ARRAY:
+		push_warning("%s가 배열이 아니라 무시: %s" % [what, str(v)])
+		return []
+	return v as Array
+
 ## 테스트에서 파일을 바꿔 가며 확인할 때 쓴다.
 static func clear_cache() -> void:
 	_cache.clear()

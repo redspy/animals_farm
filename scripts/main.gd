@@ -24,9 +24,14 @@ func _ready() -> void:
 	get_window().size_changed.connect(UiScale.apply)
 	_save = SaveManager.load_save()
 	# 사용자가 +/− 로 정한 화면 크기를 이어서 쓴다(세이브 전역 설정).
-	var settings: Dictionary = _save.get("settings", {})
+	# 세이브·데이터에서 읽은 값은 형태를 확인해서 받는다. 여기는 **부팅 최상단**이라
+	# 타입 대입 에러로 멈추면 캐릭터 선택 화면조차 뜨지 않고, world.gd의 같은 가드는
+	# 도달조차 못 한다(리뷰 지적).
+	var settings: Dictionary = DataFiles.dict_or_empty(_save.get("settings", {}), "세이브의 settings")
 	UiScale.set_zoom(float(settings.get("ui_zoom", 1.0)))
-	_presets = DataFiles.load_dict("res://data/characters.json").get("presets", [])
+	_presets = DataFiles.array_or_empty(
+		DataFiles.load_dict("res://data/characters.json").get("presets", []),
+		"characters.json의 presets")
 	_world_cfg = DataFiles.load_dict("res://data/world.json")
 	if _presets.is_empty():
 		push_error("data/characters.json에 프리셋이 없어 캐릭터를 만들 수 없다")
