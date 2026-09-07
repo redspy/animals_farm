@@ -17,6 +17,15 @@ const PIXEL_SIZE_CONST: float = 0.05
 const SCALE: int = 2
 const FINE_W: int = SPRITE_WIDTH * SCALE
 const FINE_H: int = SPRITE_HEIGHT * SCALE
+
+## ⚠️ **세밀 디테일 좌표는 SCALE == 2 전용이다.**
+##
+## 몸·머리는 논리 좌표(프리미티브가 SCALE을 곱한다)라 배율을 따라가지만, 눈
+## 반지름·동공 크기·볼·입 오프셋은 세밀 격자의 절대값이다. 배율을 올리면 머리는
+## 커지는데 표정은 제자리에 남아 얼굴이 무너진다 — 그때는 표정 설계를 그 해상도에
+## 맞게 다시 하는 것이 맞다(작은 얼굴의 도트는 배율로 늘려서 예뻐지지 않는다).
+## 그래서 배율을 바꾸면 조용히 깨지는 대신 경고를 남긴다.
+const FINE_DETAIL_SCALE: int = 2
 const WALK_FPS: float = 10.0
 const BOB_OFFSET: int = 2
 const SHADE_COEFF: float = 0.7
@@ -69,7 +78,19 @@ var _current_facing: String = "down"
 ## (활동, 기술)별로 만든 프레임을 캐시한다 — 버튼을 연타해도 부담이 없다.
 var _activity: String = ""
 var _trick: String = ""
-var _frames_cache: Dictionary = {}
+
+## **프레임 묶음은 외형이 같으면 공유한다.**
+##
+## 왜 static인가: 프레임 한 벌(24장)을 만드는 데 38ms가 들고, 인스턴스별로
+## 캐시하면 같은 프리셋 8명이 같은 그림을 8번 만든다 — 운동 중인 사람이 여럿인
+## 월드에 접속하면 그만큼 정지한다(리뷰 지적: 8명이면 약 600ms).
+## 키는 (외형 요약, 활동, 기술)이라 외형이 다르면 섞이지 않는다.
+##
+## 상한을 두는 이유: 엔트리당 24 × 64×80×4 = 약 491KB다. 활동 조합이 15종쯤
+## 되므로 상한이 없으면 한 캐릭터가 다 돌면 7.5MB, 여러 명이면 웹 힙에 물린다.
+static var _frames_shared: Dictionary = {}
+static var _frames_order: Array[String] = []
+const FRAMES_CACHE_MAX := 24
 
 var _c_rope: Color
 var _c_bike_frame: Color
@@ -145,11 +166,19 @@ func activity() -> String:
 ## 갈아 끼우고 play()를 다시 부르지 않으면 이전 애니메이션 이름이 없어져
 ## 스프라이트가 사라진다.
 func _apply_frames() -> void:
-	var key := "%s|%s" % [_activity, _trick]
-	if not _frames_cache.has(key):
-		_frames_cache[key] = _generate_sprite_frames()
+	# **성별도 키에 넣는다** — 치마 유무가 갈리므로, 같은 색·머리라도 프레임을
+	# 공유하면 남성 프리셋에 치마가 붙는다.
+	var key := "%s|%s|%s|%s" % [look_signature(), _gender, _activity, _trick]
+	if not _frames_shared.has(key):
+		_frames_shared[key] = _generate_sprite_frames()
+		_frames_order.append(key)
+		# 가장 오래된 것부터 버린다(LRU가 아니라 FIFO — 스프라이트 프레임은
+		# 다시 만들 수 있고, 정확한 사용 시각을 추적할 만한 이득이 없다).
+		while _frames_order.size() > FRAMES_CACHE_MAX:
+			var oldest: String = _frames_order.pop_front()
+			_frames_shared.erase(oldest)
 	var keep := animation
-	sprite_frames = _frames_cache[key] as SpriteFrames
+	sprite_frames = _frames_shared[key] as SpriteFrames
 	if sprite_frames.has_animation(keep):
 		play(keep)
 	else:
@@ -199,10 +228,14 @@ func apply_look(preset: Dictionary) -> void:
 	if not is_inside_tree():
 		return   # _ready가 어차피 계산한다
 	_resolve_colors()
-	_frames_cache.clear()
+	# 캐시를 비우지 않는다 — 키에 외형 요약이 들어 있어 색이 바뀌면 다른 키가
+	# 된다(예전에는 인스턴스별 캐시라 비워야 했다).
 	_apply_frames()
 
 func _ready() -> void:
+	if SCALE != FINE_DETAIL_SCALE:
+		push_warning("[sprite] SCALE=%d인데 표정 좌표는 %d 전용입니다 — 얼굴이 어긋납니다(docs/design.md §5)"
+			% [SCALE, FINE_DETAIL_SCALE])
 	_resolve_colors()
 
 	_c_rope = Palette.color("character", "rope")
@@ -505,7 +538,8 @@ func _hair_gloss(img: Image, fc: Vector2i, fr: int, color: Color) -> void:
 ## 스타일별 길이(옆머리·뒷머리). 얼굴 창을 침범하지 않도록 **머리 옆쪽 x**에만
 ## 그린다.
 func _draw_hair_length(img: Image, dir: Vector2i, hc_x: int, hc_y: int) -> void:
-	var hair := _c_hair if _hair_style != "hair_cap" else _c_hair
+	# 모자를 써도 **머리카락 색**으로 길이를 그린다(모자 밖으로 나온 머리다).
+	var hair := _c_hair
 	match _hair_style:
 		"hair_long":
 			if dir.x == 1:
@@ -967,11 +1001,19 @@ func _lean_upper(img: Image, dx: int, split: int) -> Image:
 	out.blit_rect(img, Rect2i(0, 0, FINE_W, fine_split), Vector2i(fine_dx, 0))
 	return out
 
+## 논리 좌표 영역을 비운다(자전거·앉은 자세가 다리 자리를 차지할 때 쓴다).
+##
+## ⚠️ `_fine_clear_rect`는 **세밀 좌표**를 받는다. 예전에 이 함수가 세밀 좌표를
+## 만들어 넘긴 뒤 그쪽에서 논리 프리미티브(`_draw_rect`)를 불러서 SCALE이 두 번
+## 곱해졌고(4배), 세 호출 지점이 전부 화면 밖으로 나가 **한 픽셀도 지우지 못했다**
+## — 자전거·킥보드 위에 선 다리가 그대로 남고 놀이기구에 앉은 자세도 다리가 선
+## 채로 겹쳤다(리뷰 지적). 게다가 외곽선이 맨 마지막에 돌아 그 다리에까지
+## 테두리를 둘러 더 도드라졌다.
 func _clear_rect(img: Image, rect: Rect2i) -> void:
-	_fine_clear_rect(img, Rect2i(rect.position * SCALE, rect.size * SCALE))
+	_draw_rect(img, rect, Color(0, 0, 0, 0))
 
 func _fine_clear_rect(img: Image, rect: Rect2i) -> void:
-	_draw_rect(img, rect, Color(0, 0, 0, 0))
+	_fine_rect(img, rect, Color(0, 0, 0, 0))
 
 ## 굵이가 있는 선(브레젠험 대신 간격 보간 — 32px 스프라이트에서는 충분하다).
 func _draw_line(img: Image, from: Vector2i, to: Vector2i, color: Color, thick: int = 1) -> void:

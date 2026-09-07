@@ -25,6 +25,12 @@ const SCALE := 2
 const FINE_W := W * SCALE
 const FINE_H := H * SCALE
 
+## 머리 중심·반지름(논리 좌표). 표정·코 위치를 여기서 유도한다 — 절대 세밀
+## 좌표로 박아 두면 SCALE을 바꿀 때 머리만 커지고 얼굴은 제자리에 남는다
+## (리뷰 지적). 눈 크기 자체는 여전히 세밀 격자 기준이라 SCALE 2를 가정한다.
+const HEAD := Vector2i(16, 13)
+const HEAD_R := 9
+
 var _species := "cat"
 var _c_body: Color
 var _c_accent: Color
@@ -51,6 +57,8 @@ func setup(species: String) -> void:
 	_c_eye_white = Palette.color("character", "eye_white")
 	_c_blush = Palette.color("character", "blush")
 
+	if SCALE != 2:
+		push_warning("[npc] SCALE=%d인데 표정 크기는 2 전용입니다 — 얼굴이 어긋납니다" % SCALE)
 	billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	# 내부 해상도가 SCALE배이므로 픽셀 크기를 그만큼 줄여야 월드 크기가 같다.
@@ -96,8 +104,13 @@ func _make(side: bool) -> Texture2D:
 	_rect(img, Rect2i(17, 35, 6, 4), _c_body)
 
 	# --- 머리 ---
-	_circle(img, Vector2i(16, 13), 9, _c_body)
-	_fine_arc_bottom(img, Vector2i(16, 13), 9, _c_body.lerp(Color.BLACK, 0.12))
+	_circle(img, HEAD, HEAD_R, _c_body)
+	_fine_arc_bottom(img, HEAD, HEAD_R, _c_body.lerp(Color.BLACK, 0.12))
+	# 세밀 좌표 기준 머리 중심 — 표정·코를 여기서 잰다.
+	var fc := HEAD * SCALE + Vector2i(SCALE / 2, SCALE / 2)
+	var fr := HEAD_R * SCALE
+	var eye_y := fc.y - 3
+	var eye_dx := 7
 
 	match _species:
 		"bear":
@@ -107,7 +120,7 @@ func _make(side: bool) -> Texture2D:
 			_circle(img, Vector2i(8, 5), 2, _c_accent)
 			_circle(img, Vector2i(24, 5), 2, _c_accent)
 			_circle(img, Vector2i(16, 17), 5, _c_accent)
-			_fine_rect(img, Rect2i(30, 31, 4, 3), _c_eye)       # 코
+			_fine_rect(img, Rect2i(fc.x - 3, fc.y + 4, 4, 3), _c_eye)      # 코
 		"duck":
 			# 오리: 귀 없음 + 부리(포인트색). 머리 위 깃털 한 가닥.
 			_rect(img, Rect2i(15, 2, 2, 4), _c_body)
@@ -123,17 +136,17 @@ func _make(side: bool) -> Texture2D:
 				_rect(img, Rect2i(7 + i, 4 + i, 4 - i + 1, 2), _c_body)
 				_rect(img, Rect2i(21 + (3 - i), 4 + i, 4 - i + 1, 2), _c_body)
 			_circle(img, Vector2i(16, 17), 4, _c_accent)
-			_fine_rect(img, Rect2i(31, 33, 3, 2), _c_eye)       # 코
+			_fine_rect(img, Rect2i(fc.x - 2, fc.y + 6, 3, 2), _c_eye)      # 코
 
 	# --- 표정: 큰 눈 + 하이라이트 + 볼 ---
 	if side:
-		_eye(img, Vector2i(41, 24), 1)
-		_fine_rect(img, Rect2i(35, 30, 3, 1), _c_blush)
+		_eye(img, Vector2i(fc.x + eye_dx + 1, eye_y), 1)
+		_fine_rect(img, Rect2i(fc.x + 1, eye_y + 6, 3, 1), _c_blush)
 	else:
-		_eye(img, Vector2i(25, 24), -1)
-		_eye(img, Vector2i(39, 24), 1)
-		_fine_rect(img, Rect2i(17, 30, 3, 1), _c_blush)
-		_fine_rect(img, Rect2i(44, 30, 3, 1), _c_blush)
+		_eye(img, Vector2i(fc.x - eye_dx, eye_y), -1)
+		_eye(img, Vector2i(fc.x + eye_dx, eye_y), 1)
+		_fine_rect(img, Rect2i(fc.x - fr + 2, eye_y + 6, 3, 1), _c_blush)
+		_fine_rect(img, Rect2i(fc.x + fr - 4, eye_y + 6, 3, 1), _c_blush)
 
 	# --- 꼬리(측면에서만 보인다) ---
 	if side:
