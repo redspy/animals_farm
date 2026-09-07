@@ -5,6 +5,18 @@ extends AnimatedSprite3D
 const SPRITE_WIDTH: int = 32
 const SPRITE_HEIGHT: int = 40
 const PIXEL_SIZE_CONST: float = 0.05
+
+## **내부 해상도 배율.** 그리는 좌표는 32×40 논리 격자를 그대로 쓰고, 실제
+## 이미지만 이 배수로 만든다.
+##
+## 왜 이렇게 하는가: 좌표계를 바꾸면 운동 장비 오버레이 8종(줄넘기·축구·자전거·
+## 인라인·킥보드·낚시·앉기·손잡이)의 좌표를 전부 다시 찍어야 하고, 그 그림들은
+## 몸 좌표에 맞춰 손으로 맞춘 것이다. 배율만 두면 **기존 그림은 그대로**이면서
+## (a) 원은 세밀한 격자에서 계산되어 매끄러워지고 (b) 눈 하이라이트·볼·입처럼
+## 논리 1픽셀보다 작은 디테일을 넣을 수 있다.
+const SCALE: int = 2
+const FINE_W: int = SPRITE_WIDTH * SCALE
+const FINE_H: int = SPRITE_HEIGHT * SCALE
 const WALK_FPS: float = 10.0
 const BOB_OFFSET: int = 2
 const SHADE_COEFF: float = 0.7
@@ -23,6 +35,13 @@ var _c_hair: Color
 var _c_shoe: Color
 var _c_shoe_dark: Color
 var _c_eye: Color
+var _c_outline: Color
+var _c_blush: Color
+var _c_eye_white: Color
+var _c_mouth: Color
+var _c_hair_light: Color
+var _c_cap: Color
+var _c_cap_dark: Color
 
 var _hair_style: String = "none"
 var _gender: String = "male"
@@ -201,15 +220,24 @@ func _ready() -> void:
 	_c_shoe = Palette.color("character", "shoe")
 	_c_shoe_dark = Palette.color("character", "shoe_dark")
 	_c_eye = Palette.color("character", "eye")
+	_c_outline = Palette.color("character", "outline")
+	_c_blush = Palette.color("character", "blush")
+	_c_eye_white = Palette.color("character", "eye_white")
+	_c_mouth = Palette.color("character", "mouth")
+	_c_hair_light = Palette.color("character", "hair_light")
+	_c_cap = Palette.color("character", "cap")
+	_c_cap_dark = Palette.color("character", "cap_dark")
 
 	# 3D 환경에서 2.5D 빌보드 스프라이트로 설정
 	billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	alpha_cut = SpriteBase3D.ALPHA_CUT_DISCARD
-	pixel_size = PIXEL_SIZE_CONST
+	# 내부 해상도가 SCALE배이므로 픽셀 크기를 그만큼 줄여야 월드에서의 크기가
+	# 그대로다(발 위치 기준도 같은 이유로 FINE_H를 쓴다).
+	pixel_size = PIXEL_SIZE_CONST / float(SCALE)
 	
 	# 노드 원점이 캐릭터 발바닥이 되도록 스프라이트를 위로 반만큼 올림 (픽셀 단위)
-	offset = Vector2(0, SPRITE_HEIGHT / 2.0)
+	offset = Vector2(0, FINE_H / 2.0)
 	
 	# 빌보드가 방향광 그림자를 드리우면 공중에 뜬 얼룩처럼 보이므로 그림자 끄기
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -273,7 +301,7 @@ func _generate_sprite_frames() -> SpriteFrames:
 	return frames
 
 func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
-	var img: Image = Image.create_empty(SPRITE_WIDTH, SPRITE_HEIGHT, false, Image.FORMAT_RGBA8)
+	var img: Image = Image.create_empty(FINE_W, FINE_H, false, Image.FORMAT_RGBA8)
 	if img == null:
 		push_error("이미지 생성 실패")
 		return ImageTexture.new()
@@ -343,9 +371,9 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 		
 		# 머리 (크고 둥글게)
 		_draw_circle(img, Vector2i(HEAD_CENTER_X, HEAD_CENTER_Y + bob), HEAD_RADIUS, _c_skin)
-		_draw_rect(img, Rect2i(19, HEAD_CENTER_Y - 1 + bob, 2, 3), _c_eye) # 눈
-		
+		_draw_chin_shade(img, bob)
 		_draw_hair(img, dir, bob)
+		_draw_face(img, dir, bob)
 		
 		# 앞쪽 다리 (Right)
 		_draw_rect(img, Rect2i(front_leg_x, leg_r_y, 4, 7), _c_bottom)
@@ -382,17 +410,17 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 		
 		# 머리
 		_draw_circle(img, Vector2i(HEAD_CENTER_X, HEAD_CENTER_Y + bob), HEAD_RADIUS, _c_skin)
-		
-		if dir.y == 1: # Down view (눈 표시)
-			_draw_rect(img, Rect2i(12, HEAD_CENTER_Y - 1 + bob, 2, 3), _c_eye)
-			_draw_rect(img, Rect2i(18, HEAD_CENTER_Y - 1 + bob, 2, 3), _c_eye)
-			
+		_draw_chin_shade(img, bob)
 		_draw_hair(img, dir, bob)
+		_draw_face(img, dir, bob)
 			
 	# 운동 장비/자세는 몸을 다 그린 뒤에 덮어 그린다 — 자전거·킥보드는 다리를
 	# 가려야 "타고 있는" 것으로 보이고, 줄은 몸 앞을 지나야 한다.
 	if not _activity.is_empty():
 		img = _apply_activity(img, dir, walk_phase)
+
+	# 외곽선은 **맨 마지막**에 한 번 — 장비까지 같이 테두리를 얻는다.
+	_outline(img)
 
 	# 왼쪽을 볼 경우 전체 이미지를 좌우 반전
 	if flip:
@@ -404,64 +432,241 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 		return ImageTexture.new()
 	return tex
 
+## 머리카락. **얼굴을 덮지 않는다.**
+##
+## 예전에는 머리 크기의 원을 통째로 덮어서 눈·표정이 아예 보이지 않았다(캐릭터가
+## 얼굴 없는 덩어리로 보였다 — 확대 시트로 확인). 앞머리는 **눈 위까지만**
+## 그리고, 길이는 얼굴 옆·뒤로 흘린다.
 func _draw_hair(img: Image, dir: Vector2i, bob: int) -> void:
 	if _hair_style == "none":
 		return
-		
+
 	var hc_x: int = HEAD_CENTER_X
 	var hc_y: int = HEAD_CENTER_Y + bob
-	
-	if dir.y == -1: # Up view 머리 뒤통수 덮기
-		_draw_circle(img, Vector2i(hc_x, hc_y), HEAD_RADIUS, _c_hair if _hair_style != "hair_cap" else _c_torso)
-	
-	if _hair_style == "hair_cap":
-		_draw_circle(img, Vector2i(hc_x, hc_y - 3), HEAD_RADIUS - 1, _c_torso)
-		if dir.x == 1:
-			_draw_rect(img, Rect2i(hc_x, hc_y - 4, 12, 2), _c_torso)
-		elif dir.y == 1:
-			_draw_rect(img, Rect2i(hc_x - 10, hc_y - 4, 20, 2), _c_torso)
+	# 세밀 좌표 기준 머리 중심과 반지름.
+	var fc := Vector2i(hc_x, hc_y) * SCALE + Vector2i(SCALE / 2, SCALE / 2)
+	var fr := HEAD_RADIUS * SCALE
+	# 앞머리 아래 끝(= 눈보다 위). 눈은 얼굴 중심보다 살짝 아래에 둔다.
+	var bangs_bottom := fc.y + int(fr * 0.18)
+
+	if dir.y == -1:
+		# 뒤통수는 머리카락(또는 모자)이 전부 덮는다. 표정도 없다.
+		var back := _c_cap if _hair_style == "hair_cap" else _c_hair
+		_fine_circle(img, fc, fr, back)
+		if _hair_style == "hair_cap":
+			# 모자 아래로 머리카락이 조금 보인다 — 안 그리면 통짜 덩어리다.
+			_fine_rect(img, Rect2i(fc.x - fr + SCALE, fc.y + int(fr * 0.35),
+				(fr - SCALE) * 2, SCALE * 2), _c_hair)
+		_draw_hair_length(img, dir, hc_x, hc_y)
+		_hair_gloss(img, fc, fr, _c_cap_dark if _hair_style == "hair_cap" else _c_hair_light)
 		return
-		
-	_draw_circle(img, Vector2i(hc_x, hc_y - 3), HEAD_RADIUS - 1, _c_hair)
-	
-	if _hair_style == "hair_long":
+
+	if _hair_style == "hair_cap":
+		# 모자: **옷색을 쓰지 않는다** — 초록 옷 + 초록 모자면 머리와 몸이 한
+		# 덩어리로 보인다(첫 시도가 그랬다). 전용 색을 쓰고 챙을 눈 위에 낸다.
+		_fine_circle_clipped(img, fc, fr, _c_cap, bangs_bottom)
+		# 모자 아래 머리카락 한 줄.
+		_fine_rect(img, Rect2i(fc.x - fr + SCALE * 2, bangs_bottom - SCALE,
+			(fr - SCALE * 2) * 2, SCALE), _c_hair)
+		# 챙은 **눈보다 위**여야 한다 — 눈높이에 두면 선이 눈을 가로지른다.
+		# 눈은 얼굴 중심에서 fr*0.22 아래(눈동자 반지름 2)이므로 그보다 위로.
+		var brim_y := bangs_bottom - SCALE * 2
 		if dir.x == 1:
-			_draw_rect(img, Rect2i(hc_x - 8, hc_y, 6, 12), _c_hair)
+			_fine_rect(img, Rect2i(fc.x, brim_y, fr + SCALE * 2, SCALE), _c_cap_dark)
 		else:
-			_draw_rect(img, Rect2i(hc_x - 9, hc_y, 4, 12), _c_hair)
-			_draw_rect(img, Rect2i(hc_x + 5, hc_y, 4, 12), _c_hair)
-			if dir.y == -1:
-				_draw_rect(img, Rect2i(hc_x - 5, hc_y, 10, 12), _c_hair)
-	elif _hair_style == "hair_twin":
-		if dir.x == 1:
-			_draw_rect(img, Rect2i(hc_x - 7, hc_y, 4, 10), _c_hair)
-		else:
-			_draw_rect(img, Rect2i(hc_x - 12, hc_y - 2, 5, 10), _c_hair)
-			_draw_rect(img, Rect2i(hc_x + 7, hc_y - 2, 5, 10), _c_hair)
-	elif _hair_style == "hair_bob":
-		if dir.x == 1:
-			_draw_rect(img, Rect2i(hc_x - 8, hc_y, 8, 6), _c_hair)
-		else:
-			_draw_rect(img, Rect2i(hc_x - 9, hc_y, 18, 6), _c_hair)
-	elif _hair_style == "hair_short":
-		if dir.x == 1:
-			_draw_rect(img, Rect2i(hc_x - 8, hc_y, 6, 4), _c_hair)
-		else:
-			_draw_rect(img, Rect2i(hc_x - 8, hc_y, 16, 4), _c_hair)
+			_fine_rect(img, Rect2i(fc.x - fr - SCALE, brim_y, (fr + SCALE) * 2, SCALE), _c_cap_dark)
+		_draw_hair_length(img, dir, hc_x, hc_y)
+		_hair_gloss(img, fc, fr, _c_cap_dark)
+		return
+
+	# 앞머리: 머리 윗부분만 덮는다.
+	_fine_circle_clipped(img, fc, fr, _c_hair, bangs_bottom)
+	_draw_hair_length(img, dir, hc_x, hc_y)
+	_hair_gloss(img, fc, fr, _c_hair_light)
+
+## 머리 윗광. **얇은 띠**로 넣는다 — 처음에는 큰 원으로 덮어서 하이라이트가
+## 아니라 "모자를 하나 더 쓴" 것처럼 보였다(확대 시트로 확인).
+func _hair_gloss(img: Image, fc: Vector2i, fr: int, color: Color) -> void:
+	# **좌상단 짧은 호** 한 줄. 좌우 대칭 띠로 넣었더니 하이라이트가 아니라
+	# "이마에 두른 띠"처럼 보였다(확대 시트로 확인) — 빛은 한쪽에서 온다.
+	var y0 := fc.y - int(fr * 0.60)
+	var x0 := fc.x - int(fr * 0.62)
+	var x1 := fc.x - int(fr * 0.12)
+	for y in range(y0, y0 + SCALE):
+		for x in range(x0, x1 + 1):
+			if x < 0 or x >= FINE_W or y < 0 or y >= FINE_H:
+				continue
+			var dx := float(x - fc.x)
+			var dy := float(y - fc.y)
+			if dx * dx + dy * dy > float((fr - SCALE) * (fr - SCALE)):
+				continue
+			img.set_pixel(x, y, color)
+
+## 스타일별 길이(옆머리·뒷머리). 얼굴 창을 침범하지 않도록 **머리 옆쪽 x**에만
+## 그린다.
+func _draw_hair_length(img: Image, dir: Vector2i, hc_x: int, hc_y: int) -> void:
+	var hair := _c_hair if _hair_style != "hair_cap" else _c_hair
+	match _hair_style:
+		"hair_long":
+			if dir.x == 1:
+				_draw_rect(img, Rect2i(hc_x - 8, hc_y - 2, 5, 14), hair)
+			else:
+				_draw_rect(img, Rect2i(hc_x - 9, hc_y - 3, 3, 15), hair)
+				_draw_rect(img, Rect2i(hc_x + 6, hc_y - 3, 3, 15), hair)
+		"hair_twin":
+			# 양갈래: 머리 양옆으로 묶음이 튀어나온다(귀엽게 방울까지).
+			if dir.x == 1:
+				_draw_rect(img, Rect2i(hc_x - 9, hc_y - 1, 4, 9), hair)
+				_draw_circle(img, Vector2i(hc_x - 7, hc_y + 8), 2, hair)
+			else:
+				_draw_rect(img, Rect2i(hc_x - 12, hc_y - 2, 4, 9), hair)
+				_draw_rect(img, Rect2i(hc_x + 8, hc_y - 2, 4, 9), hair)
+				_draw_circle(img, Vector2i(hc_x - 10, hc_y + 7), 2, hair)
+				_draw_circle(img, Vector2i(hc_x + 10, hc_y + 7), 2, hair)
+		"hair_bob":
+			if dir.x == 1:
+				_draw_rect(img, Rect2i(hc_x - 8, hc_y - 2, 6, 8), hair)
+			else:
+				_draw_rect(img, Rect2i(hc_x - 9, hc_y - 2, 4, 8), hair)
+				_draw_rect(img, Rect2i(hc_x + 5, hc_y - 2, 4, 8), hair)
+		"hair_short":
+			if dir.x == 1:
+				_draw_rect(img, Rect2i(hc_x - 8, hc_y - 3, 5, 5), hair)
+			else:
+				_draw_rect(img, Rect2i(hc_x - 9, hc_y - 3, 3, 5), hair)
+				_draw_rect(img, Rect2i(hc_x + 6, hc_y - 3, 3, 5), hair)
+
+## 턱 그늘. **얼굴 아래 두 줄만** 살짝 어둡게 한다.
+##
+## 처음에는 반지름 절반의 원으로 넣었는데 얼굴 아래 절반이 회색으로 덮여
+## 지저분해 보였다(확대 시트로 확인) — 입체감은 얇은 한 줄로 충분하다.
+func _draw_chin_shade(img: Image, bob: int) -> void:
+	var fc := Vector2i(HEAD_CENTER_X, HEAD_CENTER_Y + bob) * SCALE \
+		+ Vector2i(SCALE / 2, SCALE / 2)
+	var fr := HEAD_RADIUS * SCALE
+	var shade := _c_skin.lerp(_c_skin_dark, 0.45)
+	for y in range(fc.y + fr - SCALE, fc.y + fr + 1):
+		for x in range(fc.x - fr, fc.x + fr + 1):
+			if x < 0 or x >= FINE_W or y < 0 or y >= FINE_H:
+				continue
+			var dx := float(x - fc.x)
+			var dy := float(y - fc.y)
+			if dx * dx + dy * dy <= float(fr * fr):
+				img.set_pixel(x, y, shade)
+
+## 표정. **머리카락을 그린 뒤에** 찍는다 — 순서가 뒤면 앞머리가 눈을 덮는다.
+##
+## 귀여움은 큰 눈 + 흰 하이라이트 + 볼 홍조에서 거의 다 나온다. 다만 눈을
+## **검은 덩어리**로 크게 찍으면 무섭다(첫 시도가 그랬다) — 흰자 위에 작은
+## 눈동자를 얹고 하이라이트를 한 점 두면 같은 크기에서 훨씬 부드럽다.
+func _draw_face(img: Image, dir: Vector2i, bob: int) -> void:
+	if dir.y == -1:
+		return   # 뒤통수
+	var fc := Vector2i(HEAD_CENTER_X, HEAD_CENTER_Y + bob) * SCALE \
+		+ Vector2i(SCALE / 2, SCALE / 2)
+	var fr := HEAD_RADIUS * SCALE
+	var eye_y := fc.y + int(fr * 0.22)
+	var eye_dx := int(fr * 0.40)
+
+	if dir.x == 1:
+		var ex := fc.x + int(fr * 0.48)
+		_draw_eye(img, Vector2i(ex, eye_y), -1)
+		_fine_rect(img, Rect2i(fc.x + int(fr * 0.15), eye_y + 3, 2, 1), _c_blush)
+		_fine_rect(img, Rect2i(ex - 2, eye_y + 4, 2, 1), _c_mouth)
+		return
+
+	for side: int in [-1, 1]:
+		_draw_eye(img, Vector2i(fc.x + side * eye_dx, eye_y), side)
+		_fine_rect(img, Rect2i(fc.x + side * (eye_dx + 4) - 1, eye_y + 3, 2, 1), _c_blush)
+	# 웃는 입 — 가운데 두 점 + 양쪽 한 점씩 올려 살짝 미소.
+	_fine_rect(img, Rect2i(fc.x - 1, eye_y + 5, 2, 1), _c_mouth)
+	_fine_rect(img, Rect2i(fc.x - 2, eye_y + 4, 1, 1), _c_mouth)
+	_fine_rect(img, Rect2i(fc.x + 1, eye_y + 4, 1, 1), _c_mouth)
+
+## 눈 한쪽. **눈동자가 주인공이고 흰자는 테두리 한 겹**이다.
+##
+## 처음에는 흰자 원(반지름 2)에 2×3 눈동자를 얹었는데, 흰 덩어리에 검은 선이
+## 그어진 것처럼 보였다(확대 시트로 확인). 눈동자를 3×3으로 키우고 흰자를
+## 한 겹만 남기면 같은 크기에서 눈으로 읽힌다.
+func _draw_eye(img: Image, center: Vector2i, side: int) -> void:
+	_fine_circle(img, center, 2, _c_eye_white)
+	_fine_rect(img, Rect2i(center.x - 1, center.y - 1, 3, 3), _c_eye)
+	# 하이라이트는 바라보는 쪽 위 한 점 — 두 눈이 같은 곳을 보게 만든다.
+	_fine_rect(img, Rect2i(center.x + (1 if side >= 0 else -1), center.y - 1, 1, 1), _c_eye_white)
+
+## 실루엣 외곽선. 알파가 있는 픽셀에 이웃한 **빈 픽셀**을 어둡게 칠한다.
+##
+## 도트 캐릭터의 가독성은 외곽선에서 온다 — 없으면 풀색 배경에 옷·피부가 녹아
+## 붙는다(확대 시트에서 확인). 장비 오버레이까지 다 그린 **뒤에** 한 번 돌리므로
+## 자전거·낚싯대도 같이 테두리를 얻는다.
+func _outline(img: Image) -> void:
+	# **픽셀을 하나씩 get_pixel로 읽지 않는다.** 세밀 격자는 64×80이고 프레임은
+	# (활동, 기술)마다 24장이라, 픽셀당 이웃 4번을 GDScript로 조회하면 프레임
+	# 한 벌에 수백만 번이 되어 스프라이트 생성이 몇 분 걸린다(실측: 5분 초과).
+	# 알파만 버퍼에서 한 번 읽고, 실제로 칠할 테두리 픽셀만 set_pixel한다.
+	var data := img.get_data()
+	var alpha := PackedByteArray()
+	alpha.resize(FINE_W * FINE_H)
+	for i in range(FINE_W * FINE_H):
+		alpha[i] = data[i * 4 + 3]
+	for y in FINE_H:
+		var row := y * FINE_W
+		for x in FINE_W:
+			if alpha[row + x] > 2:
+				continue
+			var touch := false
+			if x > 0 and alpha[row + x - 1] > 2:
+				touch = true
+			elif x < FINE_W - 1 and alpha[row + x + 1] > 2:
+				touch = true
+			elif y > 0 and alpha[row - FINE_W + x] > 2:
+				touch = true
+			elif y < FINE_H - 1 and alpha[row + FINE_W + x] > 2:
+				touch = true
+			if touch:
+				img.set_pixel(x, y, _c_outline)
+
+# ---------------------------------------------------------------------------
+# 그리기 프리미티브
+#
+# 인자는 **논리 좌표(32×40)**이고 내부에서 SCALE을 곱해 세밀 격자에 찍는다.
+# 원은 세밀 격자에서 계산되므로 배율만큼 매끄러워진다.
+#
+# `_fine_*`는 세밀 좌표를 직접 받는다 — 논리 1픽셀보다 작은 디테일(눈
+# 하이라이트·볼·입)에만 쓴다.
+# ---------------------------------------------------------------------------
 
 func _draw_circle(img: Image, center: Vector2i, radius: int, color: Color) -> void:
+	_fine_circle(img, center * SCALE + Vector2i(SCALE / 2, SCALE / 2), radius * SCALE, color)
+
+func _fine_circle(img: Image, center: Vector2i, radius: int, color: Color) -> void:
 	for y: int in range(center.y - radius, center.y + radius + 1):
 		for x: int in range(center.x - radius, center.x + radius + 1):
-			if x >= 0 and x < SPRITE_WIDTH and y >= 0 and y < SPRITE_HEIGHT:
+			if x >= 0 and x < FINE_W and y >= 0 and y < FINE_H:
+				var dx: float = float(x - center.x)
+				var dy: float = float(y - center.y)
+				if dx * dx + dy * dy <= float(radius * radius):
+					img.set_pixel(x, y, color)
+
+## 세밀 격자에서 반원(y 상한 아래)만 채운다 — 앞머리로 얼굴을 덮지 않으려면
+## 머리카락을 눈 위까지만 그려야 한다.
+func _fine_circle_clipped(img: Image, center: Vector2i, radius: int, color: Color,
+		y_max: int) -> void:
+	for y: int in range(center.y - radius, mini(center.y + radius + 1, y_max)):
+		for x: int in range(center.x - radius, center.x + radius + 1):
+			if x >= 0 and x < FINE_W and y >= 0 and y < FINE_H:
 				var dx: float = float(x - center.x)
 				var dy: float = float(y - center.y)
 				if dx * dx + dy * dy <= float(radius * radius):
 					img.set_pixel(x, y, color)
 
 func _draw_rect(img: Image, rect: Rect2i, color: Color) -> void:
+	_fine_rect(img, Rect2i(rect.position * SCALE, rect.size * SCALE), color)
+
+func _fine_rect(img: Image, rect: Rect2i, color: Color) -> void:
 	for y: int in range(rect.position.y, rect.end.y):
 		for x: int in range(rect.position.x, rect.end.x):
-			if x >= 0 and x < SPRITE_WIDTH and y >= 0 and y < SPRITE_HEIGHT:
+			if x >= 0 and x < FINE_W and y >= 0 and y < FINE_H:
 				img.set_pixel(x, y, color)
 
 # ---------------------------------------------------------------------------
@@ -746,20 +951,26 @@ func _draw_gripping(img: Image, side: bool) -> void:
 func _shift_up(img: Image, dy: int) -> Image:
 	if dy <= 0:
 		return img
-	var out := Image.create_empty(SPRITE_WIDTH, SPRITE_HEIGHT, false, Image.FORMAT_RGBA8)
-	out.blit_rect(img, Rect2i(0, dy, SPRITE_WIDTH, SPRITE_HEIGHT - dy), Vector2i(0, 0))
+	var out := Image.create_empty(FINE_W, FINE_H, false, Image.FORMAT_RGBA8)
+	var fine_dy := dy * SCALE
+	out.blit_rect(img, Rect2i(0, fine_dy, FINE_W, FINE_H - fine_dy), Vector2i(0, 0))
 	return out
 
 ## y < split 영역(상체)만 dx만큼 옮긴다 — 인라인의 앞으로 기운 자세.
 func _lean_upper(img: Image, dx: int, split: int) -> Image:
 	if dx == 0:
 		return img
-	var out := Image.create_empty(SPRITE_WIDTH, SPRITE_HEIGHT, false, Image.FORMAT_RGBA8)
-	out.blit_rect(img, Rect2i(0, split, SPRITE_WIDTH, SPRITE_HEIGHT - split), Vector2i(0, split))
-	out.blit_rect(img, Rect2i(0, 0, SPRITE_WIDTH, split), Vector2i(dx, 0))
+	var out := Image.create_empty(FINE_W, FINE_H, false, Image.FORMAT_RGBA8)
+	var fine_split := split * SCALE
+	var fine_dx := dx * SCALE
+	out.blit_rect(img, Rect2i(0, fine_split, FINE_W, FINE_H - fine_split), Vector2i(0, fine_split))
+	out.blit_rect(img, Rect2i(0, 0, FINE_W, fine_split), Vector2i(fine_dx, 0))
 	return out
 
 func _clear_rect(img: Image, rect: Rect2i) -> void:
+	_fine_clear_rect(img, Rect2i(rect.position * SCALE, rect.size * SCALE))
+
+func _fine_clear_rect(img: Image, rect: Rect2i) -> void:
 	_draw_rect(img, rect, Color(0, 0, 0, 0))
 
 ## 굵이가 있는 선(브레젠험 대신 간격 보간 — 32px 스프라이트에서는 충분하다).
@@ -777,14 +988,17 @@ func _draw_line(img: Image, from: Vector2i, to: Vector2i, color: Color, thick: i
 ## 가운데가 빈 원(바퀴). 채운 원을 두 번 그려 안쪽을 지우면 뒤에 있는 것까지
 ## 지워지므로, 링을 직접 판정해 그린다.
 func _draw_ring(img: Image, center: Vector2i, radius: int, thick: int, color: Color) -> void:
-	var r2 := float(radius * radius)
-	var inner := float((radius - thick) * (radius - thick))
-	for y: int in range(center.y - radius, center.y + radius + 1):
-		for x: int in range(center.x - radius, center.x + radius + 1):
-			if x < 0 or x >= SPRITE_WIDTH or y < 0 or y >= SPRITE_HEIGHT:
+	var c := center * SCALE + Vector2i(SCALE / 2, SCALE / 2)
+	var r := radius * SCALE
+	var th := maxi(thick * SCALE, 1)
+	var r2 := float(r * r)
+	var inner := float((r - th) * (r - th))
+	for y: int in range(c.y - r, c.y + r + 1):
+		for x: int in range(c.x - r, c.x + r + 1):
+			if x < 0 or x >= FINE_W or y < 0 or y >= FINE_H:
 				continue
-			var dx := float(x - center.x)
-			var dy := float(y - center.y)
+			var dx := float(x - c.x)
+			var dy := float(y - c.y)
 			var d := dx * dx + dy * dy
 			if d <= r2 and d >= inner:
 				img.set_pixel(x, y, color)
