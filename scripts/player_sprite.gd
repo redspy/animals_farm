@@ -90,10 +90,11 @@ var _trick: String = ""
 ## 되므로 상한이 없으면 한 캐릭터가 다 돌면 7.5MB, 여러 명이면 웹 힙에 물린다.
 static var _frames_shared: Dictionary = {}
 static var _frames_order: Array[String] = []
-## 20 × 491KB ≈ 9.8MB.
+## 16 × 491KB ≈ 7.9MB.
 ##
 ## 12까지 줄여 봤더니 **멀티플레이 워킹셋보다 작았다**: 외형별로 키가 갈리므로
-## 8명이 접속하면 기본 모습만 9칸이고 넷이 운동 중이면 13칸이다 — 축출된
+## 8명이 접속하면 기본 모습만 9칸이고 넷이 운동 중이면 13칸이다. 16은 그
+## 워킹셋을 덮으면서도 애초에 세운 예산(7.5MB 근처) 안에 든다 — 축출된
 ## 엔트리는 사용 중이면 해제되지도 않으니 메모리는 그대로인데 히트율만 떨어져
 ## 재생성(38ms)이 반복된다(리뷰 지적).
 ##
@@ -104,7 +105,7 @@ static var _frames_order: Array[String] = []
 ##
 ## static이므로 **월드를 나갔다 들어와도 유지된다**(같은 캐릭터로 다시 들어올 때
 ## 다시 만들지 않아도 되므로 의도한 동작이다).
-const FRAMES_CACHE_MAX := 20
+const FRAMES_CACHE_MAX := 16
 
 var _c_rope: Color
 var _c_bike_frame: Color
@@ -430,6 +431,9 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 	var leg_base_y: int = LEG_BASE_Y
 	var arm_base_y: int = ARM_FRONT_Y + bob
 	
+	# 활동 장비가 발에 붙을 수 있도록 이 프레임의 다리 위치를 모아 둔다.
+	var legs: Dictionary = {}
+
 	if dir.x == 1: # Right view
 		var back_leg_x: int = 13 + leg_l_spread
 		var front_leg_x: int = 13 + leg_r_spread
@@ -437,6 +441,10 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 		var front_arm_x: int = 14 + arm_r_spread
 		var leg_l_y: int = leg_base_y + leg_l_y_lift
 		var leg_r_y: int = leg_base_y + leg_r_y_lift
+		legs = {
+			"front_x": front_leg_x, "front_y": leg_r_y,
+			"back_x": back_leg_x, "back_y": leg_l_y,
+		}
 		
 		# 뒤쪽 팔 (Left)
 		_draw_rect(img, Rect2i(back_arm_x, arm_base_y, 4, 7), _c_skin_dark)
@@ -472,6 +480,10 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 		var arm_r_y: int = arm_base_y + arm_r_spread
 		var leg_l_y: int = leg_base_y + leg_l_y_lift
 		var leg_r_y: int = leg_base_y + leg_r_y_lift
+		legs = {
+			"left_x": leg_l_x, "left_y": leg_l_y,
+			"right_x": leg_r_x, "right_y": leg_r_y,
+		}
 		
 		# 다리
 		_draw_rect(img, Rect2i(leg_l_x, leg_l_y, 4, 7), _c_bottom)
@@ -500,7 +512,7 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 	# 운동 장비/자세는 몸을 다 그린 뒤에 덮어 그린다 — 자전거·킥보드는 다리를
 	# 가려야 "타고 있는" 것으로 보이고, 줄은 몸 앞을 지나야 한다.
 	if not _activity.is_empty():
-		img = _apply_activity(img, dir, walk_phase)
+		img = _apply_activity(img, dir, walk_phase, legs)
 
 	# 외곽선은 **맨 마지막**에 한 번 — 장비까지 같이 테두리를 얻는다.
 	_outline(img)
@@ -766,21 +778,39 @@ func _fine_rect(img: Image, rect: Rect2i, color: Color) -> void:
 
 ## 다리 자리를 **실제로 지우는** 활동인지(그 활동에서만 걷기 위상을 끈다).
 ##
-## 목록의 근거는 `_clear_rect` 호출 지점이다 — `_draw_bike`와 `_draw_sitting`
-## 둘뿐이다. 인라인·킥보드·손잡이(뺑뺑이)는 다리를 지우지 않고 **보이는 게
-## 정상**이라, 위상을 끄면 다리는 고정인데 부츠·발판만 좌우로 흔들려
-## "스케이트가 멈춘 다리 밑에서 미끄러져 나가는" 그림이 된다(리뷰 지적).
-const LEGS_LOCKED_ACTIVITIES := ["bike", "slide", "swing", "seesaw"]
+## 목록의 근거는 `_clear_rect`로 다리를 **지우는** 활동인지다: 자전거·킥보드는
+## 장비가 다리 자리를 차지하고 자기 다리를 직접 그리며, 앉은 자세(미끄럼틀·
+## 그네·시소)는 다리를 접어 다시 그린다.
+##
+## 인라인은 목록에 **없다** — 다리가 보이는 게 정상이고 부츠를 실제 다리 위치에
+## 붙이기 때문이다. 위상을 끄면 다리는 고정인데 부츠만 흔들려 "스케이트가 멈춘
+## 다리 밑에서 미끄러져 나가는" 그림이 된다(리뷰 지적).
+##
+## 뺑뺑이(carousel)도 없다 — `locked: true`라 이동이 없어 걷기 위상이 0으로
+## 고정되므로 끌 것이 없다. 그 전제(타는 동안 걷기 애니메이션을 켜지 않는다)가
+## 깨지면 손잡이 자세에서 다리가 걷게 되므로 여기 추가해야 한다.
+const LEGS_LOCKED_ACTIVITIES := ["bike", "kickboard", "slide", "swing", "seesaw"]
 
 ## trick이 그림을 바꾸는 활동인지. 지금은 줄넘기 기술뿐이다(모아 뛰기·이중
 ## 뛰기·토드·엇걸어 풀어 뛰기가 줄과 자세를 바꾼다).
+##
+## ⚠️ `look_signature()`와 같은 함정이다: **trick으로 그림을 바꾸는 활동을
+## 새로 만들면 여기에 추가해야 한다.** 빠뜨리면 그 활동의 모든 trick이 같은
+## 프레임을 공유하고, 캐시가 비워지지 않으니 세션 내내 안 고쳐진다.
 func _trick_affects_drawing() -> bool:
 	return _activity == "jumprope"
 
 func _legs_locked() -> bool:
 	return _activity in LEGS_LOCKED_ACTIVITIES
 
-func _apply_activity(img: Image, dir: Vector2i, phase: int) -> Image:
+## 활동 장비/자세를 덮어 그린다.
+##
+## `legs`는 이 프레임에서 **실제로 그려진 다리 위치**(논리 좌표)다. 장비가 발에
+## 붙어야 하는 활동(인라인·킥보드)이 자기 위상으로 발 위치를 다시 계산하면
+## 보행 테이블(6위상)과 주기가 달라 **다리와 장비가 반대로 움직인다** — 실측:
+## 32px 폭에서 8px까지 어긋났고, 들린 다리 아래에 기본 신발이 남아 발이 네 개로
+## 보였다(리뷰 지적).
+func _apply_activity(img: Image, dir: Vector2i, phase: int, legs: Dictionary) -> Image:
 	var side := dir.x == 1
 	match _activity:
 		"jumprope":
@@ -790,9 +820,9 @@ func _apply_activity(img: Image, dir: Vector2i, phase: int) -> Image:
 		"bike":
 			_draw_bike(img, side, phase)
 		"inline":
-			return _draw_inline(img, side, phase)
+			return _draw_inline(img, side, legs)
 		"kickboard":
-			_draw_kickboard(img, side, phase)
+			_draw_kickboard(img, side, phase, legs)
 		"slide", "swing", "seesaw":
 			# 놀이기구는 흔들림·회전·높이를 **노드 오프셋**으로 표현하므로
 			# (scripts/park.gd) 스프라이트는 정지 자세가 맞다.
@@ -903,6 +933,7 @@ func _draw_bike(img: Image, side: bool, phase: int) -> void:
 		var front := Vector2i(25, WHEEL_Y)
 		var crank := Vector2i(16, WHEEL_Y - 1)
 		# 다리 자리를 자전거가 차지해야 "타고 있는" 것으로 보인다 → 먼저 지운다.
+		# (다리는 이 활동에서 고정 위치다 — LEGS_LOCKED_ACTIVITIES 참고.)
 		_clear_rect(img, Rect2i(6, WHEEL_Y - 6, 22, 40 - (WHEEL_Y - 6)))
 		for hub: Vector2i in [rear, front]:
 			# 어두운 타이어만 그리면 어두운 신발·발판과 붙어 바퀴로 보이지 않는다
@@ -941,31 +972,46 @@ func _draw_bike(img: Image, side: bool, phase: int) -> void:
 
 # --- 인라인 ------------------------------------------------------------------
 
-func _draw_inline(img: Image, side: bool, phase: int) -> Image:
+func _draw_inline(img: Image, side: bool, legs: Dictionary) -> Image:
 	# 자세: 상체를 앞으로 기울인다(사용자 요청 "자세를 취하면서").
 	# 상체를 앞으로 3px 기울인다(2px는 실측에서 알아보기 어려웠다).
+	#
+	# **부츠는 자기 위상을 계산하지 않고 실제 다리 위치에 붙인다.** 예전에는
+	# phase % 2로 좌우로 흔들었는데 다리는 6위상 보행 테이블이라 주기가 달라
+	# 서로 반대로 움직였고(최대 8px 어긋남), 들린 다리 아래에 기본 신발이 남아
+	# 발이 네 개로 보였다.
 	var leaned := _lean_upper(img, 3 if side else 0, 26)
 	if side:
-		# 부츠 두 짝. 붙여 놓으면 널빤지 하나로 보이므로 **사이를 띄운다**.
-		var swing := 2 if phase % 2 == 0 else -2
-		var front_x := 16 + swing
-		var back_x := 7 - swing
-		for boot_x: int in [front_x, back_x]:
-			_draw_rect(leaned, Rect2i(boot_x, 33, 7, 4), _c_skate_boot)
+		for key: String in ["front", "back"]:
+			var lx: int = int(legs.get("%s_x" % key, 13))
+			var ly: int = int(legs.get("%s_y" % key, LEG_BASE_Y))
+			# 기본 신발을 지우고 그 자리에 부츠를 놓는다.
+			_clear_rect(leaned, Rect2i(lx - 1, ly + 6, 7, 5))
+			_draw_rect(leaned, Rect2i(lx - 1, ly + 6, 7, 4), _c_skate_boot)
 			# 바퀴 3개(사이를 1px 띄워 개수가 보이게)
 			for i in 3:
-				_draw_rect(leaned, Rect2i(boot_x + i * 2 + 1, 37, 2, 2), _c_skate_wheel)
+				_draw_rect(leaned, Rect2i(lx + i * 2, ly + 10, 2, 2), _c_skate_wheel)
 	else:
-		var spread := 3 if phase % 2 == 0 else 1
-		for foot_x: int in [11 - spread, 17 + spread]:
-			_draw_rect(leaned, Rect2i(foot_x, 34, 5, 3), _c_skate_boot)
+		for key: String in ["left", "right"]:
+			var lx: int = int(legs.get("%s_x" % key, 13))
+			var ly: int = int(legs.get("%s_y" % key, LEG_BASE_Y))
+			_clear_rect(leaned, Rect2i(lx - 1, ly + 6, 6, 5))
+			_draw_rect(leaned, Rect2i(lx - 1, ly + 6, 6, 3), _c_skate_boot)
 			for i in 2:
-				_draw_rect(leaned, Rect2i(foot_x + i * 2, 37, 2, 2), _c_skate_wheel)
+				_draw_rect(leaned, Rect2i(lx + i * 2, ly + 9, 2, 2), _c_skate_wheel)
 	return leaned
 
 # --- 킥보드 ------------------------------------------------------------------
 
-func _draw_kickboard(img: Image, side: bool, phase: int) -> void:
+func _draw_kickboard(img: Image, side: bool, phase: int, legs: Dictionary) -> void:
+	# **킥보드는 자기 다리를 직접 그린다**(한 발은 발판, 한 발은 땅을 민다).
+	# 그래서 보행 테이블의 다리를 먼저 지운다 — 안 지우면 위치·주기가 다른
+	# 다리가 아래에 남아 발이 네 개로 보인다(자전거와 같은 처리).
+	var leg_top: int = LEG_BASE_Y
+	for key: String in ["front_y", "back_y", "left_y", "right_y"]:
+		if legs.has(key):
+			leg_top = mini(leg_top, int(legs[key]))
+	_clear_rect(img, Rect2i(6, leg_top, 22, 40 - leg_top))
 	# 바퀴는 **두 개**(사용자 지정): 앞뒤로 하나씩.
 	if side:
 		# 바퀴 **두 개**(사용자 지정). 발판보다 **먼저** 밝게 그리고 발판을 위에
