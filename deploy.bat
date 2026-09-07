@@ -89,7 +89,12 @@ REM 지워지지 않는다 — 배포 서버에 인증서가 한 번 남으면 �
 REM Step 8의 http 헬스체크만 실패해서 "배포 실패"로 보이고, server_error.log에는
 REM 아무 단서가 없다(2026-09-08 Codex 감사 지적). https로 서비스하려면 여기와
 REM Step 8의 URL을 함께 바꿔야 한다.
-schtasks /Create /TN "AnimalsFarmServer" /TR "cmd /c cd /d %cd% && set PORT=%GAME_PORT% && set TLS=off && node server\index.js > server.log 2>server_error.log" /SC ONCE /ST 23:59 /F >nul 2>&1
+REM
+REM ⚠️ `set VAR=값 && cmd` 형태는 **&& 앞 공백까지 값에 포함된다** — TLS가 "off "가
+REM 되어 서버의 `!== 'off'` 비교를 통과하고, 이 줄이 있는데도 https로 떴다(리뷰
+REM 지적). 그래서 `%GAME_PORT%&&`처럼 공백 없이 붙인다. 서버도 값을 trim해
+REM 정규화하므로 한쪽만 어긋나도 동작한다(server/index.js).
+schtasks /Create /TN "AnimalsFarmServer" /TR "cmd /c cd /d %cd% && set PORT=%GAME_PORT%&& set TLS=off&& node server\index.js > server.log 2>server_error.log" /SC ONCE /ST 23:59 /F >nul 2>&1
 schtasks /Run /TN "AnimalsFarmServer"
 if %ERRORLEVEL% neq 0 (
     echo ERROR: schtasks failed to launch server task

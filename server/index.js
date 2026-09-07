@@ -47,7 +47,11 @@ const HOST = process.env.HOST || '0.0.0.0';
 const TLS_CERT = process.env.TLS_CERT || join(__dirname, 'certs', 'dev-cert.pem');
 const TLS_KEY = process.env.TLS_KEY || join(__dirname, 'certs', 'dev-key.pem');
 // TLS=off 로 강제로 http 기동(비보안 컨텍스트 동작을 검증할 때 쓴다).
-const useTls = process.env.TLS !== 'off' && existsSync(TLS_CERT) && existsSync(TLS_KEY);
+// TLS 값은 **정규화해서 비교한다.** cmd의 `set TLS=off && node ...`는 && 앞 공백까지
+// 값에 담아 "off "를 넘기는데, 엄격 비교면 그걸 통과해 배포가 https로 떴다(리뷰 지적).
+// 배치 인용 규칙에 서버 동작이 걸리지 않게 여기서 자른다.
+const useTls = String(process.env.TLS || '').trim().toLowerCase() !== 'off'
+  && existsSync(TLS_CERT) && existsSync(TLS_KEY);
 
 // gzip으로 보낼 확장자. wasm이 39MB, pck가 4MB라 무압축으로 보내면 폰에서
 // 최초 로딩이 수십 초로 늘어난다(2026-09-04 사용자 보고). wasm/js는 gzip이

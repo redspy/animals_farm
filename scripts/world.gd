@@ -248,27 +248,38 @@ func _ready() -> void:
 			_presets[String((p as Dictionary).get("id", ""))] = p
 	_emotes = DataFiles.load_dict("res://data/emotes.json").get("emotes", [])
 	var act_cfg := DataFiles.load_dict("res://data/activities.json")
-	_activities = act_cfg.get("activities", [])
+	# 타입이 다른 값을 타입 있는 변수에 대입하면 **런타임 에러로 _ready가 그 자리에서
+	# 멈춘다** — 뒤따르는 _build_world()·_start_net()까지 날아가 월드가 빈 화면으로
+	# 뜬다. 그래서 activities.json에서 읽는 값은 전부 형태를 확인하고 폴백한다
+	# (처음에는 limits에만 가드를 붙였는데, 바로 다음 세 줄이 같은 지뢰였다 —
+	# 리뷰 지적).
+	_activities = _array_or_empty(act_cfg.get("activities", []), "activities")
 	for a: Variant in _activities:
 		if typeof(a) == TYPE_DICTIONARY:
 			_activity_by_id[String((a as Dictionary).get("id", ""))] = a
-	# 딕셔너리가 아닌 값이 오면 타입 있는 변수 대입에서 **런타임 에러로 _ready가
-	# 그 자리에서 멈춘다**(뒤따르는 soccer/park/fishing 초기화까지 날아간다).
-	# 데이터가 깨졌을 때 폴백한다는 이 규칙의 요점이 클라이언트에서만 깨져
-	# 있었다(리뷰 지적).
-	var limits_raw: Variant = act_cfg.get("limits", {})
-	if typeof(limits_raw) != TYPE_DICTIONARY:
-		push_warning("activities.json의 limits가 딕셔너리가 아니라 무시: %s" % str(limits_raw))
-		limits_raw = {}
-	_activity_limits = limits_raw
-	_soccer_cfg = act_cfg.get("soccer", {})
-	_park_phys = act_cfg.get("park", {})
-	_fish_cfg = act_cfg.get("fishing", {})
+	_activity_limits = _dict_or_empty(act_cfg.get("limits", {}), "limits")
+	_soccer_cfg = _dict_or_empty(act_cfg.get("soccer", {}), "soccer")
+	_park_phys = _dict_or_empty(act_cfg.get("park", {}), "park")
+	_fish_cfg = _dict_or_empty(act_cfg.get("fishing", {}), "fishing")
 	_build_world()
 	_apply_daily_respawn()
 	_refresh_hud()
 	_refresh_roster.call_deferred()
 	_start_net()
+
+## activities.json에서 읽은 값의 형태를 확인한다. 데이터가 깨졌을 때 화면이
+## 통째로 뜨지 않는 것보다, 그 부분만 비우고 경고를 남기는 편이 낫다.
+func _dict_or_empty(v: Variant, what: String) -> Dictionary:
+	if typeof(v) != TYPE_DICTIONARY:
+		push_warning("activities.json의 %s가 딕셔너리가 아니라 무시: %s" % [what, str(v)])
+		return {}
+	return v as Dictionary
+
+func _array_or_empty(v: Variant, what: String) -> Array:
+	if typeof(v) != TYPE_ARRAY:
+		push_warning("activities.json의 %s가 배열이 아니라 무시: %s" % [what, str(v)])
+		return []
+	return v as Array
 
 func _build_world() -> void:
 	_build_environment()

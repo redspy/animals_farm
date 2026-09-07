@@ -1,3 +1,23 @@
+// 서버가 데이터의 유효범위(limits)를 읽는 지점을 **소스에서 뽑는다.** 손으로 적은
+// 목록은 한 방향만 막는다 — 데이터에 키를 추가하고 범위를 잊으면 잡히지만, 서버에
+// 호출을 새로 넣고 목록 갱신을 잊으면 조용히 통과한다. 잊기 쉬운 쪽은 후자다
+// (리뷰 지적). 체크포인트 린트처럼 소스를 읽어 대조한다.
+//
+// 헬퍼 세 개(alim/rlim/nlim)가 각각 어느 파일의 어느 limits를 보는지의 표.
+// 새 헬퍼를 만들면 여기 한 줄을 추가한다.
+const LIMIT_READERS = [
+  { fn: 'alim', file: 'activities.json', limitsOf: (d) => d.limits || {} },
+  { fn: 'rlim', file: 'world.json', limitsOf: (d) => ((d.playground || {}).race || {}).limits || {} },
+  { fn: 'nlim', file: 'npcs.json', limitsOf: (d) => d.limits || {} },
+];
+
+// 큰따옴표·백틱도 받는다 — 작은따옴표만 보면 표기를 바꾼 호출이 조용히 빠진다.
+function limitKeysFrom(fn) {
+  const src = readFileSync('server/world.js', 'utf-8');
+  const re = new RegExp(`${fn}\\(\\s*['"\`]([^'"\`]+)['"\`]`, 'g');
+  return [...src.matchAll(re)].map((m) => m[1]);
+}
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync, readdirSync } from 'node:fs';
@@ -926,15 +946,6 @@ function dataDirWith(prefix, mutate) {
   return dir;
 }
 
-// 서버가 activities.json에서 실제로 범위를 요구하는 키를 **소스에서 뽑는다.**
-// 손으로 적은 목록은 한 방향만 막는다 — 데이터에 키를 추가하고 범위를 잊으면
-// 잡히지만, 서버에 alim() 호출을 새로 넣고 목록 갱신을 잊으면 조용히 통과한다.
-// 잊기 쉬운 쪽은 후자다(리뷰 지적). 체크포인트 린트처럼 소스를 읽어 대조한다.
-const SERVER_READ_KEYS = new Set(
-  [...readFileSync('server/world.js', 'utf-8').matchAll(/alim\('([^']+)'/g)].map((m) => m[1]),
-);
-
-
 test('활동 speed가 유효범위를 벗어나면 걷기 속도로 폴백한다(이동 상한도 함께 닫힌다)', () => {
   // 하한(>0)만 보던 동안에는 `"speed": 50` 오타가 speedCapOf(×1.6)를 거쳐 서버
   // 이동 상한을 80까지 열었다 — 속도핵 방어가 데이터 오타로 무력화됐다.
@@ -969,16 +980,23 @@ test('limits 형식이 깨져 있으면 폴백 범위를 쓴다(무엇이든 통
   assert.equal(w.activities.get('bike').speed, LIMITS.WALK_SPEED, '깨진 limits가 범위 검사를 통째로 무력화했다');
 });
 
-test('서버가 범위를 요구하는 키는 전부 activities.json의 limits에 있다(데이터 린트)', () => {
-  // 양방향으로 막는다: 서버에 alim() 호출을 새로 넣고 데이터에 범위를 적지
-  // 않으면(잊기 쉬운 쪽) 여기서 걸리고, 반대로 코드가 읽지 않는 키에 범위를
-  // 적어 두는 것은 막지 않는다(연출 전용 값 — swing_period_sec 등).
-  const limits = JSON.parse(readFileSync('data/activities.json', 'utf-8')).limits || {};
-  assert.ok(SERVER_READ_KEYS.size > 0, '서버 소스에서 alim() 호출을 찾지 못했다(정규식이 낡았다)');
-  for (const key of SERVER_READ_KEYS) {
-    assert.ok(Array.isArray(limits[key]) && limits[key].length === 2,
-      `limits에 ${key} 범위가 없다 — 없으면 코드 폴백으로 조용히 되돌아간다`);
+test('서버가 범위를 요구하는 키는 전부 데이터의 limits에 있다(데이터 린트)', () => {
+  // activities.json뿐 아니라 world.json(playground.race)·npcs.json까지 본다 —
+  // design.md §3이 이 셋을 나란히 "데이터가 단일 출처"로 적어 놨다.
+  let total = 0;
+  for (const reader of LIMIT_READERS) {
+    const keys = limitKeysFrom(reader.fn);
+    assert.ok(keys.length > 0,
+      `${reader.fn}() 호출을 서버 소스에서 찾지 못했다 — 정규식이나 헬퍼 이름이 낡았다`);
+    const limits = reader.limitsOf(JSON.parse(readFileSync(join('data', reader.file), 'utf-8')));
+    for (const key of new Set(keys)) {
+      assert.ok(Array.isArray(limits[key]) && limits[key].length === 2,
+        `${reader.file}의 limits에 ${key} 범위가 없다 — 없으면 코드 폴백으로 조용히 되돌아간다`);
+    }
+    total += new Set(keys).size;
   }
+  // 개수 하한을 둔다: 정규식이 일부만 잡는 부분 회귀는 "전멸" 가드로는 안 걸린다.
+  assert.ok(total >= 26, `범위를 대조한 키가 ${total}개뿐이다 — 추출이 일부만 잡고 있다`);
 });
 
 // ---------------------------------------------------------------------------
