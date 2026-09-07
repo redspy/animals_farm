@@ -39,12 +39,20 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
 4. Node.js 20+ 설치(서버 실행용). 서버가 WebSocket(`ws`)을 쓰므로 **의존성 설치가 필요하다** — `deploy.bat`이 `npm ci --omit=dev`(실패 시 `npm install --omit=dev`)로 처리한다.
 5. 포트: **3001** (connect_dise가 3000을 쓰므로 충돌을 피한다). 바꾸려면 `GAME_PORT` 환경변수 또는 `deploy.bat` 기본값을 수정.
 
-버전 고정의 단일 출처는 저장소 루트의 **`.godot-version`** 파일이다(`deploy.bat`, `scripts/build-web.sh`, `scripts/verify-project.sh`가 모두 이 파일을 읽는다). 엔진 버전을 올릴 때는 (a) `.godot-version`, (b) 서버의 실제 바이너리·템플릿, (c) `project.godot`의 `config/features`를 함께 올린다.
+버전 고정의 **기본 단일 출처**는 저장소 루트의 **`.godot-version`** 파일이다(`deploy.bat`, `scripts/build-web.sh`, `scripts/verify-project.sh`가 모두 이 파일을 읽는다). 다만 환경변수로 덮을 수 있다 — `deploy.bat`은 이미 설정된 `GODOT_VERSION`을, 로컬 스크립트는 `EXPECTED_GODOT_VERSION`을 우선한다(파일이 없을 때의 폴백은 `4.7.1`). 임시로 다른 버전을 시험할 때 쓰는 문이며, **덮은 상태로 배포하면 파일과 실제 빌드가 갈린다**. 엔진 버전을 올릴 때는 (a) `.godot-version`, (b) 서버의 실제 바이너리·템플릿, (c) `project.godot`의 `config/features`를 함께 올린다.
 
 ## 3. 웹 export와 브라우저 헤더
 
 - 현재 export 프리셋은 **nothreads**(`export_presets.cfg`의 `variant/thread_support=false`)다. 스레드 빌드는 `SharedArrayBuffer`를 요구해 **COOP/COEP 헤더 없이는 아예 실행되지 않고**, iOS Safari 등에서 실패율이 높다.
 - 그래도 `server/index.js`는 `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp`를 **미리 보낸다**. 나중에 스레드 빌드로 전환할 때 서버를 다시 건드리지 않기 위함이다. 대신 이 헤더가 켜져 있으면 외부 도메인 리소스(CDN 이미지/폰트/iframe)가 차단되므로, 외부 리소스를 쓰게 되면 그 시점에 재검토해야 한다.
+- ⚠️ 단 **COOP/COEP는 TLS로 뜬 경우에만 보낸다.** http는 보안 컨텍스트가 아니라 브라우저가 "untrustworthy origin이라 무시했다"는 오류만 콘솔에 남기고, 그 소음이 진짜 오류를 가린다. 서버 기동 모드는 인증서 존재로 갈린다:
+
+  | 기동 | 조건 | 주소 | COOP/COEP |
+  |---|---|---|---|
+  | HTTPS | `server/certs/dev-{cert,key}.pem`(또는 `TLS_CERT`/`TLS_KEY`)이 있고 `TLS != off` | `https://…`, `wss://…/ws` | 보냄 |
+  | HTTP | 인증서가 없거나 `TLS=off` | `http://…`, `ws://…/ws` | 안 보냄 |
+
+  즉 **개발 인증서를 한 번 만들어 두면 `node server/index.js`가 https로 뜬다**(`scripts/make-dev-cert.sh`). 아래 §4의 `curl http://…`를 그대로 재현하려면 `TLS=off`를 붙여야 한다.
 - WebSocket은 정적 파일과 **같은 포트의 `/ws`** 로 붙는다. 클라이언트는 페이지를 서빙한 origin에서 주소를 유도하므로(`net.gd::default_url`) 별도 설정이 없다 — https면 `wss://`가 되고, 리버스 프록시를 쓸 경우 `/ws` 업그레이드를 통과시켜야 한다.
 - `.wasm`은 `application/wasm`, `.pck`는 `application/octet-stream`으로 서빙한다. MIME이 틀리면 브라우저가 스트리밍 컴파일을 거부해 로딩이 느려지거나 실패한다.
 
@@ -82,7 +90,7 @@ Godot 4의 **기본 HTML 셸은 보안 컨텍스트가 아니면 실행을 거�
 export GODOT_BIN="$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot"
 ./scripts/verify-project.sh     # 임포트 + 세이브 마이그레이션 테스트 + 기동
 ./scripts/build-web.sh          # → build/web/ (index.html, index.wasm, index.pck ...)
-node server/index.js            # http://localhost:3001
+TLS=off node server/index.js    # http://localhost:3001 (인증서가 있으면 TLS=off 없이는 https로 뜬다 — §3)
 curl -s localhost:3001/healthz  # {"ok":true,...}
 ```
 
@@ -95,7 +103,7 @@ npm run test:browser            # build/web를 서버에 올려 Chromium으로 �
 ### 실측으로 확인된 웹 전용 함정
 
 - **한글이 두부(□)로 렌더링**: Godot 기본 폰트에는 한글 글리프가 없고 **웹에는 시스템 폰트 폴백이 없다**. `assets/fonts/NotoSansKR-Regular.otf`(OFL)를 임베드하고 `project.godot`의 `gui/theme/custom_font`로 지정해 해결했다. 데스크톱 헤드리스 검증에서는 드러나지 않고 브라우저에서만 보이는 문제라, `npm run test:browser`가 이 계층을 담당한다.
-  - 대가: 폰트가 `index.pck`의 대부분(KR 전체 4.6MB 중 대부분)이다. 첫 로딩이 문제되면 필요한 글리프만 서브셋한 폰트로 교체하는 것이 다음 단계다(현재는 전체 KR 서브셋 OTF).
+  - 대가: 폰트가 `index.pck`(4.7MB)의 대부분이다 — 한글 `NotoSansKR-Regular.otf`(KR 전체, 4.6MB)와 이모지 `NotoEmoji-Regular.ttf`(885KB, 이모티콘 표시용) 둘 다 임베드한다. 서브셋으로 줄일 때 이모지 폰트를 빼먹기 쉽다. 첫 로딩이 문제되면 필요한 글리프만 서브셋한 폰트로 교체하는 것이 다음 단계다(현재는 전체 KR 서브셋 OTF).
 
 ### 실측으로 확인된 export 함정
 

@@ -143,6 +143,8 @@ var _ride_amp := 0
 ## data/activities.json — 버튼 목록·속도·기술의 단일 출처(서버도 같은 파일을 읽는다).
 var _activities: Array = []
 var _activity_by_id: Dictionary = {}
+## data/activities.json의 limits — 수치 유효범위의 단일 출처(서버도 같은 것을 읽는다).
+var _activity_limits: Dictionary = {}
 var _soccer_cfg: Dictionary = {}
 ## 내가 하고 있는 운동과 줄넘기 기술("" = 안 함).
 var _activity := ""
@@ -250,6 +252,7 @@ func _ready() -> void:
 	for a: Variant in _activities:
 		if typeof(a) == TYPE_DICTIONARY:
 			_activity_by_id[String((a as Dictionary).get("id", ""))] = a
+	_activity_limits = act_cfg.get("limits", {})
 	_soccer_cfg = act_cfg.get("soccer", {})
 	_park_phys = act_cfg.get("park", {})
 	_fish_cfg = act_cfg.get("fishing", {})
@@ -1410,14 +1413,29 @@ func _activity_zone(id: String) -> String:
 	var a: Dictionary = _activity_by_id.get(id, {})
 	return String(a.get("zone", ""))
 
+## 유효범위를 벗어난 속도의 폴백. **서버와 같은 값이어야 한다**(server/world.js가
+## LIMITS.WALK_SPEED로 폴백한다) — 다르면 "클라이언트는 달리는데 서버가 계속
+## 되돌리는" 고무줄 이동이 된다.
+const ACTIVITY_SPEED_FALLBACK_RANGE := [0.1, 12.0]
+
 func _activity_speed(id: String) -> float:
 	var a: Dictionary = _activity_by_id.get(id, {})
 	var speed := float(a.get("speed", Player.SPEED))
-	# 데이터 오타(0 이하)에 대비한다. 서버는 같은 경우 걷기 속도로 폴백하므로
-	# 여기서 0을 그대로 쓰면 "클라이언트는 못 움직이는데 서버는 상한을 열어
-	# 주는" 상태가 된다(리뷰 지적).
-	if speed <= 0.0:
-		push_warning("activities.json의 %s.speed가 올바르지 않아 걷기 속도로 대체" % id)
+	# 데이터 오타에 대비한다. 하한만 보던 동안에는 `"speed": 50` 같은 오타가
+	# 서버 이동 상한(×1.6)을 80까지 열어 속도핵 방어를 무력화했다(리뷰 지적).
+	# 범위의 단일 출처는 activities.json의 limits.speed이고, 형식 검증 규칙은
+	# Balance가 소유한다(scripts/balance.gd).
+	var range_raw: Variant = _activity_limits.get("speed", null)
+	if not Balance.valid_range(range_raw):
+		if range_raw != null:
+			push_warning("activities.json의 limits.speed가 [lo, hi] 형식이 아니라 폴백 %s 적용" % str(ACTIVITY_SPEED_FALLBACK_RANGE))
+		range_raw = ACTIVITY_SPEED_FALLBACK_RANGE
+	var range_arr: Array = range_raw as Array
+	# 클램프가 아니라 걷기 속도로 폴백한다 — 서버도 같은 규칙이라 양쪽이 같은
+	# 값을 쓰고, 클램프된 값은 아무도 의도하지 않은 숫자가 된다.
+	if speed < float(range_arr[0]) or speed > float(range_arr[1]):
+		push_warning("activities.json의 %s.speed가 유효범위 [%s, %s] 밖이라 걷기 속도로 대체: %s"
+			% [id, str(range_arr[0]), str(range_arr[1]), str(speed)])
 		return Player.SPEED
 	return speed
 

@@ -11,10 +11,19 @@ class_name SaveManager
 ## {
 ##   "version": 2,
 ##   "slots": [ { "token", "preset", "name", "bells", "inventory", "pos": {"x","z"},
-##                "created_unix", "last_played_unix" }, ... ],   # 최대 SLOT_COUNT개
+##                "created_unix", "last_played_unix",
+##                "custom": {},          # 꾸미기(프리셋 위에 덮는 값) — 없으면 프리셋 그대로
+##                "custom_pending": false }, ... ],   # 서버 반영을 기다리는 중인지, 최대 SLOT_COUNT개
 ##   "last_slot": 0,        # 마지막으로 고른 슬롯 인덱스(-1이면 없음)
-##   "first_played_unix": 0
+##   "settings": { "ui_zoom": 1.0, "joystick": true },   # 기기 UI 설정(슬롯 공용)
+##   "first_played_unix": 0,
+##   "last_played_unix": 0   # save()가 매번 갱신. **읽는 곳은 없다** — 일일 갱신은
+##                           # 슬롯의 last_played_unix를 쓴다(world.gd). v1의 잔재이며
+##                           # 남겨 두는 이유는 구버전 세이브와의 왕복 호환뿐이다.
 ## }
+##
+## `custom`·`custom_pending`·`settings`는 **선택 필드**다 — 없으면 기본값으로 읽는다.
+## 마이그레이션이 만들지 않으므로 v1에서 올라온 세이브에는 없다.
 ##
 ## 토큰은 서버에서 캐릭터를 식별하는 유일한 열쇠다(docs/protocol.md §1) —
 ## 세이브를 지우면 그 캐릭터를 되찾을 수 없으므로 토큰을 함부로 재발급하지 않는다.

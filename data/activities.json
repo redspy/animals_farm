@@ -104,6 +104,27 @@
       "button": false
     }
   ],
+  "limits": {
+    "_comment": "수치의 유효범위는 주석이 아니라 이 구조화된 필드가 단일 출처다(AGENTS.md 밸런스 규칙). 예전에는 축구·놀이기구 범위가 server/world.js에 하드코딩돼 있었고 activities.json에는 범위가 아예 없어서, 문서 규칙과 구현이 어긋났다(2026-09-08 Codex 감사 + Claude 리뷰 동시 지적). 특히 speed는 하한(>0)만 검사해서 '\"speed\": 50' 같은 오타가 서버 이동 상한을 80까지 열어 속도핵 방어를 무력화했다. 키는 서버 경고에 찍히는 이름과 같게 둔다 — 경고를 보고 고칠 곳을 바로 찾을 수 있다.",
+    "speed": [0.1, 12.0],
+    "soccer.kick_range": [0.2, 6.0],
+    "soccer.kick_speed": [1.0, 40.0],
+    "soccer.dribble_range": [0.1, 3.0],
+    "soccer.dribble_speed": [0.5, 20.0],
+    "soccer.friction_per_sec": [0.001, 0.999],
+    "soccer.bounce": [0.0, 1.0],
+    "soccer.kick_min_interval_ms": [0, 5000],
+    "park.seesaw_gravity": [0.1, 20.0],
+    "park.seesaw_push": [0.1, 20.0],
+    "park.seesaw_damping": [0.01, 0.999],
+    "park.seesaw_max_angle": [0.05, 1.4],
+    "park.seesaw_push_min_interval_ms": [0, 5000],
+    "park.carousel_push_min_interval_ms": [0, 5000],
+    "park.carousel_push": [0.05, 10.0],
+    "park.carousel_max_speed": [0.2, 12.0],
+    "park.carousel_friction": [0.01, 0.999],
+    "park.swing_amp_steps": [0.05, 1.4]
+  },
   "soccer": {
     "_comment": "공 물리는 서버가 소유한다. 값은 실측으로 조정한 것 — 마찰이 크면 패스가 안 가고, 작으면 공이 계속 굴러 골대 뒤로 빠진다. kick_speed는 **중앙에서 한 번 차서 골라인(10유닛)에 닿는 값**이어야 한다: 총 이동 거리 ≈ kick_speed × tick(0.1) ÷ (1 − friction^0.1) 이므로 11.0이면 9.2유닛으로 0.8 부족했다(리뷰 지적).",
     "kick_range": 1.5,

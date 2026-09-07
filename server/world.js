@@ -92,6 +92,29 @@ function readJson(path, fallback) {
   }
 }
 
+/**
+ * 데이터가 들고 있는 유효범위(`limits`)를 읽는다. 범위의 단일 출처는 데이터이고
+ * 여기 폴백은 **출처가 아니라 데이터가 깨졌을 때의 마지막 안전장치**다(클라이언트
+ * `Balance.clamp_value`와 같은 규칙 — scripts/balance.gd).
+ *
+ * 형식을 검사하는 이유: 예전에는 `limits[key] || fallback`으로 그냥 꺼내 썼는데,
+ * `"speed": 5`처럼 배열이 아닌 값이 들어오면 `raw[0]`/`raw[1]`이 undefined가 되고
+ * `n < undefined`는 항상 false여서 **무엇이든 통과**했다. 범위를 적어 뒀다고
+ * 믿는 쪽이 더 위험하므로 형식이 깨지면 폴백을 쓰고 반드시 알린다.
+ */
+function rangeOf(limits, key, where, fallback) {
+  const raw = (limits || {})[key];
+  if (Array.isArray(raw) && raw.length === 2) {
+    const lo = Number(raw[0]);
+    const hi = Number(raw[1]);
+    if (Number.isFinite(lo) && Number.isFinite(hi) && lo <= hi) return [lo, hi];
+  }
+  if (raw !== undefined) {
+    console.warn(`[animals_farm] ${where}의 limits.${key}가 [lo, hi] 형식이 아니라 폴백(${JSON.stringify(fallback)})을 적용: ${JSON.stringify(raw)} — 데이터를 고칠 것`);
+  }
+  return fallback;
+}
+
 export class WorldState {
   constructor({ dataDir = join(REPO, 'data'), statePath = STATE_PATH, persist = true } = {}) {
     this.persistEnabled = persist;
@@ -119,16 +142,28 @@ export class WorldState {
     // 속도 상한이 서버에만 다르게 있으면 "자전거를 탔는데 서버가 계속
     // 되돌리는" 상태가 된다.
     const actCfg = readJson(join(dataDir, 'activities.json'), {});
+    // 축구·놀이기구·속도의 유효범위는 **데이터가 단일 출처**다(docs/design.md §3).
+    // 예전에는 아래 num() 호출에 범위를 직접 박아 뒀는데, 그것이 바로 §3이
+    // 금지한 하드코딩이었다(2026-09-08 Codex 감사 + Claude 리뷰 동시 지적).
+    const alim = (key, fallback) => rangeOf(actCfg.limits, key, 'activities.json', fallback);
     this.activities = new Map();
     for (const a of actCfg.activities || []) {
       if (!a || !a.id) continue;
       // 폴백은 **걷기 속도**다. 예전에는 MAX_SPEED로 폴백했는데, 데이터에
       // `"speed": 0` 같은 오타가 나면 클라이언트는 못 움직이는데(0.0을 그대로
       // 씀) 서버는 상한을 대폭 열어 주는 상태가 됐다.
+      //
+      // **상한도 본다.** 하한(>0)만 검사하던 동안에는 `"speed": 50` 같은 오타가
+      // speedCapOf(×1.6)를 거쳐 서버 이동 상한을 80까지 열었다 — 속도핵 방어가
+      // 데이터 오타 하나로 무력화되는 상태였다(리뷰 지적). 범위 밖이면 클램프가
+      // 아니라 걷기 속도로 폴백하는 이유: 클라이언트도 같은 규칙으로 폴백하므로
+      // (`world.gd::_activity_speed`) 양쪽이 같은 값을 쓰고, 클램프된 값은
+      // 아무도 의도하지 않은 숫자라 "왜 이 속도인가"를 설명할 수 없다.
+      const speedRange = alim('speed', [0.1, 12.0]);
       const speed = Number(a.speed);
-      const valid = Number.isFinite(speed) && speed > 0;
+      const valid = Number.isFinite(speed) && speed >= speedRange[0] && speed <= speedRange[1];
       if (!valid && a.speed !== undefined) {
-        console.warn(`[animals_farm] activities.json의 ${a.id}.speed가 올바르지 않아 걷기 속도로 대체: ${a.speed}`);
+        console.warn(`[animals_farm] activities.json의 ${a.id}.speed가 유효범위 [${speedRange[0]}, ${speedRange[1]}] 밖이라 걷기 속도로 대체: ${a.speed}`);
       }
       this.activities.set(String(a.id), {
         speed: valid ? speed : LIMITS.WALK_SPEED,
@@ -163,34 +198,34 @@ export class WorldState {
     // 공이 영원히 멈추지 않는다.
     const s = actCfg.soccer || {};
     this.soccerCfg = {
-      kickRange: num(s.kick_range, 1.5, 0.2, 6, 'soccer.kick_range'),
-      kickSpeed: num(s.kick_speed, 13, 1, 40, 'soccer.kick_speed'),
-      dribbleRange: num(s.dribble_range, 0.55, 0.1, 3, 'soccer.dribble_range'),
-      dribbleSpeed: num(s.dribble_speed, 4.5, 0.5, 20, 'soccer.dribble_speed'),
+      kickRange: num(s.kick_range, 1.5, ...alim('soccer.kick_range', [0.2, 6]), 'soccer.kick_range'),
+      kickSpeed: num(s.kick_speed, 13, ...alim('soccer.kick_speed', [1, 40]), 'soccer.kick_speed'),
+      dribbleRange: num(s.dribble_range, 0.55, ...alim('soccer.dribble_range', [0.1, 3]), 'soccer.dribble_range'),
+      dribbleSpeed: num(s.dribble_speed, 4.5, ...alim('soccer.dribble_speed', [0.5, 20]), 'soccer.dribble_speed'),
       // 개구간 (0,1): 0이면 즉시 정지, 1 이상이면 가속.
-      friction: num(s.friction_per_sec, 0.28, 0.001, 0.999, 'soccer.friction_per_sec'),
-      bounce: num(s.bounce, 0.55, 0, 1, 'soccer.bounce'),
-      kickInterval: num(s.kick_min_interval_ms, 260, 0, 5000, 'soccer.kick_min_interval_ms'),
+      friction: num(s.friction_per_sec, 0.28, ...alim('soccer.friction_per_sec', [0.001, 0.999]), 'soccer.friction_per_sec'),
+      bounce: num(s.bounce, 0.55, ...alim('soccer.bounce', [0, 1]), 'soccer.bounce'),
+      kickInterval: num(s.kick_min_interval_ms, 260, ...alim('soccer.kick_min_interval_ms', [0, 5000]), 'soccer.kick_min_interval_ms'),
     };
     // 놀이터(park) — 놀이기구 물리 값과 기구 좌표.
     const pk = actCfg.park || {};
     this.parkCfg = {
-      seesawGravity: num(pk.seesaw_gravity, 2.6, 0.1, 20, 'park.seesaw_gravity'),
+      seesawGravity: num(pk.seesaw_gravity, 2.6, ...alim('park.seesaw_gravity', [0.1, 20]), 'park.seesaw_gravity'),
       // 폴백도 **고친 값**이어야 한다 — 2.2는 최대 각도를 훨씬 넘겨 판이 끝까지
       // 꺾이던 값이라, 데이터가 범위를 벗어나면 예전 동작으로 되돌아갔다.
-      seesawPush: num(pk.seesaw_push, 0.6, 0.1, 20, 'park.seesaw_push'),
+      seesawPush: num(pk.seesaw_push, 0.6, ...alim('park.seesaw_push', [0.1, 20]), 'park.seesaw_push'),
       // 아래에서 물리 상한(진폭 = push/√gravity ≤ max_angle)과 맞는지 확인한다.
-      seesawDamping: num(pk.seesaw_damping, 0.55, 0.01, 0.999, 'park.seesaw_damping'),
-      seesawMaxAngle: num(pk.seesaw_max_angle, 0.42, 0.05, 1.4, 'park.seesaw_max_angle'),
-      seesawPushInterval: num(pk.seesaw_push_min_interval_ms, 400, 0, 5000, 'park.seesaw_push_min_interval_ms'),
-      carouselPushInterval: num(pk.carousel_push_min_interval_ms, 500, 0, 5000, 'park.carousel_push_min_interval_ms'),
-      carouselPush: num(pk.carousel_push, 1.0, 0.05, 10, 'park.carousel_push'),
-      carouselMaxSpeed: num(pk.carousel_max_speed, 3.2, 0.2, 12, 'park.carousel_max_speed'),
-      carouselFriction: num(pk.carousel_friction, 0.6, 0.01, 0.999, 'park.carousel_friction'),
+      seesawDamping: num(pk.seesaw_damping, 0.55, ...alim('park.seesaw_damping', [0.01, 0.999]), 'park.seesaw_damping'),
+      seesawMaxAngle: num(pk.seesaw_max_angle, 0.42, ...alim('park.seesaw_max_angle', [0.05, 1.4]), 'park.seesaw_max_angle'),
+      seesawPushInterval: num(pk.seesaw_push_min_interval_ms, 400, ...alim('park.seesaw_push_min_interval_ms', [0, 5000]), 'park.seesaw_push_min_interval_ms'),
+      carouselPushInterval: num(pk.carousel_push_min_interval_ms, 500, ...alim('park.carousel_push_min_interval_ms', [0, 5000]), 'park.carousel_push_min_interval_ms'),
+      carouselPush: num(pk.carousel_push, 1.0, ...alim('park.carousel_push', [0.05, 10]), 'park.carousel_push'),
+      carouselMaxSpeed: num(pk.carousel_max_speed, 3.2, ...alim('park.carousel_max_speed', [0.2, 12]), 'park.carousel_max_speed'),
+      carouselFriction: num(pk.carousel_friction, 0.6, ...alim('park.carousel_friction', [0.01, 0.999]), 'park.carousel_friction'),
       // 그네 진폭 단계 — 값 개수가 곧 진폭의 유효 범위다(trick 검증에 쓴다).
       swingAmpSteps: Array.isArray(pk.swing_amp_steps)
         ? pk.swing_amp_steps
-          .map((v, i) => num(v, 0.3, 0.05, 1.4, `park.swing_amp_steps[${i}]`))
+          .map((v, i) => num(v, 0.3, ...alim('park.swing_amp_steps', [0.05, 1.4]), `park.swing_amp_steps[${i}]`))
         : [0.28, 0.55, 0.85],
     };
     // **값끼리의 정합성**을 확인한다. 개별 범위만 보면 "2.2"가 통과해서 판이
@@ -324,25 +359,25 @@ export class WorldState {
     const trackCfg = this.playgroundCfg.track || {};
     const raceCfg = this.playgroundCfg.race || {};
     const raceLimits = raceCfg.limits || {};
-    const rlim = (key, fallback) => raceLimits[key] || fallback;
+    const rlim = (key, fallback) => rangeOf(raceLimits, key, 'world.json playground.race', fallback);
     this.raceCfg = {
       checkpoints: (raceCfg.checkpoints || []).map((c) => ({
         id: String(c.id || ''), x: Number(c.x) || 0, z: Number(c.z) || 0,
       })),
-      radius: num(raceCfg.radius, 2.5, rlim('radius', [1, 5])[0], rlim('radius', [1, 5])[1], 'race/radius'),
-      laps: Math.floor(num(raceCfg.laps, 2, rlim('laps', [1, 5])[0], rlim('laps', [1, 5])[1], 'race/laps')),
-      lobbySec: num(raceCfg.lobby_sec, 10, rlim('lobby_sec', [3, 60])[0], rlim('lobby_sec', [3, 60])[1], 'race/lobby_sec'),
-      countdownSec: num(raceCfg.countdown_sec, 3, rlim('countdown_sec', [1, 10])[0], rlim('countdown_sec', [1, 10])[1], 'race/countdown_sec'),
-      timeoutSec: num(raceCfg.timeout_sec, 90, rlim('timeout_sec', [20, 600])[0], rlim('timeout_sec', [20, 600])[1], 'race/timeout_sec'),
-      finishedSec: num(raceCfg.finished_sec, 15, rlim('finished_sec', [3, 60])[0], rlim('finished_sec', [3, 60])[1], 'race/finished_sec'),
+      radius: num(raceCfg.radius, 2.5, ...rlim('radius', [1, 5]), 'race/radius'),
+      laps: Math.floor(num(raceCfg.laps, 2, ...rlim('laps', [1, 5]), 'race/laps')),
+      lobbySec: num(raceCfg.lobby_sec, 10, ...rlim('lobby_sec', [3, 60]), 'race/lobby_sec'),
+      countdownSec: num(raceCfg.countdown_sec, 3, ...rlim('countdown_sec', [1, 10]), 'race/countdown_sec'),
+      timeoutSec: num(raceCfg.timeout_sec, 90, ...rlim('timeout_sec', [20, 600]), 'race/timeout_sec'),
+      finishedSec: num(raceCfg.finished_sec, 15, ...rlim('finished_sec', [3, 60]), 'race/finished_sec'),
       // 보상도 유효범위를 강제한다 — 300 대신 30000을 오타로 넣으면 경제가
       // 무너지는데, 다른 필드와 달리 상한이 없었다(리뷰 지적).
       rewards: (Array.isArray(raceCfg.rewards) && raceCfg.rewards.length > 0
         ? raceCfg.rewards : [300, 150, 50]
       ).map((v, i) => Math.floor(num(v, [300, 150, 50][i] || 50,
-        rlim('reward', [0, 5000])[0], rlim('reward', [0, 5000])[1], `race/rewards[${i}]`))),
+        ...rlim('reward', [0, 5000]), `race/rewards[${i}]`))),
       finishReward: Math.floor(num(raceCfg.finish_reward, 20,
-        rlim('finish_reward', [0, 1000])[0], rlim('finish_reward', [0, 1000])[1], 'race/finish_reward')),
+        ...rlim('finish_reward', [0, 1000]), 'race/finish_reward')),
       // 트랙 밴드(레인 안쪽 경계 비율). 체크포인트만으로는 인필드 횡단을 막지
       // 못한다 — 두 체크포인트 사이에 밴드를 벗어나면 다음 통과를 인정하지 않는다.
       //
@@ -411,12 +446,12 @@ export class WorldState {
     // 소유한다(data/npcs.json 주석 참고).
     const npcCfg = readJson(join(dataDir, 'npcs.json'), { npcs: [] });
     const npcLimits = npcCfg.limits || {};
+    const nlim = (key, fallback) => rangeOf(npcLimits, key, 'npcs.json', fallback);
     this.npcRewardMultiplier = num(
       npcCfg.reward_multiplier, 1.8,
-      (npcLimits.reward_multiplier || [1.0, 5.0])[0],
-      (npcLimits.reward_multiplier || [1.0, 5.0])[1],
+      ...nlim('reward_multiplier', [1.0, 5.0]),
       'npcs.json/reward_multiplier');
-    const countRange = npcLimits.request_count || [1, 5];
+    const countRange = nlim('request_count', [1, 5]);
     this.npcs = new Map();
     for (const raw of npcCfg.npcs || []) {
       const id = String(raw.id || '');
@@ -739,8 +774,17 @@ export class WorldState {
       target.x = p.x + (target.x - p.x) * k;
       target.z = p.z + (target.z - p.z) * k;
     }
-    // 경계 → 속도 상한 → 바위 → 캐릭터 순서로 보정한다. 캐릭터를 마지막에
-    // 두면 겹침을 피하다 바위에 박히므로, 바위를 다시 한 번 적용한다.
+    // 실제 순서는 **속도 상한 → 바위 → 캐릭터 → 바위 → 경계 클램프**다. 캐릭터를
+    // 마지막에 두면 겹침을 피하다 바위에 박히므로 바위를 다시 한 번 적용하고,
+    // 경계는 맨 마지막에 자른다(섬 밖으로 밀려나는 것이 가장 눈에 띈다).
+    //
+    // ⚠️ 그래서 **경계에 닿는 장애물을 두면 안 된다** — 마지막 클램프가 그
+    // 장애물 안으로 다시 밀어 넣는다. 현재 data/world.json의 장애물은 모두
+    // 경계에서 떨어져 있다.
+    //
+    // pushOutPlayers는 1패스라 3명 이상 뭉치면 앞 상대와 다시 겹칠 수 있다 —
+    // 최소 간격은 하드 보장이 아니라 최선 노력이고, 남은 겹침은 다음 이동에서
+    // 풀린다(보기의 문제라 그 비용을 받아들인다).
     let resolved = this.pushOutObstacles(target);
     resolved = this.pushOutPlayers(token, resolved);
     resolved = this.pushOutObstacles(resolved);

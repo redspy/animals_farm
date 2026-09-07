@@ -57,7 +57,7 @@ if %ERRORLEVEL% neq 0 (
 
 echo [Step 5] Exporting Web build...
 REM 이전 빌드를 먼저 지운다 — git reset --hard는 추적되지 않는 build/를
-REM 지우지 않아서, export가 실패해도 구버전 index.html/.wasm이 남아 Step 5의
+REM 지우지 않아서, export가 실패해도 구버전 index.html/.wasm이 남아 Step 6의
 REM 산출물 검사를 통과해버릴 수 있었다(2026-09-03 Codex 감사 지적).
 if exist build\web rmdir /s /q build\web
 mkdir build\web
