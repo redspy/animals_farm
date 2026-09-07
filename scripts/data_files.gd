@@ -47,6 +47,23 @@ static func array_or_empty(v: Variant, what: String) -> Array:
 		return []
 	return v as Array
 
+## 숫자로 쓸 값. **컨테이너만 막으면 leaf에서 같은 이유로 죽는다** — 딕셔너리인 것을
+## 확인해 받은 뒤 `float(d.get("ui_zoom"))`을 부르는데 그 값이 배열이면 캐스트가
+## 런타임 에러를 낸다(리뷰 지적). 발생 조건은 세이브 손상처럼 좁지만, "형태를
+## 확인해서 받는다"는 규칙을 한 단계 덜 지킨 상태였다.
+static func float_or(v: Variant, fallback: float, what: String) -> float:
+	match typeof(v):
+		TYPE_FLOAT, TYPE_INT:
+			return float(v)
+		TYPE_STRING:
+			# 데이터에 "1.0"처럼 문자열로 적힌 경우는 받아 준다(JSON 편집 실수).
+			var t := String(v)
+			if t.is_valid_float():
+				push_warning("%s가 문자열이라 숫자로 읽음: %s" % [what, t])
+				return t.to_float()
+	push_warning("%s가 숫자가 아니라 기본값(%s) 사용: %s" % [what, str(fallback), str(v)])
+	return fallback
+
 ## 테스트에서 파일을 바꿔 가며 확인할 때 쓴다.
 static func clear_cache() -> void:
 	_cache.clear()

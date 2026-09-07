@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { envOf, envIsOff } from '../server/env.js';
+import { envOf, envIsOffIn } from '../server/env.js';
 
 // cmd의 `set VAR=값 && cmd`가 값에 뒤 공백을 담는 함정. 배포에서 두 번 물렸으므로
 // (TLS가 "off "가 되어 https로 떴고, 그 상태로 http 헬스체크가 실패했다) 여기에
@@ -23,10 +23,10 @@ test('비어 있거나 공백뿐이면 폴백을 쓴다', () => {
 
 test('TLS=off 판정은 공백·대소문자를 무시한다', () => {
   for (const v of ['off', 'off ', ' off', 'OFF', 'Off ']) {
-    assert.ok(envIsOff('TLS', { TLS: v }), `${JSON.stringify(v)}가 off로 안 읽힌다`);
+    assert.ok(envIsOffIn({ TLS: v }, 'TLS'), `${JSON.stringify(v)}가 off로 안 읽힌다`);
   }
   // 값이 없으면 off가 아니다 — 인증서가 있으면 https로 뜨는 기존 동작을 지킨다.
   for (const v of ['', '   ', 'on', undefined]) {
-    assert.ok(!envIsOff('TLS', { TLS: v }), `${JSON.stringify(v)}가 off로 읽힌다`);
+    assert.ok(!envIsOffIn({ TLS: v }, 'TLS'), `${JSON.stringify(v)}가 off로 읽힌다`);
   }
 });

@@ -28,7 +28,7 @@ func _ready() -> void:
 	# 타입 대입 에러로 멈추면 캐릭터 선택 화면조차 뜨지 않고, world.gd의 같은 가드는
 	# 도달조차 못 한다(리뷰 지적).
 	var settings: Dictionary = DataFiles.dict_or_empty(_save.get("settings", {}), "세이브의 settings")
-	UiScale.set_zoom(float(settings.get("ui_zoom", 1.0)))
+	UiScale.set_zoom(DataFiles.float_or(settings.get("ui_zoom", 1.0), 1.0, "세이브의 settings.ui_zoom"))
 	_presets = DataFiles.array_or_empty(
 		DataFiles.load_dict("res://data/characters.json").get("presets", []),
 		"characters.json의 presets")
@@ -38,9 +38,12 @@ func _ready() -> void:
 	_show_select()
 
 func _show_select() -> void:
-	var spawn: Dictionary = _world_cfg.get("spawn", {})
+	# _ready 마지막에서 부른다 — 여기서 멈추면 선택 화면조차 뜨지 않는다(위와 같은 이유).
+	var spawn: Dictionary = DataFiles.dict_or_empty(_world_cfg.get("spawn", {}), "world.json의 spawn")
 	_select = CharacterSelect.new()
-	_select.setup(_save, _presets, Vector2(float(spawn.get("x", 0.0)), float(spawn.get("z", 0.0))))
+	_select.setup(_save, _presets, Vector2(
+		DataFiles.float_or(spawn.get("x", 0.0), 0.0, "world.json의 spawn.x"),
+		DataFiles.float_or(spawn.get("z", 0.0), 0.0, "world.json의 spawn.z")))
 	_select.slot_chosen.connect(_on_slot_chosen)
 	add_child(_select)
 

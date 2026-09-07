@@ -104,7 +104,7 @@ if %ERRORLEVEL% neq 0 (
 echo [Step 8] Verifying server actually responds...
 REM schtasks /Run은 비동기라 node가 시작 직후 크래시해도 여기까지 도달한다 —
 REM /healthz가 실제로 200을 주는지 재시도로 확인해야 "배포 성공"이 의미를 가진다.
-powershell -Command "$ok=$false; for ($i=0; $i -lt 10; $i++) { try { $r = Invoke-WebRequest -Uri ('http://localhost:' + $env:GAME_PORT + '/healthz') -UseBasicParsing -TimeoutSec 3; if ($r.StatusCode -eq 200) { $ok=$true; break } } catch {} ; Start-Sleep -Seconds 2 }; if (-not $ok) { Write-Host 'ERROR: server did not respond on /healthz after 20s'; exit 1 } else { Write-Host 'Server responded 200 OK' }"
+powershell -Command "$ok=$false; for ($i=0; $i -lt 10; $i++) { try { $r = Invoke-WebRequest -Uri ('http://localhost:' + $env:GAME_PORT + '/healthz') -UseBasicParsing -TimeoutSec 3; if ($r.StatusCode -eq 200) { $ok=$true; break } } catch {} ; Start-Sleep -Seconds 2 }; if (-not $ok) { Write-Host 'ERROR: server did not respond on /healthz (10 tries, up to ~50s)'; exit 1 } else { Write-Host 'Server responded 200 OK' }"
 if %ERRORLEVEL% neq 0 (
     echo ERROR: Server health check failed after deploy - see server_error.log
     type server_error.log

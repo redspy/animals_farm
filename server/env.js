@@ -20,7 +20,18 @@ export function env(key, fallback = '') {
   return envOf(process.env, key, fallback);
 }
 
-/** `X=off`인지(대소문자·공백 무시). 스위치성 값의 공통 판정. */
-export function envIsOff(key, source = process.env) {
+/**
+ * `X=off`인지(대소문자·공백 무시). 스위치성 값의 공통 판정.
+ *
+ * **인자 순서 규칙**: 출처를 명시하는 함수는 `(source, key)`, process.env를 쓰는
+ * 함수는 `(key)`다. 한 모듈 안에서 순서가 뒤집혀 있으면(예전 `envIsOff(key, source)`)
+ * 잘못 넘겨도 타입 에러 없이 조용히 false가 된다 — 이 모듈이 막으려는 "조용한
+ * 실패"와 같은 종류라 순서를 맞췄다(리뷰 지적).
+ */
+export function envIsOffIn(source, key) {
   return envOf(source, key).toLowerCase() === 'off';
+}
+
+export function envIsOff(key) {
+  return envIsOffIn(process.env, key);
 }

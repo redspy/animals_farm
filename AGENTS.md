@@ -53,7 +53,8 @@ npm run test:insecure                # http(비보안 컨텍스트)에서도 실
 npm run capture:chat                 # 채팅 UI 상태별 캡쳐(문서용)
 node server/index.js                 # 정적 + WebSocket 서버 (기본 3001)
 GODOT_BIN=<표준빌드> ./scripts/build-web.sh   # 웹 export → build/web/
-node server/index.js                 # http://localhost:3001 로 웹 빌드 서빙
+TLS=off node server/index.js         # http://localhost:3001 로 웹 빌드 서빙
+                                     # (server/certs/에 인증서가 있으면 TLS=off 없이는 https로 뜬다 — docs/deploy.md §3)
 ```
 
 ## 알림 (텔레그램 푸쉬)

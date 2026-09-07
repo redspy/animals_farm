@@ -236,9 +236,13 @@ func setup(save: Dictionary, slot_index: int, preset: Dictionary, world_cfg: Dic
 	_world_cfg = world_cfg
 
 func _ready() -> void:
-	# 아래 대입들은 전부 타입 있는 변수로 들어간다 — 형태가 다르면 여기서 _ready가
-	# 멈춘다(위 _dict_or_empty 주석). activities.json만 막았다가 더 앞줄이 같은
-	# 지뢰라는 지적을 받아 부팅 경로 전체를 같은 규칙으로 통일했다.
+	# 아래 대입·순회는 전부 타입 있는 변수로 들어가거나 배열을 요구한다 — 형태가
+	# 다르면 여기서 _ready가 멈추고 월드 조립·접속까지 날아간다(이유는
+	# scripts/data_files.gd의 dict_or_empty 주석).
+	#
+	# **범위는 _ready와 _build_world의 데이터·세이브 읽기 전부다.** activities.json만
+	# 막았다가 더 앞줄이, 그다음엔 _build_world의 순회가 같은 지뢰라는 지적을
+	# 연달아 받았다(리뷰 5·6차) — 새로 데이터를 읽을 때도 같은 헬퍼를 쓸 것.
 	_items = DataFiles.dict_or_empty(DataFiles.load_dict("res://data/items.json").get("items", {}), "items.json의 items")
 	_world_size = Vector2(
 		float(_world_cfg.get("size_x", 50.7)),
@@ -278,9 +282,9 @@ func _build_world() -> void:
 	_build_environment()
 
 	var spawn_data := DataFiles.load_dict("res://data/gatherables.json")
-	var limits: Dictionary = spawn_data.get("limits", {})
+	var limits: Dictionary = DataFiles.dict_or_empty(spawn_data.get("limits", {}), "gatherables.json의 limits")
 	var spawn_index := -1
-	for spawn: Variant in spawn_data.get("spawns", []):
+	for spawn: Variant in DataFiles.array_or_empty(spawn_data.get("spawns", []), "gatherables.json의 spawns"):
 		spawn_index += 1
 		if typeof(spawn) != TYPE_DICTIONARY:
 			continue
@@ -294,8 +298,11 @@ func _build_world() -> void:
 	_player.setup(_world_size, _preset, _obstacles)
 	# 슬롯이 기억하고 있던 위치에서 시작한다("이름이 지정됐던 캐릭터는 위치정보를
 	# 기억한다" — 컨셉). 서버에 붙으면 서버 값이 우선이다(docs/protocol.md §4).
-	var pos: Dictionary = _slot.get("pos", {})
-	_player.position = Vector3(float(pos.get("x", 0.0)), 0.0, float(pos.get("z", 0.0)))
+	# 세이브에서 온다 — 손상되면 월드가 안 뜨고 인게임 복구 수단이 없다.
+	var pos: Dictionary = DataFiles.dict_or_empty(_slot.get("pos", {}), "세이브 슬롯의 pos")
+	_player.position = Vector3(
+		DataFiles.float_or(pos.get("x", 0.0), 0.0, "세이브 슬롯의 pos.x"), 0.0,
+		DataFiles.float_or(pos.get("z", 0.0), 0.0, "세이브 슬롯의 pos.z"))
 	add_child(_player)
 
 	# 내 캐릭터도 남들과 같은 이름표·말풍선을 쓴다 — 나만 다르게 보이면
@@ -358,21 +365,22 @@ func _build_environment() -> void:
 	add_child(sand)
 
 	# 운동장(달걀 트랙 + 축구장). 바위보다 먼저 깔아야 바위가 위에 보인다.
-	var pg_cfg: Dictionary = _world_cfg.get("playground", {})
+	var pg_cfg: Dictionary = DataFiles.dict_or_empty(_world_cfg.get("playground", {}), "world.json의 playground")
 	if not pg_cfg.is_empty():
 		_playground = Playground.new()
 		_playground.setup(pg_cfg)
 		add_child(_playground)
 
 	# 놀이터(모래 바닥 + 놀이기구). 운동장과 같은 이유로 바위보다 먼저 깐다.
-	var park_cfg: Dictionary = _world_cfg.get("park", {})
+	var park_cfg: Dictionary = DataFiles.dict_or_empty(_world_cfg.get("park", {}), "world.json의 park")
 	if not park_cfg.is_empty():
 		_park = Park.new()
 		_park.setup(park_cfg, _park_phys)
 		add_child(_park)
 
 	# 이웃 동물 — 위치는 데이터가 정하고 배회는 시간 함수다(scripts/npc.gd).
-	for n: Variant in DataFiles.load_dict("res://data/npcs.json").get("npcs", []):
+	for n: Variant in DataFiles.array_or_empty(
+			DataFiles.load_dict("res://data/npcs.json").get("npcs", []), "npcs.json의 npcs"):
 		if typeof(n) != TYPE_DICTIONARY:
 			continue
 		var npc := Npc.new()
