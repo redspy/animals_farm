@@ -151,7 +151,9 @@ func _make(side: bool) -> Texture2D:
 		# 볼은 **눈 아래·주둥이 바깥**에. 주둥이는 측면에서도 머리 정중앙에
 		# 그리므로 가운데에 찍으면 코 위에 얹히고, 반대쪽으로 보내면 뒤통수에
 		# 찍힌다(리뷰 지적). 좌표는 fr에서 유도한다(파일 헤더 규칙).
-		_fine_rect(img, Rect2i(fc.x + fr - 6, eye_y + 6, 3, 1), _c_blush)
+		# 오리는 부리가 fr-4쯤에서 시작하므로 한 칸 더 안쪽에 둔다.
+		var blush_x := fc.x + fr - (8 if _species == "duck" else 6)
+		_fine_rect(img, Rect2i(blush_x, eye_y + 6, 3, 1), _c_blush)
 	else:
 		_eye(img, Vector2i(fc.x - eye_dx, eye_y), -1)
 		_eye(img, Vector2i(fc.x + eye_dx, eye_y), 1)

@@ -90,8 +90,12 @@ var _trick: String = ""
 ## 되므로 상한이 없으면 한 캐릭터가 다 돌면 7.5MB, 여러 명이면 웹 힙에 물린다.
 static var _frames_shared: Dictionary = {}
 static var _frames_order: Array[String] = []
-## 12 × 491KB ≈ 5.9MB. 24로 두면 스스로 든 근거(7.5MB면 웹 힙에 물린다)를
-## 넘는다 — ImageTexture라 VRAM도 비슷한 양을 잡는다.
+## 20 × 491KB ≈ 9.8MB.
+##
+## 12까지 줄여 봤더니 **멀티플레이 워킹셋보다 작았다**: 외형별로 키가 갈리므로
+## 8명이 접속하면 기본 모습만 9칸이고 넷이 운동 중이면 13칸이다 — 축출된
+## 엔트리는 사용 중이면 해제되지도 않으니 메모리는 그대로인데 히트율만 떨어져
+## 재생성(38ms)이 반복된다(리뷰 지적).
 ##
 ## 정확히는 **상한이 아니라 "캐시가 붙잡는 양"**이다: 축출해도 그 프레임을 쓰는
 ## 스프라이트가 살아 있으면 해제되지 않고, 축출된 키를 다른 스프라이트가 다시
@@ -100,7 +104,7 @@ static var _frames_order: Array[String] = []
 ##
 ## static이므로 **월드를 나갔다 들어와도 유지된다**(같은 캐릭터로 다시 들어올 때
 ## 다시 만들지 않아도 되므로 의도한 동작이다).
-const FRAMES_CACHE_MAX := 12
+const FRAMES_CACHE_MAX := 20
 
 var _c_rope: Color
 var _c_bike_frame: Color
@@ -189,7 +193,14 @@ func activity() -> String:
 ## 스프라이트가 사라진다.
 func _apply_frames() -> void:
 	# 외형(성별 포함)은 look_signature가 담는다 — 그 함수 주석 참고.
-	var key := "%s|%s|%s" % [look_signature(), _activity, _trick]
+	#
+	# **trick은 그림에 쓰는 활동에만 넣는다.** 놀이기구의 trick은 좌석·진폭이라
+	# 그림이 완전히 같은데(앉은 자세는 trick을 읽지 않는다) 키에 넣으면 그네
+	# 진폭 버튼을 누를 때마다 **픽셀이 동일한 엔트리**가 새로 생기고 그때마다
+	# 24장을 동기로 만든다 — LRU가 그 쓰레기 키로 밀려 정작 지키려던 기본
+	# 모습이 축출된다(리뷰 지적).
+	var trick_key := _trick if _trick_affects_drawing() else ""
+	var key := "%s|%s|%s" % [look_signature(), _activity, trick_key]
 	if _frames_shared.has(key):
 		# **히트할 때 순서를 뒤로 옮긴다(LRU).** FIFO로 두면 가장 먼저 만든
 		# 로컬 플레이어의 기본 모습이 가장 먼저 버려지고, 활동을 끝낼 때 그
@@ -405,12 +416,12 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 
 	# **장비가 다리를 대체하는 활동에서는 다리를 흔들지 않는다.**
 	#
-	# 자전거·인라인·킥보드·앉기는 장비/자세가 다리 자리를 덮으므로, 걷기 위상의
-	# 들림·벌림을 그대로 두면 다리가 정규 위치 밖(위·옆)으로 나가 덮는 사각형을
-	# 벗어난다 — 상의 밑단이 옆으로 툭 튀어나온 혹처럼 보이고 외곽선이 그 혹까지
+	# 자전거와 앉은 자세(미끄럼틀·그네·시소)는 다리 자리를 **지운다** — 걷기
+	# 위상의 들림·벌림을 그대로 두면 다리가 정규 위치 밖(위·옆)으로 나가 지우는
+	# 사각형을 벗어난다 — 상의 밑단이 옆으로 툭 튀어나온 혹처럼 보이고 외곽선이 그 혹까지
 	# 두른다(리뷰 지적). 지우는 사각형을 키우는 방법은 쓸 수 없다: 노출된 다리
 	# 쪽과 **반대편 팔이 같은 열**에 오므로 핸들을 잡은 팔이 잘린다.
-	if _legs_hidden():
+	if _legs_locked():
 		leg_l_y_lift = 0
 		leg_r_y_lift = 0
 		leg_l_spread = 0
@@ -753,10 +764,21 @@ func _fine_rect(img: Image, rect: Rect2i, color: Color) -> void:
 # 좌우 반전한 것이라(_create_frame의 flip) 따로 그릴 필요가 없다.
 # ---------------------------------------------------------------------------
 
-## 다리를 장비·자세가 덮는 활동인지. 덮는 활동에서는 걷기 위상의 다리 움직임을
-## 끈다(위 `_create_frame` 주석 참고).
-func _legs_hidden() -> bool:
-	return _activity in ["bike", "inline", "kickboard", "slide", "swing", "seesaw", "carousel"]
+## 다리 자리를 **실제로 지우는** 활동인지(그 활동에서만 걷기 위상을 끈다).
+##
+## 목록의 근거는 `_clear_rect` 호출 지점이다 — `_draw_bike`와 `_draw_sitting`
+## 둘뿐이다. 인라인·킥보드·손잡이(뺑뺑이)는 다리를 지우지 않고 **보이는 게
+## 정상**이라, 위상을 끄면 다리는 고정인데 부츠·발판만 좌우로 흔들려
+## "스케이트가 멈춘 다리 밑에서 미끄러져 나가는" 그림이 된다(리뷰 지적).
+const LEGS_LOCKED_ACTIVITIES := ["bike", "slide", "swing", "seesaw"]
+
+## trick이 그림을 바꾸는 활동인지. 지금은 줄넘기 기술뿐이다(모아 뛰기·이중
+## 뛰기·토드·엇걸어 풀어 뛰기가 줄과 자세를 바꾼다).
+func _trick_affects_drawing() -> bool:
+	return _activity == "jumprope"
+
+func _legs_locked() -> bool:
+	return _activity in LEGS_LOCKED_ACTIVITIES
 
 func _apply_activity(img: Image, dir: Vector2i, phase: int) -> Image:
 	var side := dir.x == 1
