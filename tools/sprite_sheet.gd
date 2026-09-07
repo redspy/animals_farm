@@ -85,6 +85,9 @@ func _activities_sheet() -> void:
 ## 이웃 동물 종별 정면·측면.
 func _npc_sheet() -> void:
 	var npcs: Array = DataFiles.load_dict("res://data/npcs.json").get("npcs", [])
+	if npcs.is_empty():
+		push_error("data/npcs.json에 이웃이 없어 동물 시트를 만들 수 없습니다")
+		return
 	var sprites: Array = []
 	for n: Variant in npcs:
 		var s := NpcSprite.new()
@@ -109,6 +112,7 @@ func _frame_image(s: PlayerSprite, anim: String, index: int) -> Image:
 
 func _save(rows: Array, path: String) -> void:
 	if rows.is_empty():
+		push_error("그릴 것이 없어 시트를 만들지 못했습니다: %s" % path)
 		return
 	var cols: int = (rows[0] as Array).size()
 	var cw := 0

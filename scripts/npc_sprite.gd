@@ -148,9 +148,10 @@ func _make(side: bool) -> Texture2D:
 	# --- 표정: 큰 눈 + 하이라이트 + 볼 ---
 	if side:
 		_eye(img, Vector2i(fc.x + eye_dx + 1, eye_y), 1)
-		# 볼은 **주둥이 밖**에 — 주둥이(머리 가운데 원) 위에 찍으면 분홍이 코
-		# 위에 얹힌다(확대 시트로 확인).
-		_fine_rect(img, Rect2i(fc.x - 13, eye_y + 6, 3, 1), _c_blush)
+		# 볼은 **눈 아래·주둥이 바깥**에. 주둥이는 측면에서도 머리 정중앙에
+		# 그리므로 가운데에 찍으면 코 위에 얹히고, 반대쪽으로 보내면 뒤통수에
+		# 찍힌다(리뷰 지적). 좌표는 fr에서 유도한다(파일 헤더 규칙).
+		_fine_rect(img, Rect2i(fc.x + fr - 6, eye_y + 6, 3, 1), _c_blush)
 	else:
 		_eye(img, Vector2i(fc.x - eye_dx, eye_y), -1)
 		_eye(img, Vector2i(fc.x + eye_dx, eye_y), 1)

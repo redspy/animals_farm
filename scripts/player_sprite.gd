@@ -91,7 +91,13 @@ var _trick: String = ""
 static var _frames_shared: Dictionary = {}
 static var _frames_order: Array[String] = []
 ## 12 × 491KB ≈ 5.9MB. 24로 두면 스스로 든 근거(7.5MB면 웹 힙에 물린다)를
-## 넘는다 — ImageTexture라 VRAM도 비슷한 양을 잡는다(리뷰 지적).
+## 넘는다 — ImageTexture라 VRAM도 비슷한 양을 잡는다.
+##
+## 정확히는 **상한이 아니라 "캐시가 붙잡는 양"**이다: 축출해도 그 프레임을 쓰는
+## 스프라이트가 살아 있으면 해제되지 않고, 축출된 키를 다른 스프라이트가 다시
+## 요청하면 같은 그림이 하나 더 만들어진다(리뷰 지적). 실제 사용량은
+## `12 + 사용 중인 것들`이다.
+##
 ## static이므로 **월드를 나갔다 들어와도 유지된다**(같은 캐릭터로 다시 들어올 때
 ## 다시 만들지 않아도 되므로 의도한 동작이다).
 const FRAMES_CACHE_MAX := 12
@@ -184,11 +190,16 @@ func activity() -> String:
 func _apply_frames() -> void:
 	# 외형(성별 포함)은 look_signature가 담는다 — 그 함수 주석 참고.
 	var key := "%s|%s|%s" % [look_signature(), _activity, _trick]
-	if not _frames_shared.has(key):
+	if _frames_shared.has(key):
+		# **히트할 때 순서를 뒤로 옮긴다(LRU).** FIFO로 두면 가장 먼저 만든
+		# 로컬 플레이어의 기본 모습이 가장 먼저 버려지고, 활동을 끝낼 때 그
+		# 프레임 24장을 **그 프레임에 동기로** 다시 만든다(웹에서 눈에 띄는
+		# 끊김이다 — 리뷰 지적).
+		_frames_order.erase(key)
+		_frames_order.append(key)
+	else:
 		_frames_shared[key] = _generate_sprite_frames()
 		_frames_order.append(key)
-		# 가장 오래된 것부터 버린다(LRU가 아니라 FIFO — 스프라이트 프레임은
-		# 다시 만들 수 있고, 정확한 사용 시각을 추적할 만한 이득이 없다).
 		while _frames_order.size() > FRAMES_CACHE_MAX:
 			var oldest: String = _frames_order.pop_front()
 			_frames_shared.erase(oldest)
@@ -391,6 +402,19 @@ func _create_frame(dir: Vector2i, walk_phase: int, flip: bool) -> Texture2D:
 			leg_r_spread = 4
 			arm_l_spread = 4
 			arm_r_spread = -4
+
+	# **장비가 다리를 대체하는 활동에서는 다리를 흔들지 않는다.**
+	#
+	# 자전거·인라인·킥보드·앉기는 장비/자세가 다리 자리를 덮으므로, 걷기 위상의
+	# 들림·벌림을 그대로 두면 다리가 정규 위치 밖(위·옆)으로 나가 덮는 사각형을
+	# 벗어난다 — 상의 밑단이 옆으로 툭 튀어나온 혹처럼 보이고 외곽선이 그 혹까지
+	# 두른다(리뷰 지적). 지우는 사각형을 키우는 방법은 쓸 수 없다: 노출된 다리
+	# 쪽과 **반대편 팔이 같은 열**에 오므로 핸들을 잡은 팔이 잘린다.
+	if _legs_hidden():
+		leg_l_y_lift = 0
+		leg_r_y_lift = 0
+		leg_l_spread = 0
+		leg_r_spread = 0
 
 	var leg_base_y: int = LEG_BASE_Y
 	var arm_base_y: int = ARM_FRONT_Y + bob
@@ -729,6 +753,11 @@ func _fine_rect(img: Image, rect: Rect2i, color: Color) -> void:
 # 좌우 반전한 것이라(_create_frame의 flip) 따로 그릴 필요가 없다.
 # ---------------------------------------------------------------------------
 
+## 다리를 장비·자세가 덮는 활동인지. 덮는 활동에서는 걷기 위상의 다리 움직임을
+## 끈다(위 `_create_frame` 주석 참고).
+func _legs_hidden() -> bool:
+	return _activity in ["bike", "inline", "kickboard", "slide", "swing", "seesaw", "carousel"]
+
 func _apply_activity(img: Image, dir: Vector2i, phase: int) -> Image:
 	var side := dir.x == 1
 	match _activity:
@@ -1021,8 +1050,8 @@ func _lean_upper(img: Image, dx: int, split: int) -> Image:
 
 ## 논리 좌표 영역을 비운다(자전거·앉은 자세가 다리 자리를 차지할 때 쓴다).
 ##
-## ⚠️ `_fine_clear_rect`는 **세밀 좌표**를 받는다. 예전에 이 함수가 세밀 좌표를
-## 만들어 넘긴 뒤 그쪽에서 논리 프리미티브(`_draw_rect`)를 불러서 SCALE이 두 번
+## ⚠️ **세밀 좌표를 만들어 넘기지 말 것.** 예전에 이 함수가 좌표에 SCALE을 곱해
+## 넘긴 뒤 받는 쪽에서 다시 논리 프리미티브(`_draw_rect`)를 불러서 SCALE이 두 번
 ## 곱해졌고(4배), 세 호출 지점이 전부 화면 밖으로 나가 **한 픽셀도 지우지 못했다**
 ## — 자전거·킥보드 위에 선 다리가 그대로 남고 놀이기구에 앉은 자세도 다리가 선
 ## 채로 겹쳤다(리뷰 지적). 게다가 외곽선이 맨 마지막에 돌아 그 다리에까지
