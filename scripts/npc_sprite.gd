@@ -31,6 +31,11 @@ const FINE_H := H * SCALE
 const HEAD := Vector2i(16, 13)
 const HEAD_R := 9
 
+## 표정 크기(눈 반지름 등)는 이 배율 전용이다 — 플레이어와 같은 규칙.
+const FINE_DETAIL_SCALE := 2
+## 경고는 **한 번만** 낸다(NPC 인스턴스마다 찍으면 로그가 도배된다).
+static var _scale_warned := false
+
 var _species := "cat"
 var _c_body: Color
 var _c_accent: Color
@@ -57,8 +62,10 @@ func setup(species: String) -> void:
 	_c_eye_white = Palette.color("character", "eye_white")
 	_c_blush = Palette.color("character", "blush")
 
-	if SCALE != 2:
-		push_warning("[npc] SCALE=%d인데 표정 크기는 2 전용입니다 — 얼굴이 어긋납니다" % SCALE)
+	if SCALE != FINE_DETAIL_SCALE and not _scale_warned:
+		_scale_warned = true
+		push_warning("[npc] SCALE=%d인데 표정 크기는 %d 전용입니다 — 얼굴이 어긋납니다"
+			% [SCALE, FINE_DETAIL_SCALE])
 	billboard = BaseMaterial3D.BILLBOARD_FIXED_Y
 	texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
 	# 내부 해상도가 SCALE배이므로 픽셀 크기를 그만큼 줄여야 월드 크기가 같다.
@@ -141,7 +148,9 @@ func _make(side: bool) -> Texture2D:
 	# --- 표정: 큰 눈 + 하이라이트 + 볼 ---
 	if side:
 		_eye(img, Vector2i(fc.x + eye_dx + 1, eye_y), 1)
-		_fine_rect(img, Rect2i(fc.x + 1, eye_y + 6, 3, 1), _c_blush)
+		# 볼은 **주둥이 밖**에 — 주둥이(머리 가운데 원) 위에 찍으면 분홍이 코
+		# 위에 얹힌다(확대 시트로 확인).
+		_fine_rect(img, Rect2i(fc.x - 13, eye_y + 6, 3, 1), _c_blush)
 	else:
 		_eye(img, Vector2i(fc.x - eye_dx, eye_y), -1)
 		_eye(img, Vector2i(fc.x + eye_dx, eye_y), 1)

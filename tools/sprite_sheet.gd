@@ -39,6 +39,9 @@ func _wanted() -> Array:
 ## 프리셋별 idle 4방향 + 걷기 한 장.
 func _presets_sheet() -> void:
 	var presets: Array = DataFiles.load_dict("res://data/characters.json").get("presets", [])
+	if presets.is_empty():
+		push_error("data/characters.json에 프리셋이 없어 프리셋 시트를 만들 수 없습니다")
+		return
 	var sprites: Array = []
 	for p: Variant in presets:
 		var s := PlayerSprite.new()
@@ -61,6 +64,9 @@ func _activities_sheet() -> void:
 	var acts := [["", ""], ["jumprope", "double"], ["soccer", ""], ["bike", ""],
 		["inline", ""], ["kickboard", ""], ["fishing", ""], ["swing", ""], ["carousel", ""]]
 	var presets: Array = DataFiles.load_dict("res://data/characters.json").get("presets", [])
+	if presets.is_empty():
+		push_error("data/characters.json에 프리셋이 없어 활동 시트를 만들 수 없습니다")
+		return
 	var s := PlayerSprite.new()
 	s.setup(presets[mini(3, presets.size() - 1)] as Dictionary)
 	get_root().add_child(s)
@@ -120,5 +126,10 @@ func _save(rows: Array, path: String) -> void:
 			big.resize(big.get_width() * ZOOM, big.get_height() * ZOOM, Image.INTERPOLATE_NEAREST)
 			sheet.blend_rect(big, Rect2i(0, 0, big.get_width(), big.get_height()),
 				Vector2i(c * cw * ZOOM, r * ch * ZOOM))
-	sheet.save_png(path)
+	# **저장 실패를 성공으로 보고하지 않는다** — 눈으로 확인하려고 만든 도구가
+	# 실패를 숨기면 목적이 무너진다.
+	var err := sheet.save_png(path)
+	if err != OK:
+		push_error("시트 저장 실패(%s): %s" % [path, error_string(err)])
+		return
 	print("시트 저장: %s (셀 %dx%d, 확대 %d)" % [path, cw, ch, ZOOM])

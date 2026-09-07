@@ -90,7 +90,11 @@ var _trick: String = ""
 ## 되므로 상한이 없으면 한 캐릭터가 다 돌면 7.5MB, 여러 명이면 웹 힙에 물린다.
 static var _frames_shared: Dictionary = {}
 static var _frames_order: Array[String] = []
-const FRAMES_CACHE_MAX := 24
+## 12 × 491KB ≈ 5.9MB. 24로 두면 스스로 든 근거(7.5MB면 웹 힙에 물린다)를
+## 넘는다 — ImageTexture라 VRAM도 비슷한 양을 잡는다(리뷰 지적).
+## static이므로 **월드를 나갔다 들어와도 유지된다**(같은 캐릭터로 다시 들어올 때
+## 다시 만들지 않아도 되므로 의도한 동작이다).
+const FRAMES_CACHE_MAX := 12
 
 var _c_rope: Color
 var _c_bike_frame: Color
@@ -136,10 +140,22 @@ func set_move_dir(dir: Vector2) -> void:
 func facing() -> String:
 	return _current_facing
 
-## 지금 쓰고 있는 외형 요약(테스트 판정용). 색을 문자열로 내보내면 E2E가
-## "방송됐는가"가 아니라 **화면에 반영됐는가**를 볼 수 있다.
+## 지금 쓰고 있는 외형 요약.
+##
+## 두 가지로 쓰인다:
+##  1. E2E 판정 — 색을 문자열로 내보내면 "방송됐는가"가 아니라 **화면에
+##     반영됐는가**를 볼 수 있다(world.gd의 myLook/remoteLook 훅).
+##  2. **프레임 캐시 키** — 외형이 같으면 프레임 묶음을 공유한다.
+##
+## ⚠️ 그래서 **그리기에 영향을 주는 값은 전부 여기 들어와야 한다.** 빠뜨리면
+## 다른 외형끼리 프레임을 공유하고, `apply_look()`이 캐시를 비우지 않으므로
+## 세션 내내 안 고쳐진다. 게다가 이 값 자체가 캐시 키라서 위 1번 테스트로는
+## 그 오공유를 절대 잡을 수 없다(리뷰 지적). 지금 `_resolve_colors()`가 읽는
+## 프리셋 필드는 hair·skin·outfit·gender 넷이고 넷 다 여기 있다 — 꾸미기에
+## 항목을 늘리면 이 함수도 같이 늘려야 한다.
 func look_signature() -> String:
-	return "%s|%s|%s" % [_hair_style, _c_skin.to_html(false), _c_torso.to_html(false)]
+	return "%s|%s|%s|%s" % [_hair_style, _gender,
+		_c_skin.to_html(false), _c_torso.to_html(false)]
 
 ## 지금 활동·기술 — 외형만 바꿔 다시 만들 때 상태를 잃지 않으려고 읽는다.
 func activity_id() -> String:
@@ -166,9 +182,8 @@ func activity() -> String:
 ## 갈아 끼우고 play()를 다시 부르지 않으면 이전 애니메이션 이름이 없어져
 ## 스프라이트가 사라진다.
 func _apply_frames() -> void:
-	# **성별도 키에 넣는다** — 치마 유무가 갈리므로, 같은 색·머리라도 프레임을
-	# 공유하면 남성 프리셋에 치마가 붙는다.
-	var key := "%s|%s|%s|%s" % [look_signature(), _gender, _activity, _trick]
+	# 외형(성별 포함)은 look_signature가 담는다 — 그 함수 주석 참고.
+	var key := "%s|%s|%s" % [look_signature(), _activity, _trick]
 	if not _frames_shared.has(key):
 		_frames_shared[key] = _generate_sprite_frames()
 		_frames_order.append(key)
@@ -859,7 +874,10 @@ func _draw_bike(img: Image, side: bool, phase: int) -> void:
 		_draw_line(img, Vector2i(14, WHEEL_Y - 8), pedal2, _c_bottom_dark, 2)
 	else:
 		# 앞/뒤에서 본 모습: 바퀴가 겹쳐 보이므로 하나만 그리고 핸들을 넓게 둔다.
-		_clear_rect(img, Rect2i(6, WHEEL_Y - 6, 22, 40 - (WHEEL_Y - 6)))
+		# 지우는 범위를 **다리 시작(LEG_BASE_Y)부터**로 잡는다 — 측면과 같은
+		# WHEEL_Y-6(=27)으로 두면 상의 아래 3줄까지 지워지고, 정면에서는 그
+		# 자리를 프레임·핸들이 못 덮어 몸이 끊겨 보인다(리뷰 지적).
+		_clear_rect(img, Rect2i(6, LEG_BASE_Y, 22, 40 - LEG_BASE_Y))
 		_draw_ring(img, Vector2i(16, WHEEL_Y + 1), 4, 2, _c_bike_wheel)
 		_draw_rect(img, Rect2i(15, WHEEL_Y - 9, 2, 9), _c_bike_frame)
 		_draw_rect(img, Rect2i(9, WHEEL_Y - 10, 14, 2), _c_bike_frame)   # 핸들바
@@ -1011,9 +1029,6 @@ func _lean_upper(img: Image, dx: int, split: int) -> Image:
 ## 테두리를 둘러 더 도드라졌다.
 func _clear_rect(img: Image, rect: Rect2i) -> void:
 	_draw_rect(img, rect, Color(0, 0, 0, 0))
-
-func _fine_clear_rect(img: Image, rect: Rect2i) -> void:
-	_fine_rect(img, rect, Color(0, 0, 0, 0))
 
 ## 굵이가 있는 선(브레젠험 대신 간격 보간 — 32px 스프라이트에서는 충분하다).
 func _draw_line(img: Image, from: Vector2i, to: Vector2i, color: Color, thick: int = 1) -> void:
