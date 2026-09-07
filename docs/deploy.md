@@ -22,11 +22,11 @@ git push origin main  ──────▶  push 이벤트  ──────�
 connect_dise와 **의도적으로 동일한** 선택들:
 
 - **클라우드 빌더를 쓰지 않는다.** 배포 서버 자체가 빌드 머신이다(`runs-on: self-hosted`). 아티팩트 전송·시크릿 배포 경로가 없어 구조가 단순하고, 서버가 곧 최신 소스 트리라 문제 재현이 쉽다.
-- **`git reset --hard origin/main`**: 서버의 로컬 변경을 신뢰하지 않고 항상 원격 상태로 강제 동기화한다. 단 `reset --hard`는 추적되지 않는 `build/`를 지우지 않으므로, 배포 결과가 push된 커밋과 1:1로 대응하려면 **export 직전에 `build/web`을 삭제**해야 한다(`deploy.bat` Step 4가 그 일을 한다 — 없으면 export 실패 시 구버전 산출물이 남아 검사를 통과한다).
+- **`git reset --hard origin/main`**: 서버의 로컬 변경을 신뢰하지 않고 항상 원격 상태로 강제 동기화한다. 단 `reset --hard`는 추적되지 않는 `build/`를 지우지 않으므로, 배포 결과가 push된 커밋과 1:1로 대응하려면 **export 직전에 `build/web`을 삭제**해야 한다(`deploy.bat` Step 5(Exporting Web build)가 export 전에 그 일을 한다 — 없으면 export 실패 시 구버전 산출물이 남아 Step 6 검사를 통과한다).
 - **`schtasks`로 서버 기동**: `start`/`Start-Process`로 띄운 프로세스는 GitHub Actions 러너의 Job Object에 묶여 **job이 끝나는 순간 함께 죽는다**(connect_dise에서 실측, 헬스체크는 job 진행 중이라 통과하는데 직후에 포트가 죽어 있었다). 작업 스케줄러가 관리하는 태스크는 러너와 무관한 독립 프로세스다.
 - **배포 성공 판정 = 실제 HTTP 200**: 프로세스 기동 명령이 성공했다는 것은 서버가 살아 있다는 뜻이 아니다. `/healthz`를 **10회 재시도**(각 요청 타임아웃 3초 + 간격 2초 → 즉시 거절되면 약 20초, 요청이 매번 타임아웃되면 최대 약 50초)로 확인하고, 실패하면 `server_error.log`를 출력하고 exit 1로 배포를 실패시킨다.
 
-animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install && npm run build`(Vite) 대신 **Godot 헤드리스 웹 export**를 돌린다. 서버는 npm 의존성이 0개인 정적 서버(`server/index.js`)라 배포 중 `npm install` 실패 지점이 아예 없다.
+animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install && npm run build`(Vite) 대신 **Godot 헤드리스 웹 export**를 돌린다. 서버(`server/index.js`)의 런타임 의존성은 **`ws` 하나뿐**이라(멀티플레이를 붙이면서 추가됐다 — 처음에는 0개인 정적 서버였다) `deploy.bat`이 `npm ci --omit=dev`로 설치한다. 나머지 의존성(playwright 등)은 전부 devDependencies라 배포 서버에 내려가지 않는다.
 
 ## 2. 배포 서버 1회 준비
 
@@ -67,12 +67,12 @@ Godot 4의 **기본 HTML 셸은 보안 컨텍스트가 아니면 실행을 거�
 
 | 항목 | 문제 | 조치 후 |
 |---|---|---|
-| `index.pck` | **28MB** — `node_modules`의 playwright 아이콘·폰트까지 Godot이 리소스로 임포트해 넣고 있었다 | **3MB** (`.gdignore`로 스캔 제외, `npm ci`가 지워도 postinstall이 다시 심는다) |
+| `index.pck` | **28MB** — `node_modules`의 playwright 아이콘·폰트까지 Godot이 리소스로 임포트해 넣고 있었다 | **3MB** (`.gdignore`로 스캔 제외, `npm ci`가 지워도 postinstall이 다시 심는다). 그 뒤 한글 폰트·기능 추가로 늘어 **현재 4.7MB**다 |
 | 전송 압축 | 없음 — 39MB wasm을 그대로 보냈다 | brotli/gzip (**wasm 39MB → br 약 7MB, gzip 9MB**), 첫 압축 결과를 mtime 키로 캐시 |
 
 정리하면 **총 전송량 약 71MB → 약 12MB**다. 남은 9MB는 Godot 엔진 wasm 자체이고 이건 정상 범위다(Godot 웹 빌드의 고정 비용). 더 줄이려면 (a) 폰트 서브셋(현재 KR 전체 4.6MB), (b) 엔진 기능 축소 빌드가 필요하다.
 
-- `index.html`은 `no-cache`- `index.html`은 `no-cache`, 나머지 산출물은 `max-age=300`. 배포 직후 구버전 HTML이 캐시에 남는 문제를 막는다.
+- `index.html`은 `no-cache`, 나머지 산출물은 `max-age=300`. 배포 직후 구버전 HTML이 캐시에 남는 문제를 막는다.
 
 ## 4. 로컬에서 같은 빌드 재현
 
@@ -95,24 +95,30 @@ npm run test:browser            # build/web를 서버에 올려 Chromium으로 �
 ### 실측으로 확인된 웹 전용 함정
 
 - **한글이 두부(□)로 렌더링**: Godot 기본 폰트에는 한글 글리프가 없고 **웹에는 시스템 폰트 폴백이 없다**. `assets/fonts/NotoSansKR-Regular.otf`(OFL)를 임베드하고 `project.godot`의 `gui/theme/custom_font`로 지정해 해결했다. 데스크톱 헤드리스 검증에서는 드러나지 않고 브라우저에서만 보이는 문제라, `npm run test:browser`가 이 계층을 담당한다.
-  - 대가: 폰트 때문에 `index.pck`가 약 4MB로 늘었다. 첫 로딩이 문제되면 필요한 글리프만 서브셋한 폰트로 교체하는 것이 다음 단계다(현재는 전체 KR 서브셋 OTF).
+  - 대가: 폰트가 `index.pck`의 대부분(KR 전체 4.6MB 중 대부분)이다. 첫 로딩이 문제되면 필요한 글리프만 서브셋한 폰트로 교체하는 것이 다음 단계다(현재는 전체 KR 서브셋 OTF).
 
 ### 실측으로 확인된 export 함정
 
 `export_presets.cfg`의 `vram_texture_compression/for_desktop|for_mobile`을 켜두면 export가 **상세 사유 없이** `Cannot export project with preset "Web" due to configuration errors`로 실패한다(모바일 VRAM 압축은 프로젝트 설정 `rendering/textures/vram_compression/import_etc2_astc`를 요구). 이 게임은 2D + GL Compatibility라 VRAM 압축이 필요 없어 둘 다 끈 상태다. 텍스처 에셋을 도입할 때 이 옵션을 다시 켜려면 프로젝트 설정도 함께 켜야 한다.
 
-## 5. 검증 상태 (2026-09-04)
+## 5. 검증 상태 (2026-09-08)
 
 | 항목 | 상태 |
 |---|---|
 | 리소스 임포트 / 메인 씬 헤드리스 기동 | ✅ 로컬 실측 통과(Godot 4.7.1 표준) |
-| 세이브 마이그레이션 회귀 테스트 | ✅ 로컬 실측 통과 |
+| 세이브 마이그레이션 회귀 테스트 9종 | ✅ 로컬 실측 통과(`tests/test_save_migration.gd`) |
 | 팔레트 정합성 테스트(코드 참조 키 전수) | ✅ 로컬 실측 통과 |
-| 경로 계산(바위 우회) 테스트 7종 | ✅ 로컬 실측 통과(`tests/test_path.gd`) |
+| 경로 계산(바위 우회·박스 장애물·겹침 분리) 테스트 9종 | ✅ 로컬 실측 통과(`tests/test_path.gd`) |
 | 웹 export 산출물(index.html/.wasm/.pck) | ✅ 로컬 실측 생성 |
 | 정적 서버 MIME·COOP/COEP·`/healthz` | ✅ 로컬 실측 통과 |
 | 브라우저 기동·입력·채집·판매 1사이클 | ✅ 로컬 실측 통과(`npm run test:browser`, Chromium) |
-| 서버 규칙(검증·소유권·레이트 리밋) | ✅ 유닛 테스트 17종 통과(`npm run test:server`) |
+| 서버 규칙(검증·소유권·레이트 리밋·활동·놀이터·낚시·NPC·경주·외형) | ✅ 유닛 테스트 **112종** 통과(`npm run test:server`) |
+| 낚시·벌레(대기→물기→타이밍, 헛챔질·놓침) | ✅ 로컬 실측 통과(`npm run test:fishing`) |
+| 이웃 부탁·도감(부족→수집→정산→도감 2탭) | ✅ 로컬 실측 통과(`npm run test:npc`) |
+| 달리기 경주(존 전용 버튼·참가/포기·국면 전이) | ✅ 로컬 실측 통과(`npm run test:race`) |
+| 운동장(운동 5종 토글·속도·기술·축구공) | ✅ 로컬 실측 통과(`npm run test:playground`) |
+| 놀이터(놀이기구 4종 탑승·좌석) | ✅ 로컬 실측 통과(`npm run test:park`) |
+| 외형 꾸미기·토큰 이전(2탭 동기화) | ✅ 로컬 실측 통과(`npm run test:multiplayer`) |
 | 2기기 실시간 동기화(위치·채팅·이모티콘·드랍/줍기) | ✅ 로컬 실측 통과(`npm run test:multiplayer`, 2탭 + WS 옵저버) |
 | 폰 터치 조작(조이스틱·버튼·이모티콘 시트·DOM 채팅 입력) | ✅ 로컬 실측 통과(`npm run test:mobile`, 세로 412×839 에뮬레이션) |
 | 한글 IME 입력(이름·채팅) | ⚠️ **미검증** — 합성 키 이벤트로는 한글이 들어가지 않아 자동 테스트 불가. 실기(폰/PC 브라우저)에서 사람이 확인해야 한다 |
