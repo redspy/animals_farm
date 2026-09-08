@@ -123,6 +123,10 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   assert.ok(!observer.messages.some((m) => m.t === 'chat' && m.text === '유령조작'),
     '교체된 옛 소켓의 조작이 새 세션에 적용됐다');
 
+  // **pause를 풀어 준다.** 안 풀면 close 프레임도 FIN도 읽지 못해 client의 30초
+  // _closeTimer가 이벤트 루프에 남고, 테스트는 통과하지만 **프로세스가 30초 뒤에야
+  // 끝난다**(실측: 이 파일 하나가 31초 — 리뷰 지적).
+  first._socket.resume();
   for (const s of [observer, first, second, third]) { try { s.close(); } catch { /* 이미 닫힘 */ } }
 });
 
