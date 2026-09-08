@@ -440,7 +440,7 @@ function handle(ws, msg) {
         resync: true,
       });
       sendTo(ws, { t: 'snapshot', ...world.snapshot() });
-    lastParkSent = null;   // 새 접속자에게 다음 변화가 반드시 가도록
+      lastParkSent = null;   // resync한 사람에게 다음 변화가 반드시 가도록
       break;
     }
     case 'appearance': {

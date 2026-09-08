@@ -85,6 +85,10 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   // (이걸 안 걸면 first는 이미 CLOSED라 ws가 send를 조용히 버려서, 관문을 지워도
   // 테스트가 통과하는 무효 검증이 된다 — 2026-09-08 리뷰 지적.)
   first._socket.pause();
+  // **성공 경로에만 resume을 두면 안 된다.** 아래 단정이 회귀를 잡아 던지는 순간
+  // paused 소켓이 남아 30초 종료 지연이 재발한다 — 실패했을 때가 정확히 사람이
+  // 결과를 빨리 봐야 하는 상황이다(리뷰 지적).
+  t.after(() => { try { first._socket.resume(); } catch { /* 이미 파괴됨 */ } });
 
   // 같은 토큰으로 다시 들어온다(폰이 절전에서 깨어나 재접속하는 상황).
   const second = await open(url);
@@ -123,10 +127,6 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   assert.ok(!observer.messages.some((m) => m.t === 'chat' && m.text === '유령조작'),
     '교체된 옛 소켓의 조작이 새 세션에 적용됐다');
 
-  // **pause를 풀어 준다.** 안 풀면 close 프레임도 FIN도 읽지 못해 client의 30초
-  // _closeTimer가 이벤트 루프에 남고, 테스트는 통과하지만 **프로세스가 30초 뒤에야
-  // 끝난다**(실측: 이 파일 하나가 31초 — 리뷰 지적).
-  first._socket.resume();
   for (const s of [observer, first, second, third]) { try { s.close(); } catch { /* 이미 닫힘 */ } }
 });
 
