@@ -1051,6 +1051,26 @@ test('프리셋도 목록 밖이면 무시한다(join·로드 양쪽)', () => {
   assert.equal(w.players.get(TOKEN_B).preset, [...w.presetIds][0], '정상 프리셋까지 버렸다');
 });
 
+test('목록 밖 값을 가진 사람도 다른 키는 바꿀 수 있다(가진 값과 같으면 통과)', () => {
+  // 클라이언트는 커밋 때 바꾸지 않은 키까지 포함해 custom 전체를 보낸다 —
+  // 저장된 값 중 목록 밖인 것이 있으면 요청 전체가 거절돼 "건드리지도 않은 키"의
+  // 오류가 뜨고 변경이 사라졌다(리뷰 지적). 오프라인 경로는 영구 소실이었다.
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '테스터', preset: [...w.presetIds][0] });
+  const p = w.players.get(TOKEN_A);
+  p.custom = { hair: '__개명된키__' };            // 로드에서 지켜진 목록 밖 값
+  const outfit = [...w.appearanceOptions.outfit][0];
+  // now를 충분히 뒤로 준다 — 간격 제한(APPEARANCE_MIN_INTERVAL_MS)에 걸린다.
+  const r = w.appearance(TOKEN_A, { hair: '__개명된키__', outfit }, 10_000);
+  assert.ok(!r.error, `옷 변경이 거절됐다: ${JSON.stringify(r.error)}`);
+  assert.equal(r.custom.outfit, outfit, '바꾼 값이 반영되지 않았다');
+  assert.equal(r.custom.hair, '__개명된키__', '가진 값이 사라졌다');
+  // **새 오염은 여전히 거절한다** — 가진 값과 다른 임의 문자열이면 막힌다.
+  const bad = w.appearance(TOKEN_A, { hair: '__다른임의값__', outfit }, 20_000);
+  assert.ok(bad.error, '임의 문자열이 통과했다');
+  assert.equal(bad.error.code, 'bad_appearance');
+});
+
 test('저장된 외형·프리셋은 로드에서 지켜지고 방송에서만 걸러진다', () => {
   // 로드에서 버리면 다음 save()가 확정해 되돌릴 수 없다 — 팔레트 키를 하나
   // 개명하면 그 색 쓰던 사람 전원의 꾸미기가 날아갔다(리뷰 지적). 그래서 저장은

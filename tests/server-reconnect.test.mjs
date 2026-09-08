@@ -7,7 +7,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
@@ -103,4 +103,53 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   assert.ok(moved, '재접속 후 이동이 남들에게 전달되지 않는다');
 
   for (const s of [observer, first, second, third]) { try { s.close(); } catch { /* 이미 닫힘 */ } }
+});
+
+test('welcome의 you는 목록 밖 외형도 원값으로 보낸다(남에게는 걸러진다)', async (t) => {
+  // 이 규약에 테스트가 없어서 "welcome도 걸러 보내자"는 회귀가 실제로 났다.
+  // 걸러 보내면 클라이언트가 그 값을 로컬 슬롯에 반영하고, 유저가 꾸미기를 한 번만
+  // 건드려도 서버의 appearance()가 통째 교체해 디스크에서 지킨 값이 사라진다.
+  const dir = mkdtempSync(join(tmpdir(), 'af-welcome-'));
+  const statePath = join(dir, 'state.json');
+  writeFileSync(statePath, JSON.stringify({
+    players: [{
+      token: DALLY, name: 'Dally', preset: 'f1', x: 0, z: 0, dir: 'down', bells: 0,
+      inventory: {}, custom: { hair: '__개명된키__' },
+    }],
+  }));
+  const port = PORT + 1;
+  const srv = spawn('node', ['server/index.js'], {
+    env: { ...process.env, PORT: String(port), TLS: 'off', HOST: '127.0.0.1', WORLD_STATE_PATH: statePath },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let srvLog = '';
+  srv.stdout.on('data', (d) => { srvLog += d.toString(); });
+  srv.stderr.on('data', (d) => { srvLog += d.toString(); });
+  t.after(() => srv.kill());
+  await new Promise((resolve, reject) => {
+    const check = () => { if (srvLog.includes('서버 기동')) resolve(); };
+    srv.stdout.on('data', check);
+    srv.on('exit', (code, sig) => reject(new Error(
+      `테스트 서버가 뜨지 못했다(code=${code}, sig=${sig})\n${srvLog}`)));
+    setTimeout(() => reject(new Error(`테스트 서버 기동 시간 초과\n${srvLog}`)), 8000).unref();
+    check();
+  });
+
+  const url = `ws://127.0.0.1:${port}/ws`;
+  const me = await open(url);
+  me.send(JSON.stringify({ t: 'join', token: DALLY, name: 'Dally', preset: 'f1' }));
+  const welcome = await waitFor(me, (m) => m.t === 'welcome');
+  assert.equal(welcome.you.custom.hair, '__개명된키__',
+    `welcome이 자기 외형을 걸러 보냈다: ${JSON.stringify(welcome.you.custom)}`);
+
+  // 남에게는 걸러져야 한다 — 방송 지점은 스냅샷·join 둘이다.
+  const other = await open(url);
+  other.send(JSON.stringify({ t: 'join', token: LATE, name: 'Late', preset: 'f1' }));
+  const snap = await waitFor(other, (m) => m.t === 'snapshot');
+  const row = (snap.players ?? []).find((p) => p.token === DALLY);
+  assert.ok(row, '스냅샷에 상대가 없다');
+  assert.equal(row.custom.hair, undefined,
+    `목록 밖 외형이 남의 스냅샷에 실렸다: ${JSON.stringify(row.custom)}`);
+
+  for (const sock of [me, other]) { try { sock.close(); } catch { /* 이미 닫힘 */ } }
 });

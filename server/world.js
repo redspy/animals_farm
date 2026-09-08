@@ -1475,6 +1475,20 @@ export class WorldState {
       if (custom[key] === undefined || custom[key] === null) continue;
       const value = String(custom[key]);
       if (!this.appearanceOptions[key].has(value)) {
+        // **지금 그 사람이 이미 갖고 있는 값과 똑같으면 통과시킨다.**
+        //
+        // 클라이언트는 커밋할 때 바꾸지 않은 키까지 포함해 `custom` 전체를 보낸다.
+        // 저장된 값 중 목록 밖인 것(팔레트 키 개명 등)이 있으면, 유저가 **옷만**
+        // 바꿔도 요청 전체가 거절돼 "자기가 건드리지도 않은 키 이름의 오류"가 뜨고
+        // 변경이 사라졌다 — 오프라인 경로는 `_pending_custom`을 전송 전에 지우므로
+        // 영구 소실이었다(리뷰 지적).
+        //
+        // 새 오염이 들어오지는 않는다: 클라이언트가 임의 문자열을 넣으면 저장된
+        // 값과 다르므로 여전히 거절된다.
+        if (p.custom && p.custom[key] !== undefined && String(p.custom[key]) === value) {
+          next[key] = value;
+          continue;
+        }
         return { error: { code: 'bad_appearance', message: `${key} 값이 목록에 없습니다` } };
       }
       next[key] = value;
@@ -1496,7 +1510,7 @@ export class WorldState {
     // "[object Object]"가 상태에 들어가 다음 save로 확정된다 — 주석이 밝힌
     // 유일한 정당한 개입("못 쓰는 형태")이 코드에서 빠져 있었다(리뷰 지적).
     if (typeof raw !== 'string' && typeof raw !== 'number') {
-      console.warn(`[world] ${who} 저장된 ${what}이 문자열이 아니라 비움: ${JSON.stringify(raw)}`);
+      console.warn(`[world] ${who} 저장된 ${what}이 문자열이 아니라 비움(이 값은 다음 저장에서 사라진다): ${JSON.stringify(raw)}`);
       return '';
     }
     const value = String(raw);
@@ -1516,7 +1530,7 @@ export class WorldState {
     for (const key of ['hair', 'skin', 'outfit']) {
       if (raw[key] === undefined || raw[key] === null) continue;
       if (typeof raw[key] !== 'string' && typeof raw[key] !== 'number') {
-        console.warn(`[world] ${who} 저장된 외형 ${key}가 문자열이 아니라 버림: ${JSON.stringify(raw[key])}`);
+        console.warn(`[world] ${who} 저장된 외형 ${key}가 문자열이 아니라 버림(다음 저장에서 사라진다): ${JSON.stringify(raw[key])}`);
         continue;
       }
       const value = String(raw[key]);
