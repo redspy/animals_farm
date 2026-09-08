@@ -102,6 +102,17 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   const moved = await waitFor(observer, (m) => m.t === 'move' && m.moves?.some((v) => v.token === DALLY));
   assert.ok(moved, '재접속 후 이동이 남들에게 전달되지 않는다');
 
+  // **교체된 옛 소켓의 조작은 무시돼야 한다.** `prev.close()`는 readyState를 즉시
+  // CLOSING으로 만들지만 close 이벤트는 다음 틱이라, 그 사이 옛 소켓의 큐잉된
+  // 메시지가 새 세션 상태를 바꾸던 창이 있었다 — 옛 좌표로 순간이동하고 옛
+  // 화면에서 고른 외형이 새 캐릭터에 적용됐다(2026-09-08 리뷰 지적).
+  observer.messages.length = 0;
+  try { first.send(JSON.stringify({ t: 'move', x: -12, z: -8, dir: 'up' })); } catch { /* 이미 닫힘 */ }
+  await new Promise((r) => setTimeout(r, 400));
+  const ghost = observer.messages.find(
+    (m) => m.t === 'move' && m.moves?.some((v) => v.token === DALLY && Math.abs(v.x + 12) < 0.5));
+  assert.ok(!ghost, '교체된 옛 소켓의 이동이 새 세션에 적용됐다');
+
   for (const s of [observer, first, second, third]) { try { s.close(); } catch { /* 이미 닫힘 */ } }
 });
 
