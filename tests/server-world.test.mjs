@@ -992,6 +992,27 @@ test('손상된 상태 파일의 가방 개수는 로드할 때 걸러진다', (
     `손상된 개수가 남았다: ${JSON.stringify(p.inventory)}`);
 });
 
+test('저장된 외형은 로드할 때 화이트리스트로 재검증된다', () => {
+  // 이 값은 스냅샷으로 전원에게 방송된다 — characters.json에서 색이 빠지면 옛
+  // 상태 파일이 없는 팔레트 키를 퍼뜨려 남의 화면에 마젠타가 뜬다(리뷰 지적).
+  const dir = mkdtempSync(join(tmpdir(), 'af-badcustom-'));
+  const statePath = join(dir, 'world.json');
+  writeFileSync(statePath, JSON.stringify({
+    players: [{
+      token: TOKEN_A, name: '테스터', preset: 'p1', x: 0, z: 0, dir: 'down', bells: 0,
+      inventory: {},
+      custom: { hair: '__없는키__', skin: null, outfit: 'outfit_yellow' },
+    }],
+  }));
+  const w = new WorldState({ statePath, persist: true });
+  const p = w.players.get(TOKEN_A);
+  assert.ok(p, '플레이어를 읽지 못했다');
+  assert.equal(p.custom.hair, undefined, '목록 밖 외형이 남았다');
+  // 목록에 있는 값은 지켜야 한다(전부 버리면 꾸미기가 초기화된다).
+  assert.ok(w.appearanceOptions.outfit.has('outfit_yellow'), '테스트 전제(화이트리스트)가 깨졌다');
+  assert.equal(p.custom.outfit, 'outfit_yellow', '정상 외형까지 버렸다');
+});
+
 test('클라이언트와 공유하는 상수가 갈리지 않았다', () => {
   // 목록을 테스트에 적지 않는다 — 등록소는 `server/world.js`의 CLIENT_SHARED이고
   // **값을 쓰는 자리와 등록하는 자리가 같다**. 예전에는 여기에 3개를 손으로

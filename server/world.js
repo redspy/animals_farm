@@ -162,12 +162,27 @@ function addBells(current, delta) {
  * 가방을 정화한다. 값은 **1 이상의 정수 개수**만 남기고, 나머지는 그 항목을 버린다.
  * (0 이하를 남기면 "가진 것처럼 보이는데 팔 수 없는" 줄이 가방에 생긴다.)
  */
-function sanitizeInventory(raw) {
-  if (!raw || typeof raw !== 'object') return {};
+function sanitizeInventory(raw, who = '') {
+  if (!raw || typeof raw !== 'object') {
+    if (raw !== undefined && raw !== null) {
+      console.warn(`[world] ${who} 가방이 객체가 아니라 비움: ${JSON.stringify(raw)}`);
+    }
+    return {};
+  }
   const out = {};
+  const dropped = [];
   for (const [id, value] of Object.entries(raw)) {
     const n = Math.floor(Number(value));
     if (Number.isFinite(n) && n > 0) out[id] = n;
+    else dropped.push(`${id}=${JSON.stringify(value)}`);
+  }
+  // **조용히 버리지 않는다.** 이 규칙은 문서가 못 박은 것이고(design.md §3
+  // "항상 바로잡고 항상 경고"), sell()도 같은 상황에서 경고 + unsold로 알린다.
+  // 직렬화가 깨지는 버그가 들어오면 재시작 한 번에 전원 가방이 흔적 없이 비는데
+  // 로그가 한 줄도 안 남는다 — 손실보다 **관측 가능성**을 잃는 쪽이 문제다
+  // (리뷰 지적).
+  if (dropped.length > 0) {
+    console.warn(`[world] ${who} 가방에서 개수가 잘못된 항목을 버림: ${dropped.join(', ')}`);
   }
   return out;
 }
@@ -1449,6 +1464,27 @@ export class WorldState {
     return { token, custom: next };
   }
 
+  /**
+   * 외형 값에서 **화이트리스트에 있는 것만** 남긴다. `appearance()`의 검증과 같은
+   * 목록을 쓰되, 그쪽은 요청을 **거절**하고 이쪽은 상태 파일을 읽는 경로라
+   * **버리고 알린다**(거절할 상대가 없다).
+   */
+  _sanitizeCustom(raw, who = '') {
+    if (!raw || typeof raw !== 'object') return {};
+    const out = {};
+    const dropped = [];
+    for (const key of ['hair', 'skin', 'outfit']) {
+      if (raw[key] === undefined || raw[key] === null) continue;
+      const value = String(raw[key]);
+      if (this.appearanceOptions[key].has(value)) out[key] = value;
+      else dropped.push(`${key}=${value}`);
+    }
+    if (dropped.length > 0) {
+      console.warn(`[world] ${who} 저장된 외형에서 목록 밖 값을 버림: ${dropped.join(', ')}`);
+    }
+    return out;
+  }
+
   // 클라이언트에 보낼 외형 목록(꾸미기 화면이 그대로 그린다).
   appearanceChoices() {
     return {
@@ -2164,14 +2200,17 @@ export class WorldState {
         // **개수까지 정화한다.** 객체 여부만 보면 `{"apple": "x"}` 같은 손상 값이
         // 그대로 살아남아 판매·정산에서 처음 드러난다 — 벨은 addBells로 다 막았는데
         // 가방만 방어가 없었다(리뷰 지적). 0 이하·비유한은 항목째 버린다.
-        inventory: sanitizeInventory(p.inventory),
+        inventory: sanitizeInventory(p.inventory, p.token),
         // addBells와 같은 규칙을 쓴다 — 로드 경로만 손으로 적어 두면 나중에
         // addBells에 상한을 넣을 때 여기만 갈린다(리뷰 지적).
         bells: addBells(p.bells, 0),
         // 없으면 빈 값 — 옛 상태 파일에는 이 필드가 없다(마이그레이션 불필요).
         npcDone: p.npcDone && typeof p.npcDone === 'object' ? p.npcDone : {},
         dex: p.dex && typeof p.dex === 'object' ? p.dex : {},
-        custom: p.custom && typeof p.custom === 'object' ? p.custom : {},
+        // **화이트리스트로 재검증한다.** 이 값은 스냅샷으로 전원에게 방송되므로,
+        // characters.json에서 프리셋·색이 빠지면 옛 상태 파일이 없는 팔레트 키를
+        // 퍼뜨려 남의 화면에 마젠타가 뜬다(리뷰 지적). 목록 밖 값은 버린다.
+        custom: this._sanitizeCustom(p.custom, p.token),
         online: false,
         lastMoveAt: 0, lastChatAt: 0, lastEmoteAt: 0, lastGatherAt: 0, lastSellAt: 0,
         lastNpcAt: 0,
