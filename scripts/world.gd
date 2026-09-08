@@ -2159,9 +2159,15 @@ func _talk_to(npc: Npc) -> void:
 		var need := int(req.get("count", 0))
 		var have := int((_slot.get("inventory", {}) as Dictionary).get(item_id, 0))
 		var label := _label_of(item_id)
-		if have >= need:
+		# 서버가 가격을 확정할 수 없으면 정산 자체를 거절한다(`bad_item_price`) —
+		# 버튼을 열어 두면 눌러 보고 에러 토스트를 받는다(도감의 "보상 미상"과
+		# 같은 사실을 대화창에서도 반영한다 — 리뷰 지적).
+		if have >= need and bool(state.get("rewardKnown", true)):
 			can_deliver = true
 			text = "%s\n%s" % [text, npc.dialogue("need", "%s %d개만!") % [label, need]]
+		elif have >= need:
+			text = "%s\n%s (가격 데이터가 잘못돼 지금은 받을 수 없어)" % [
+				text, npc.dialogue("need", "%s %d개만!") % [label, need]]
 		else:
 			# **몇 개 부족한지 숫자로** 알려준다 — "부족하다"만 말하면 가방
 			# 화면을 왕복하게 만든다.

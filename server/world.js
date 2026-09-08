@@ -115,6 +115,25 @@ function rangeOf(limits, key, where, fallback) {
   return fallback;
 }
 
+/**
+ * 벨을 더한다. **세 정산 경로(sell·npcDeliver·경주)가 모두 이 함수를 쓴다.**
+ *
+ * 폴백을 경로마다 따로 두다가 규칙이 갈렸다 — 하나는 손상된 벨을 유지하고
+ * (그래서 판 물건만 사라졌다), 다른 하나는 보상으로 복구하고, sell은 total 쪽
+ * 오버플로에서 벨을 Infinity로 덮었다. 게다가 유지된 NaN은 응답으로 나가고
+ * `JSON.stringify(NaN)`이 `null`이라, 받는 쪽 GDScript의 `get(key, 0)`이 키가
+ * 있다는 이유로 `int(null)`을 만들었다(2026-09-08 리뷰 지적).
+ *
+ * 그래서 폴백을 늘리는 대신 **입력을 정화한다**: 현재 벨이 유한하지 않으면 0으로
+ * 보고 더한다. 결과가 유한하지 않으면(더할 값 자체가 이상하면) 정화된 현재 값을
+ * 지킨다. 어느 경로든 **항상 유한한 정수**가 남는다.
+ */
+function addBells(current, delta) {
+  const cur = Number.isFinite(Number(current)) ? Number(current) : 0;
+  const next = cur + Number(delta);
+  return Number.isFinite(next) ? Math.max(0, Math.floor(next)) : Math.max(0, Math.floor(cur));
+}
+
 export class WorldState {
   constructor({ dataDir = join(REPO, 'data'), statePath = STATE_PATH, persist = true } = {}) {
     this.persistEnabled = persist;
@@ -1705,10 +1724,7 @@ export class WorldState {
       let reward = cfg.finishReward;
       if (!solo && r.rank <= cfg.rewards.length) reward = cfg.rewards[r.rank - 1];
       r.reward = reward;
-      // 다른 두 정산 경로(sell·npcDeliver)와 같은 가드를 쓴다. reward는 num()으로
-      // 클램프돼 유한하지만, 정산 경로마다 규칙이 다르면 다음에 또 한 곳이 빠진다.
-      const next = Number(p.bells) + reward;
-      p.bells = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : Math.max(0, Math.floor(reward));
+      p.bells = addBells(p.bells, reward);
     }
     this.race.phase = 'finished';
     this.race.endsAt = now + cfg.finishedSec * 1000;
@@ -1846,10 +1862,7 @@ export class WorldState {
     const left = have - request.count;
     if (left <= 0) delete p.inventory[request.item];
     else p.inventory[request.item] = left;
-    const next = Number(p.bells) + reward;
-    // 기존 벨이 이미 비유한이면 그것을 유지하면 **아이템 소비 + 부탁 소진 + 보상 0**
-    // 이 된다(sell과 같은 이유로 보상만이라도 남긴다 — 리뷰 지적).
-    p.bells = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : Math.max(0, Math.floor(reward));
+    p.bells = addBells(p.bells, reward);
     p.npcDone[npc.id] = today;
     this._markDirty();
     return {
@@ -2004,14 +2017,7 @@ export class WorldState {
     p.lastSellAt = now;
     // 정산 직전 마지막 방어 — 여기서 NaN이 들어가면 세이브에 그대로 남아
     // 재접속해도 복구되지 않는다(벨이 NaN인 캐릭터는 다시 못 고친다).
-    const next = Number(p.bells) + total;
-    // 기존 벨이 이미 비유한이면 그것을 유지하면 **판 물건만 사라진다** —
-    // 정산액만이라도 남긴다(_loadState가 벨을 정화하므로 도달은 어렵다).
-    p.bells = Number.isFinite(next)
-      ? Math.max(0, Math.floor(next))
-      // 비유한의 원인이 total 쪽이면(합산 오버플로) 폴백도 무한이 된다 —
-      // 그때는 기존 벨을 지키는 편이 낫다(리뷰 지적).
-      : (Number.isFinite(total) ? Math.max(0, Math.floor(total)) : p.bells);
+    p.bells = addBells(p.bells, total);
     this._markDirty();
     return { sold, total, bells: p.bells, inventory: p.inventory, unsold };
   }

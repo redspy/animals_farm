@@ -983,6 +983,12 @@ test('items.json의 모든 아이템이 price_range를 갖는다(데이터 린�
       && Number(r[0]) <= Number(r[1]));
   });
   assert.deepEqual(missing, [], `price_range가 없거나 형식이 잘못된 아이템: ${missing.join(', ')}`);
+  // **sell_price는 number 타입이어야 한다.** 서버는 `Number("100")`을 유한값으로
+  // 받아 팔고, 클라이언트(`world.gd::_price_of`)는 문자열이면 판매 목록에서
+  // 제외한다 — 숫자 문자열에서 판정이 갈린다(리뷰 지적). 양쪽 구현을 맞추는
+  // 대신 "있을 수 없는 데이터"로 만들어 차이를 무해하게 한다.
+  const notNumber = Object.keys(items).filter((id) => typeof items[id].sell_price !== 'number');
+  assert.deepEqual(notNumber, [], `sell_price가 number가 아닌 아이템: ${notNumber.join(', ')}`);
 });
 
 test('부탁 상태의 reward는 항상 숫자다(null이 클라로 새지 않는다)', () => {
@@ -999,6 +1005,20 @@ test('부탁 상태의 reward는 항상 숫자다(null이 클라로 새지 않�
     assert.equal(typeof st.reward, 'number', `${id}의 reward가 숫자가 아니다: ${st.reward}`);
     assert.ok(Number.isFinite(st.reward), `${id}의 reward가 유한하지 않다`);
     if (st.request) assert.equal(st.rewardKnown, false, `${id}이 가격 미상인데 known으로 나왔다`);
+  }
+  // **거절 응답에 실리는 state도 본다.** npcDeliver가 bad_item_price로 거절할 때
+  // 그 응답에도 state가 들어가고, 그것이 클라를 깨뜨린 경로였다(리뷰 지적).
+  const npc = [...w.npcs.values()][0];
+  const req = state[npc.id] && state[npc.id].request;
+  if (req) {
+    const p = w.players.get(token);
+    p.inventory[req.item] = req.count;
+    p.x = npc.x; p.z = npc.z;
+    const rejected = w.npcDeliver(token, npc.id);
+    assert.ok(rejected.error, '가격 미상 부탁이 정산됐다');
+    const st = rejected.state[npc.id];
+    assert.equal(typeof st.reward, 'number', `거절 응답의 reward가 숫자가 아니다: ${st.reward}`);
+    assert.equal(st.rewardKnown, false);
   }
   // 정상 데이터에서는 known이 true여야 한다(플래그가 항상 false면 의미가 없다).
   const ok = new WorldState({ persist: false });
