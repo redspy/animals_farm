@@ -435,7 +435,11 @@ function handle(ws, msg) {
       //
       // 자기에게는 계속 원값을 보낸다(걸러 보내면 로컬 슬롯이 걸러진 값으로 덮여
       // 19차가 막은 손실이 되살아난다 — docs/design.md §3).
-      sendTo(ws, { t: 'appearance', token: r.token, custom: r.custom });
+      // 대상은 **지금 그 토큰을 소유한 소켓**이다. `ws`(메시지가 온 소켓)로 보내면,
+      // 같은 토큰 소켓이 방금 교체된 좁은 창(join의 prev.close() 직후, close는 다음
+      // 틱)에서 옛 소켓의 요청이 처리될 때 자기 몫이 **아무 소켓에도 안 간다** —
+      // 아래 broadcast가 토큰으로 제외하므로 새 소켓도 못 받는다(리뷰 지적).
+      sendTo(sockets.get(r.token) ?? ws, { t: 'appearance', token: r.token, custom: r.custom });
       broadcast({
         t: 'appearance', token: r.token,
         custom: world.publicCustom(world.players.get(r.token)),
