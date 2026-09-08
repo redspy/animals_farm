@@ -79,6 +79,13 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   first.send(JSON.stringify({ t: 'join', token: DALLY, name: 'Dally', preset: 'f1' }));
   await waitFor(observer, (m) => m.t === 'join' && m.player?.token === DALLY);
 
+  // **옛 소켓이 서버의 close 프레임을 읽지 않게 한다.** 그러면 readyState가 OPEN으로
+  // 남아 send가 실제로 와이어에 나가고, 서버 쪽은 close 핸드셰이크가 끝날 때까지
+  // 그 프레임을 계속 message로 올린다 — 아래 "유령 조작" 검증이 성립하는 조건이다.
+  // (이걸 안 걸면 first는 이미 CLOSED라 ws가 send를 조용히 버려서, 관문을 지워도
+  // 테스트가 통과하는 무효 검증이 된다 — 2026-09-08 리뷰 지적.)
+  first._socket.pause();
+
   // 같은 토큰으로 다시 들어온다(폰이 절전에서 깨어나 재접속하는 상황).
   const second = await open(url);
   second.send(JSON.stringify({ t: 'join', token: DALLY, name: 'Dally', preset: 'f1' }));
@@ -102,16 +109,19 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   const moved = await waitFor(observer, (m) => m.t === 'move' && m.moves?.some((v) => v.token === DALLY));
   assert.ok(moved, '재접속 후 이동이 남들에게 전달되지 않는다');
 
-  // **교체된 옛 소켓의 조작은 무시돼야 한다.** `prev.close()`는 readyState를 즉시
-  // CLOSING으로 만들지만 close 이벤트는 다음 틱이라, 그 사이 옛 소켓의 큐잉된
-  // 메시지가 새 세션 상태를 바꾸던 창이 있었다 — 옛 좌표로 순간이동하고 옛
-  // 화면에서 고른 외형이 새 캐릭터에 적용됐다(2026-09-08 리뷰 지적).
+  // **교체된 옛 소켓의 조작은 무시돼야 한다.** `prev.close()` 뒤에도 서버는 피어의
+  // close 프레임이 오거나 closeTimeout(ws 기본 30초)이 될 때까지 들어오는 프레임을
+  // 계속 처리한다 — "다음 틱"이 아니라 최대 30초짜리 창이고, close 프레임을 안
+  // 돌려주는 죽은 클라이언트가 정확히 그 최악이다.
+  //
+  // 판정에 chat을 쓰는 이유: move는 속도 상한에 클램프되고(거부가 아니다) 간격
+  // 제한에도 걸려, 관문이 없어도 결과가 같아 보인다. 이 토큰의 첫 채팅은 두 제약이
+  // 모두 없어 관문 유무로 결과가 갈린다.
   observer.messages.length = 0;
-  try { first.send(JSON.stringify({ t: 'move', x: -12, z: -8, dir: 'up' })); } catch { /* 이미 닫힘 */ }
+  first.send(JSON.stringify({ t: 'chat', text: '유령조작' }));
   await new Promise((r) => setTimeout(r, 400));
-  const ghost = observer.messages.find(
-    (m) => m.t === 'move' && m.moves?.some((v) => v.token === DALLY && Math.abs(v.x + 12) < 0.5));
-  assert.ok(!ghost, '교체된 옛 소켓의 이동이 새 세션에 적용됐다');
+  assert.ok(!observer.messages.some((m) => m.t === 'chat' && m.text === '유령조작'),
+    '교체된 옛 소켓의 조작이 새 세션에 적용됐다');
 
   for (const s of [observer, first, second, third]) { try { s.close(); } catch { /* 이미 닫힘 */ } }
 });
