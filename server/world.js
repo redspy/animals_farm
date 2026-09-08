@@ -1486,55 +1486,79 @@ export class WorldState {
   }
 
   /**
-   * 프리셋 id가 목록에 있는지.
-   *
-   * `fromDisk`일 때만 **목록이 비어 있으면 통과시킨다.** 그 관대함이 필요한 이유는
-   * "이미 저장된 값을 데이터 사고로 잃지 않는 것"이고, 그건 로드 경로에만 해당한다
-   * — 요청 경로까지 열어 두면 characters.json이 깨진 동안 클라이언트가 임의
-   * 문자열을 보내 스냅샷·세이브에 박을 수 있다(preset에는 길이·문자셋 캡이 없고,
-   * 정상 운영에서는 화이트리스트가 그 캡 역할을 했다 — 리뷰 지적).
-   * `appearance()`가 목록이 비어도 거절하는 것과 같은 축으로 맞춘 것이다.
+   * 디스크에서 읽은 값을 **그대로 지키되 목록 밖이면 알린다.** 저장된 값을 고치는
+   * 유일한 정당한 이유는 "형태가 깨져서 못 쓰는 것"이고(가방 개수 등), 목록 밖은
+   * 데이터가 바뀐 것일 뿐이라 데이터를 되돌리면 그대로 복구돼야 한다.
    */
-  _sanitizePreset(raw, who = '?', { fromDisk = false } = {}) {
+  _keptFromDisk(raw, what, who = '?') {
     const value = String(raw || '');
-    if (value === '') return '';
-    if (this.presetIds.has(value)) return value;
-    if (fromDisk && this.presetIds.size === 0) return value;
-    console.warn(`[world] ${who} 프리셋이 목록에 없어 무시: ${value}`);
-    return '';
+    if (value === '' || this.presetIds.size === 0 || this.presetIds.has(value)) return value;
+    console.warn(`[world] ${who} 저장된 ${what}이 목록에 없다(값은 지키고 방송에서만 제외): ${value}`);
+    return value;
   }
 
-  /**
-   * 외형 값에서 **화이트리스트에 있는 것만** 남긴다. `appearance()`의 검증과 같은
-   * 목록을 쓰되, 그쪽은 요청을 **거절**하고 이쪽은 상태 파일을 읽는 경로라
-   * **버리고 알린다**(거절할 상대가 없다).
-   */
-  _sanitizeCustom(raw, who = '?') {
+  _keptCustomFromDisk(raw, who = '?') {
     if (raw === undefined || raw === null) return {};
     if (typeof raw !== 'object' || Array.isArray(raw)) {
-      // sanitizeInventory와 같은 규칙으로 알린다 — 두 정화가 갈리면 안 된다.
       console.warn(`[world] ${who} 저장된 외형이 객체가 아니라 비움: ${JSON.stringify(raw)}`);
       return {};
     }
     const out = {};
-    const dropped = [];
+    const outside = [];
     for (const key of ['hair', 'skin', 'outfit']) {
       if (raw[key] === undefined || raw[key] === null) continue;
       const value = String(raw[key]);
-      // **"목록이 없음"과 "목록 밖"은 다른 상황이다.** 화이트리스트가 비어 있는
-      // 것은 데이터 사고이지 그 값이 틀렸다는 뜻이 아니다 — 그때 버리면 멀쩡한
-      // 유저 값이 디스크에서 사라진다(리뷰 지적). 원값을 지키고 알린다.
-      if (this.appearanceOptions[key].size === 0) {
-        out[key] = value;
-        continue;
+      out[key] = value;
+      if (this.appearanceOptions[key].size > 0 && !this.appearanceOptions[key].has(value)) {
+        outside.push(`${key}=${value}`);
       }
-      if (this.appearanceOptions[key].has(value)) out[key] = value;
-      else dropped.push(`${key}=${value}`);
     }
-    if (dropped.length > 0) {
-      console.warn(`[world] ${who} 저장된 외형에서 목록 밖 값을 버림: ${dropped.join(', ')}`);
+    if (outside.length > 0) {
+      console.warn(`[world] ${who} 저장된 외형에 목록 밖 값이 있다(값은 지키고 방송에서만 제외): ${outside.join(', ')}`);
     }
     return out;
+  }
+
+  /**
+   * 남에게 보낼 프리셋/외형. **방송 시점에 거른다** — 저장된 값을 지키면서도
+   * 목록 밖 값이 남의 화면에 새지 않게 하는 지점은 여기뿐이다(팔레트에 없는 키는
+   * 마젠타로 그려진다).
+   */
+  publicPreset(p) {
+    const value = String((p && p.preset) || '');
+    if (value === '' || this.presetIds.size === 0 || this.presetIds.has(value)) return value;
+    return '';
+  }
+
+  publicCustom(p) {
+    const raw = (p && p.custom) || {};
+    const out = {};
+    for (const key of ['hair', 'skin', 'outfit']) {
+      const value = raw[key];
+      if (value === undefined || value === null) continue;
+      const str = String(value);
+      if (this.appearanceOptions[key].size === 0 || this.appearanceOptions[key].has(str)) out[key] = str;
+    }
+    return out;
+  }
+
+  /**
+   * 프리셋 id가 목록에 있는지.
+   *
+   * **요청 경로 전용**이고 목록이 비어 있어도 거절한다 — 열어 두면
+   * characters.json이 깨진 동안 클라이언트가 임의 문자열을 보내 스냅샷·세이브에
+   * 박을 수 있다(preset에는 길이·문자셋 캡이 없고, 정상 운영에서는 화이트리스트가
+   * 그 캡 역할을 했다). `appearance()`가 목록이 비어도 거절하는 것과 같은 축이다.
+   *
+   * 디스크에서 읽는 경로는 반대다 — `_keptFromDisk`가 값을 지키고 방송에서만
+   * 거른다(저장된 값을 버리면 다음 save가 확정해 되돌릴 수 없다).
+   */
+  _sanitizePreset(raw, who = '?') {
+    const value = String(raw || '');
+    if (value === '') return '';
+    if (this.presetIds.has(value)) return value;
+    console.warn(`[world] ${who} 프리셋이 목록에 없어 무시: ${value}`);
+    return '';
   }
 
   // 클라이언트에 보낼 외형 목록(꾸미기 화면이 그대로 그린다).
@@ -2155,11 +2179,12 @@ export class WorldState {
     for (const p of this.players.values()) {
       if (!p.online) continue;
       players.push({
-        token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir,
+        token: p.token, name: p.name, preset: this.publicPreset(p), x: p.x, z: p.z, dir: p.dir,
         activity: p.activity || '', trick: p.trick || '',
         // **외형도 스냅샷에 싣는다.** 없으면 나중에 들어온 사람에게는 바뀐
         // 외형이 안 보인다(놓치기 쉬운 부분이라 테스트에 명시했다).
-        custom: p.custom || {},
+        // 목록 밖 값은 여기서 걸러진다(저장은 원값을 지킨다).
+        custom: this.publicCustom(p),
       });
     }
     return {
@@ -2246,7 +2271,12 @@ export class WorldState {
       this.players.set(p.token, {
         token: p.token,
         name: this.sanitizeName(p.name),
-        preset: this._sanitizePreset(p.preset, shortToken(p.token), { fromDisk: true }),
+        // **로드는 원값을 지킨다.** 목록 밖이라고 여기서 버리면 다음 save()가
+        // 확정해 되돌릴 수 없다 — characters.json에서 id 하나만 바뀌어도 그
+        // 프리셋 쓰던 사람의 값이 사라졌고, join 가드로는 못 막았다(목록 변경은
+        // 재시작이 필요하고, 재시작하면 로드가 먼저 돈다 — 리뷰 지적).
+        // 대신 **방송에서 걸러**(publicPreset) 남의 화면에 새지 않게 한다.
+        preset: this._keptFromDisk(p.preset, 'preset', shortToken(p.token)),
         x: pos.x, z: pos.z,
         dir: ['up', 'down', 'left', 'right'].includes(p.dir) ? p.dir : 'down',
         // **개수까지 정화한다.** 객체 여부만 보면 `{"apple": "x"}` 같은 손상 값이
@@ -2262,7 +2292,9 @@ export class WorldState {
         // **화이트리스트로 재검증한다.** 이 값은 스냅샷으로 전원에게 방송되므로,
         // characters.json에서 프리셋·색이 빠지면 옛 상태 파일이 없는 팔레트 키를
         // 퍼뜨려 남의 화면에 마젠타가 뜬다(리뷰 지적). 목록 밖 값은 버린다.
-        custom: this._sanitizeCustom(p.custom, shortToken(p.token)),
+        // 외형도 같은 규칙 — 저장은 원값, 방송은 publicCustom이 거른다. 팔레트 키
+        // 하나를 개명했을 때 그 색 쓰던 사람 전원의 꾸미기가 날아가던 경로다.
+        custom: this._keptCustomFromDisk(p.custom, shortToken(p.token)),
         online: false,
         lastMoveAt: 0, lastChatAt: 0, lastEmoteAt: 0, lastGatherAt: 0, lastSellAt: 0,
         lastNpcAt: 0,

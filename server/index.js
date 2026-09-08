@@ -316,13 +316,13 @@ function handle(ws, msg) {
     sendTo(ws, {
       t: 'welcome',
       you: {
-        token: p.token, name: p.name, preset: p.preset,
+        token: p.token, name: p.name, preset: world.publicPreset(p),
         x: p.x, z: p.z, dir: p.dir,
         inventory: p.inventory, bells: p.bells,
         // 이웃의 부탁과 도감은 **내 진행도**라 나에게만 보낸다(남에게 방송할
         // 이유가 없고, 방송하면 스냅샷이 인원수만큼 커진다).
         npc: world.npcState(ws.token), dex: p.dex || {},
-        custom: p.custom || {},
+        custom: world.publicCustom(p),
         // 꾸미기 화면이 그릴 선택지(프리셋에서 유도한 화이트리스트).
         appearanceChoices: world.appearanceChoices(),
       },
@@ -341,8 +341,8 @@ function handle(ws, msg) {
     broadcast({
       t: 'join',
       player: {
-        token: p.token, name: p.name, preset: p.preset, x: p.x, z: p.z, dir: p.dir,
-        custom: p.custom || {},
+        token: p.token, name: p.name, preset: world.publicPreset(p), x: p.x, z: p.z, dir: p.dir,
+        custom: world.publicCustom(p),
         activity: p.activity || '', trick: p.trick || '',
       },
     }, p.token);

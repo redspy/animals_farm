@@ -1051,25 +1051,35 @@ test('프리셋도 목록 밖이면 무시한다(join·로드 양쪽)', () => {
   assert.equal(w.players.get(TOKEN_B).preset, [...w.presetIds][0], '정상 프리셋까지 버렸다');
 });
 
-test('저장된 외형은 로드할 때 화이트리스트로 재검증된다', () => {
-  // 이 값은 스냅샷으로 전원에게 방송된다 — characters.json에서 색이 빠지면 옛
-  // 상태 파일이 없는 팔레트 키를 퍼뜨려 남의 화면에 마젠타가 뜬다(리뷰 지적).
-  const dir = mkdtempSync(join(tmpdir(), 'af-badcustom-'));
-  const statePath = join(dir, 'world.json');
+test('저장된 외형·프리셋은 로드에서 지켜지고 방송에서만 걸러진다', () => {
+  // 로드에서 버리면 다음 save()가 확정해 되돌릴 수 없다 — 팔레트 키를 하나
+  // 개명하면 그 색 쓰던 사람 전원의 꾸미기가 날아갔다(리뷰 지적). 그래서 저장은
+  // 원값을 지키고, 남의 화면에 마젠타가 새는 것은 **방송 시점**에 막는다.
+  const dir = mkdtempSync(join(tmpdir(), 'af-keepcustom-'));
+  const statePath = join(dir, 'state.json');
   writeFileSync(statePath, JSON.stringify({
     players: [{
-      token: TOKEN_A, name: '테스터', preset: 'f1', x: 0, z: 0, dir: 'down', bells: 0,
-      inventory: {},
-      custom: { hair: '__없는키__', skin: null, outfit: 'outfit_yellow' },
+      token: TOKEN_A, name: '테스터', preset: '__없어진프리셋__', x: 0, z: 0, dir: 'down',
+      bells: 0, inventory: {},
+      custom: { hair: '__없어진키__', outfit: 'outfit_yellow' },
     }],
   }));
   const w = new WorldState({ statePath, persist: true });
   const p = w.players.get(TOKEN_A);
   assert.ok(p, '플레이어를 읽지 못했다');
-  assert.equal(p.custom.hair, undefined, '목록 밖 외형이 남았다');
-  // 목록에 있는 값은 지켜야 한다(전부 버리면 꾸미기가 초기화된다).
-  assert.ok(w.appearanceOptions.outfit.has('outfit_yellow'), '테스트 전제(화이트리스트)가 깨졌다');
-  assert.equal(p.custom.outfit, 'outfit_yellow', '정상 외형까지 버렸다');
+  // 1) 저장된 값은 그대로 (데이터를 되돌리면 복구된다)
+  assert.equal(p.preset, '__없어진프리셋__', '로드가 프리셋을 버렸다');
+  assert.equal(p.custom.hair, '__없어진키__', '로드가 외형을 버렸다');
+  // 2) 방송에는 나가지 않는다
+  assert.equal(w.publicPreset(p), '', '목록 밖 프리셋이 방송에 실렸다');
+  assert.deepEqual(w.publicCustom(p), { outfit: 'outfit_yellow' },
+    `목록 밖 외형이 방송에 실렸다: ${JSON.stringify(w.publicCustom(p))}`);
+  // 3) 스냅샷도 같은 형태여야 한다(방송 지점이 한 곳이 아니다)
+  p.online = true;
+  const snap = w.snapshot().players.find((row) => row.token === TOKEN_A);
+  assert.ok(snap, '스냅샷에 플레이어가 없다');
+  assert.equal(snap.preset, '');
+  assert.deepEqual(snap.custom, { outfit: 'outfit_yellow' });
 });
 
 test('클라이언트와 공유하는 상수가 갈리지 않았다', () => {
