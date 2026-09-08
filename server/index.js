@@ -316,13 +316,19 @@ function handle(ws, msg) {
     sendTo(ws, {
       t: 'welcome',
       you: {
-        token: p.token, name: p.name, preset: world.publicPreset(p),
+        // **자기 자신에게는 원값을 보낸다.** 걸러 보내면 클라이언트가 그 값을
+        // 로컬 슬롯에 반영하고, 유저가 꾸미기를 한 번만 건드려도 `appearance()`가
+        // p.custom을 통째 교체해 **디스크에서 지켰던 값이 서버에서도 사라진다**
+        // — "데이터를 되돌리면 복구된다"는 보증이 그때 깨진다(리뷰 지적).
+        // 자기 화면에 마젠타가 보이는 것은 감수한다(그게 고칠 신호이고, 유저가
+        // 다시 고르면 정당한 덮어쓰기다). resync welcome도 같은 형태다.
+        token: p.token, name: p.name, preset: p.preset,
         x: p.x, z: p.z, dir: p.dir,
         inventory: p.inventory, bells: p.bells,
         // 이웃의 부탁과 도감은 **내 진행도**라 나에게만 보낸다(남에게 방송할
         // 이유가 없고, 방송하면 스냅샷이 인원수만큼 커진다).
         npc: world.npcState(ws.token), dex: p.dex || {},
-        custom: world.publicCustom(p),
+        custom: p.custom || {},
         // 꾸미기 화면이 그릴 선택지(프리셋에서 유도한 화이트리스트).
         appearanceChoices: world.appearanceChoices(),
       },

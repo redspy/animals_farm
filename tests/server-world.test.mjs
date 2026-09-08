@@ -1074,7 +1074,23 @@ test('저장된 외형·프리셋은 로드에서 지켜지고 방송에서만 �
   assert.equal(w.publicPreset(p), '', '목록 밖 프리셋이 방송에 실렸다');
   assert.deepEqual(w.publicCustom(p), { outfit: 'outfit_yellow' },
     `목록 밖 외형이 방송에 실렸다: ${JSON.stringify(w.publicCustom(p))}`);
-  // 3) 스냅샷도 같은 형태여야 한다(방송 지점이 한 곳이 아니다)
+  // 3) 형태가 깨진 값은 지키지 않는다(주석이 밝힌 유일한 개입)
+  //    — "[object Object]"가 상태에 들어가 다음 save로 확정되는 것을 막는다.
+  const dir2 = mkdtempSync(join(tmpdir(), 'af-badshape-'));
+  const statePath2 = join(dir2, 'state.json');
+  writeFileSync(statePath2, JSON.stringify({
+    players: [{
+      token: TOKEN_B, name: '테스터2', preset: { id: 'f1' }, x: 0, z: 0, dir: 'down',
+      bells: 0, inventory: {}, custom: { hair: ['a'], outfit: 'outfit_yellow' },
+    }],
+  }));
+  const w2 = new WorldState({ statePath: statePath2, persist: true });
+  const p2 = w2.players.get(TOKEN_B);
+  assert.equal(p2.preset, '', '깨진 형태의 프리셋이 그대로 남았다');
+  assert.equal(p2.custom.hair, undefined, '깨진 형태의 외형 값이 남았다');
+  assert.equal(p2.custom.outfit, 'outfit_yellow', '정상 값까지 버렸다');
+
+  // 4) 스냅샷도 같은 형태여야 한다(방송 지점이 한 곳이 아니다)
   p.online = true;
   const snap = w.snapshot().players.find((row) => row.token === TOKEN_A);
   assert.ok(snap, '스냅샷에 플레이어가 없다');

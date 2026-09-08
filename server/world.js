@@ -1491,7 +1491,15 @@ export class WorldState {
    * 데이터가 바뀐 것일 뿐이라 데이터를 되돌리면 그대로 복구돼야 한다.
    */
   _keptFromDisk(raw, what, who = '?') {
-    const value = String(raw || '');
+    if (raw === undefined || raw === null) return '';
+    // **형태가 깨진 값은 지키지 않는다.** `preset: {}`을 String()에 넣으면
+    // "[object Object]"가 상태에 들어가 다음 save로 확정된다 — 주석이 밝힌
+    // 유일한 정당한 개입("못 쓰는 형태")이 코드에서 빠져 있었다(리뷰 지적).
+    if (typeof raw !== 'string' && typeof raw !== 'number') {
+      console.warn(`[world] ${who} 저장된 ${what}이 문자열이 아니라 비움: ${JSON.stringify(raw)}`);
+      return '';
+    }
+    const value = String(raw);
     if (value === '' || this.presetIds.size === 0 || this.presetIds.has(value)) return value;
     console.warn(`[world] ${who} 저장된 ${what}이 목록에 없다(값은 지키고 방송에서만 제외): ${value}`);
     return value;
@@ -1507,6 +1515,10 @@ export class WorldState {
     const outside = [];
     for (const key of ['hair', 'skin', 'outfit']) {
       if (raw[key] === undefined || raw[key] === null) continue;
+      if (typeof raw[key] !== 'string' && typeof raw[key] !== 'number') {
+        console.warn(`[world] ${who} 저장된 외형 ${key}가 문자열이 아니라 버림: ${JSON.stringify(raw[key])}`);
+        continue;
+      }
       const value = String(raw[key]);
       out[key] = value;
       if (this.appearanceOptions[key].size > 0 && !this.appearanceOptions[key].has(value)) {
