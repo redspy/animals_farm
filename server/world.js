@@ -1705,7 +1705,10 @@ export class WorldState {
       let reward = cfg.finishReward;
       if (!solo && r.rank <= cfg.rewards.length) reward = cfg.rewards[r.rank - 1];
       r.reward = reward;
-      p.bells = Math.max(0, Math.floor(p.bells + reward));
+      // 다른 두 정산 경로(sell·npcDeliver)와 같은 가드를 쓴다. reward는 num()으로
+      // 클램프돼 유한하지만, 정산 경로마다 규칙이 다르면 다음에 또 한 곳이 빠진다.
+      const next = Number(p.bells) + reward;
+      p.bells = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : Math.max(0, Math.floor(reward));
     }
     this.race.phase = 'finished';
     this.race.endsAt = now + cfg.finishedSec * 1000;
@@ -1775,10 +1778,17 @@ export class WorldState {
     for (const npc of this.npcs.values()) {
       const request = this.npcRequest(token, npc.id, now);
       const done = !!(p && p.npcDone && p.npcDone[npc.id] === today);
+      // **reward는 항상 숫자로 내보낸다.** npcReward가 null을 돌려주게 되면서
+      // 이 값이 그대로 나갔는데, 이 state는 welcome·snapshot·모든 거절 응답에
+      // 실린다 — 받는 쪽 GDScript의 `Dictionary.get(key, 0)`은 **키가 없을 때만**
+      // 기본값을 주므로 JSON null이 그대로 `int(null)`로 들어가 도감 이웃 탭이
+      // 깨졌다(리뷰 지적). 가격을 모른다는 사실은 rewardKnown으로 따로 알린다.
+      const reward = request ? this.npcReward(request) : 0;
       out[npc.id] = {
         done,
         request: request ? { item: request.item, count: request.count } : null,
-        reward: request ? this.npcReward(request) : 0,
+        reward: reward === null ? 0 : reward,
+        rewardKnown: reward !== null,
       };
     }
     return out;
@@ -1837,7 +1847,9 @@ export class WorldState {
     if (left <= 0) delete p.inventory[request.item];
     else p.inventory[request.item] = left;
     const next = Number(p.bells) + reward;
-    p.bells = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : p.bells;
+    // 기존 벨이 이미 비유한이면 그것을 유지하면 **아이템 소비 + 부탁 소진 + 보상 0**
+    // 이 된다(sell과 같은 이유로 보상만이라도 남긴다 — 리뷰 지적).
+    p.bells = Number.isFinite(next) ? Math.max(0, Math.floor(next)) : Math.max(0, Math.floor(reward));
     p.npcDone[npc.id] = today;
     this._markDirty();
     return {
@@ -1997,7 +2009,9 @@ export class WorldState {
     // 정산액만이라도 남긴다(_loadState가 벨을 정화하므로 도달은 어렵다).
     p.bells = Number.isFinite(next)
       ? Math.max(0, Math.floor(next))
-      : Math.max(0, Math.floor(total));
+      // 비유한의 원인이 total 쪽이면(합산 오버플로) 폴백도 무한이 된다 —
+      // 그때는 기존 벨을 지키는 편이 낫다(리뷰 지적).
+      : (Number.isFinite(total) ? Math.max(0, Math.floor(total)) : p.bells);
     this._markDirty();
     return { sold, total, bells: p.bells, inventory: p.inventory, unsold };
   }

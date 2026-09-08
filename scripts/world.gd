@@ -223,8 +223,10 @@ var _resume_timer := 0.0
 var _resume_token := -1
 ## 재동기화에서 "위치가 맞았다"고 볼 거리(월드 단위).
 const RESYNC_TOLERANCE := 0.35
-## 서버가 끊긴 동안 채집한 것. 다시 붙으면 서버로 흘려보낸다 — 안 하면 서버의
-## welcome이 로컬 가방을 덮어써 오프라인 채집이 사라진다(docs/protocol.md §4).
+## 서버가 끊긴 동안 채집한 것. **다시 붙으면 버린다** — 서버 채집은 "어느 채집물을
+## 캤는지"를 사거리·재생 시간으로 검증하는 구조라 뒤늦게 보내면 그 검증이
+## 무의미해진다(`_on_net_opened`). 조용히 버리지 않고 토스트로 알린다.
+## 예전 주석은 "서버로 흘려보낸다"였는데 구현이 바뀐 뒤에도 남아 있었다.
 var _pending_gathers: Dictionary = {}
 
 ## main.gd가 슬롯을 고른 뒤 호출한다.
@@ -867,8 +869,19 @@ func _price_of(item_id: String) -> int:
 		push_warning("data/items.json에 없는 아이템: %s — 판매 제외" % item_id)
 		return -1
 	var meta: Dictionary = _items[item_id]
+	# **서버 priceOf와 같은 판정이어야 한다.** 예전에는 `float("비쌈") == 0.0`을
+	# 그대로 클램프해 "개당 0벨"로 보여 주고 판매 버튼도 열어 뒀는데, 서버는 그
+	# 아이템을 팔지 않고 가방에 남긴다 — 화면이 서버와 다른 말을 했다(리뷰 지적).
+	var raw: Variant = meta.get("sell_price", 0)
+	if typeof(raw) != TYPE_INT and typeof(raw) != TYPE_FLOAT:
+		push_warning("%s의 sell_price가 숫자가 아니라 판매 제외: %s" % [item_id, str(raw)])
+		return -1
+	var price := float(raw)
+	if not is_finite(price):
+		push_warning("%s의 sell_price가 유한하지 않아 판매 제외: %s" % [item_id, str(raw)])
+		return -1
 	return int(Balance.clamp_value(
-		float(meta.get("sell_price", 0)),
+		price,
 		meta.get("price_range", null),
 		"%s.sell_price" % item_id,
 		"price"

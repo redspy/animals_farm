@@ -985,6 +985,30 @@ test('items.json의 모든 아이템이 price_range를 갖는다(데이터 린�
   assert.deepEqual(missing, [], `price_range가 없거나 형식이 잘못된 아이템: ${missing.join(', ')}`);
 });
 
+test('부탁 상태의 reward는 항상 숫자다(null이 클라로 새지 않는다)', () => {
+  // npcReward가 null을 돌려주게 되면서 이 값이 welcome·snapshot·모든 거절 응답에
+  // 실려 나갔다. 받는 쪽 GDScript의 Dictionary.get(key, 0)은 **키가 없을 때만**
+  // 기본값을 주므로 JSON null이 그대로 int(null)로 들어가 도감이 깨졌다(리뷰 지적).
+  const w = worldWithItems('af-npcnull-', (items) => {
+    for (const id of Object.keys(items.items)) items.items[id].sell_price = '비쌈';
+  });
+  const token = TOKEN_A;
+  w.join({ token, name: '테스터', preset: 'p1' });
+  const state = w.npcState(token);
+  for (const [id, st] of Object.entries(state)) {
+    assert.equal(typeof st.reward, 'number', `${id}의 reward가 숫자가 아니다: ${st.reward}`);
+    assert.ok(Number.isFinite(st.reward), `${id}의 reward가 유한하지 않다`);
+    if (st.request) assert.equal(st.rewardKnown, false, `${id}이 가격 미상인데 known으로 나왔다`);
+  }
+  // 정상 데이터에서는 known이 true여야 한다(플래그가 항상 false면 의미가 없다).
+  const ok = new WorldState({ persist: false });
+  ok.join({ token, name: '테스터', preset: 'p1' });
+  const okState = ok.npcState(token);
+  const withReq = Object.values(okState).find((st) => st.request);
+  assert.ok(withReq && withReq.rewardKnown === true && withReq.reward > 0,
+    '정상 데이터에서 보상이 확정되지 않았다');
+});
+
 test('부탁 아이템의 가격을 확정할 수 없으면 소비하지 않고 거절한다', () => {
   // `null * count * 1.8`이 0이 되어 조용히 보상 0으로 정산됐고, npcDeliver는
   // 아이템을 지우고 그날 부탁까지 완료로 찍었다 — 되돌릴 수 없는 손실이었다.

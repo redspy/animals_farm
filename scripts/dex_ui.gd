@@ -234,9 +234,15 @@ func _fill() -> void:
 			var req := request as Dictionary
 			var item_id := String(req.get("item", ""))
 			var meta: Dictionary = _items_meta.get(item_id, {})
-			status = "%s %d개 부탁 중 (보상 %d벨)" % [
-				String(meta.get("label", item_id)), int(req.get("count", 0)),
-				int(state.get("reward", 0))]
+			# 서버가 가격을 확정할 수 없으면 금액을 지어내지 않는다 — 그 상태에서는
+			# 정산 자체가 거절되므로(`bad_item_price`) "보상 미상"이 사실이다.
+			if bool(state.get("rewardKnown", true)):
+				status = "%s %d개 부탁 중 (보상 %d벨)" % [
+					String(meta.get("label", item_id)), int(req.get("count", 0)),
+					int(state.get("reward", 0))]
+			else:
+				status = "%s %d개 부탁 중 (보상 미상 — 가격 데이터 확인 필요)" % [
+					String(meta.get("label", item_id)), int(req.get("count", 0))]
 		row.text = "%s — %s" % [String(npc.get("label", npc_id)), status]
 		_npc_box.add_child(row)
 		_hooks.track("dexNpc%d" % n_index, row)
