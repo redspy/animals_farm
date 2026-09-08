@@ -16,14 +16,36 @@ const REPO = join(__dirname, '..');
 const STATE_DIR = join(__dirname, 'data');
 const STATE_PATH = join(STATE_DIR, 'world.json');
 
+/**
+ * **클라이언트와 같은 값이어야 하는 상수의 등록소.** 키는 `<파일>:<상수 이름>`이고,
+ * `tests/server-world.test.mjs`가 이 객체를 돌며 그 파일의 `const X := 값`을 읽어
+ * 대조한다 — 테스트에 목록을 따로 적지 않으므로 **값을 쓰는 자리와 등록하는 자리가
+ * 같다**(손으로 관리하는 목록은 새 항목을 넣고 갱신을 잊는 쪽이 잊기 쉽다).
+ *
+ * 데이터로 빼지 않은 이유: 이동·충돌·사거리 판정의 기본값이라 데이터 로드 전에
+ * 필요하다. 한쪽만 바꾸면 "버튼은 보이는데 서버가 거부하는" 구간이 생긴다.
+ *
+ * ⚠️ 여기 없는 짝: `CAROUSEL_SLOT_INSET`(0.75)은 클라이언트 `park.gd`가 **데이터에서
+ * 읽고 같은 값을 폴백으로만** 쓴다(`get("slot_inset", 0.75)`). `const` 선언이 아니라
+ * 정규식으로 대조할 수 없고, 데이터에 키가 있는 한 양쪽이 같은 값을 읽으므로
+ * 폴백끼리만 갈릴 수 있다 — 위험이 낮아 등록하지 않는다.
+ */
+export const CLIENT_SHARED = {
+  'scripts/player.gd:SPEED': 4.2,
+  'scripts/player.gd:RADIUS': 0.35,
+  'scripts/player.gd:SEPARATION': 0.8,
+  'scripts/gatherable.gd:INTERACT_DISTANCE': 1.6,
+};
+
 export const LIMITS = {
   NAME_MAX: 12,
   CHAT_MAX: 200,
   // 클라이언트 이동속도(player.gd SPEED=4.2)의 1.6배. 정확한 시뮬레이션이
   // 아니라 순간이동/속도핵 완화용 상한이다.
-  // 걷기 속도. 클라이언트(Player.SPEED)·활동 속도 폴백·상한이 모두 이 값에서
-  // 파생돼야 한다 — 여러 곳에 4.2를 따로 적어 두면 하나만 고쳐도 알 수 없다.
-  WALK_SPEED: 4.2,
+  // 걷기 속도. 활동 속도 폴백·상한이 모두 이 값에서 파생돼야 한다 — 여러 곳에
+  // 4.2를 따로 적어 두면 하나만 고쳐도 알 수 없다. 클라이언트와의 일치는
+  // CLIENT_SHARED가 등록하고 테스트가 강제한다.
+  WALK_SPEED: CLIENT_SHARED['scripts/player.gd:SPEED'],
   // 지터 여유 1.6배. 활동 속도에도 같은 비율을 적용한다(speedCapOf).
   SPEED_TOLERANCE: 1.6,
   // 걷기 상한(= 아무 운동도 하지 않을 때). 리터럴로 두면 WALK_SPEED와 갈린다.
@@ -50,11 +72,13 @@ export const LIMITS = {
   CHAT_MIN_INTERVAL_MS: 500,  // 초당 2건
   EMOTE_MIN_INTERVAL_MS: 500,
   MAX_WORLD_ITEMS: 300,
-  // 채집 사거리(클라이언트 Gatherable.INTERACT_DISTANCE = 1.6)에 네트워크
-  // 지연 여유를 더한 값. 딱 1.6으로 하면 정상 플레이도 간헐적으로 거부된다.
-  GATHER_RANGE: 1.6 + 0.7,
-  // 캐릭터끼리 유지할 최소 간격(클라이언트 Player.SEPARATION과 같은 값).
-  SEPARATION: 0.8,
+  // 채집 사거리 = 클라이언트 사거리 + 네트워크 지연 여유. 딱 클라이언트 값으로
+  // 하면 정상 플레이도 간헐적으로 거부된다. **클라이언트 값을 파생시킨다** —
+  // 예전에는 1.6을 리터럴로 적어 둬서, gatherable.gd를 2.4로 올려도 서버 테스트가
+  // 전부 통과하고 "버튼은 보이는데 눌러도 안 되는" 구간만 생겼다(리뷰 지적).
+  GATHER_RANGE: CLIENT_SHARED['scripts/gatherable.gd:INTERACT_DISTANCE'] + 0.7,
+  // 캐릭터끼리 유지할 최소 간격(클라이언트와의 일치는 CLIENT_SHARED가 강제한다).
+  SEPARATION: CLIENT_SHARED['scripts/player.gd:SEPARATION'],
   SELL_MIN_INTERVAL_MS: 400,
   // 새 캐릭터를 스폰 지점에 그대로 놓으면 모두 한 점에 겹친다. 접속 순서에
   // 따라 링 위로 흩어 놓는다 — 무작위가 아니라 **결정적**이어야 테스트가
@@ -71,7 +95,7 @@ export const LIMITS = {
   RIDE_LEASH: 0.6,
   // 캐릭터 반지름(클라이언트 Player.RADIUS와 같은 값) — 밀림·경계·좌석 검증이
   // 모두 이 값을 쓴다. 리터럴로 흩뿌리면 한쪽만 고쳐도 알 수 없다.
-  AGENT_RADIUS: 0.35,
+  AGENT_RADIUS: CLIENT_SHARED['scripts/player.gd:RADIUS'],
 };
 
 /**
@@ -132,6 +156,20 @@ function addBells(current, delta) {
   const cur = Number.isFinite(Number(current)) ? Number(current) : 0;
   const next = cur + Number(delta);
   return Number.isFinite(next) ? Math.max(0, Math.floor(next)) : Math.max(0, Math.floor(cur));
+}
+
+/**
+ * 가방을 정화한다. 값은 **1 이상의 정수 개수**만 남기고, 나머지는 그 항목을 버린다.
+ * (0 이하를 남기면 "가진 것처럼 보이는데 팔 수 없는" 줄이 가방에 생긴다.)
+ */
+function sanitizeInventory(raw) {
+  if (!raw || typeof raw !== 'object') return {};
+  const out = {};
+  for (const [id, value] of Object.entries(raw)) {
+    const n = Math.floor(Number(value));
+    if (Number.isFinite(n) && n > 0) out[id] = n;
+  }
+  return out;
 }
 
 export class WorldState {
@@ -2123,8 +2161,13 @@ export class WorldState {
         preset: String(p.preset || ''),
         x: pos.x, z: pos.z,
         dir: ['up', 'down', 'left', 'right'].includes(p.dir) ? p.dir : 'down',
-        inventory: p.inventory && typeof p.inventory === 'object' ? p.inventory : {},
-        bells: Number.isFinite(Number(p.bells)) ? Math.max(0, Math.floor(Number(p.bells))) : 0,
+        // **개수까지 정화한다.** 객체 여부만 보면 `{"apple": "x"}` 같은 손상 값이
+        // 그대로 살아남아 판매·정산에서 처음 드러난다 — 벨은 addBells로 다 막았는데
+        // 가방만 방어가 없었다(리뷰 지적). 0 이하·비유한은 항목째 버린다.
+        inventory: sanitizeInventory(p.inventory),
+        // addBells와 같은 규칙을 쓴다 — 로드 경로만 손으로 적어 두면 나중에
+        // addBells에 상한을 넣을 때 여기만 갈린다(리뷰 지적).
+        bells: addBells(p.bells, 0),
         // 없으면 빈 값 — 옛 상태 파일에는 이 필드가 없다(마이그레이션 불필요).
         npcDone: p.npcDone && typeof p.npcDone === 'object' ? p.npcDone : {},
         dex: p.dex && typeof p.dex === 'object' ? p.dex : {},

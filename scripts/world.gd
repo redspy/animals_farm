@@ -158,7 +158,9 @@ var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화�
 var _custom: Dictionary = {}
 var _appearance_choices: Dictionary = {}
 var _look_ui: AppearanceUI = null
-## 서버가 없을 때 바꾼 외형 — 재접속하면 흘려보낸다(_pending_gathers와 같은 결).
+## 서버가 없을 때 바꾼 외형 — 재접속하면 **실제로 흘려보낸다**(외형은 뒤늦게 보내도
+## 검증할 것이 화이트리스트뿐이라 안전하다). `_pending_gathers`는 반대로 버린다 —
+## 채집은 사거리·재생 시간 검증이 걸려 있어 뒤늦게 보내면 그 검증이 무의미해진다.
 var _pending_custom: Dictionary = {}
 
 ## 달리기 경주 상태(서버가 소유). 국면·참가자 진행·남은 시간을 그린다.

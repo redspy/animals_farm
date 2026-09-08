@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WorldState, LIMITS } from '../server/world.js';
+import { WorldState, LIMITS, CLIENT_SHARED } from '../server/world.js';
 
 // 서버 규칙(docs/protocol.md §3) 테스트. 전송(WebSocket)과 분리돼 있어 소켓
 // 없이 규칙만 검증할 수 있다. persist:false로 디스크를 건드리지 않는다.
@@ -971,6 +971,47 @@ function joinedWith(w, itemId, count = 3, bells = 100) {
   return { token, p };
 }
 
+test('손상된 상태 파일의 가방 개수는 로드할 때 걸러진다', () => {
+  // 벨은 addBells로 세 정산 경로 + 로드까지 막았는데 가방은 객체 여부만 봤다 —
+  // `{"apple": "x"}`가 그대로 살아남아 판매·정산에서 처음 드러났다(리뷰 지적).
+  const dir = mkdtempSync(join(tmpdir(), 'af-badinv-'));
+  const statePath = join(dir, 'world.json');
+  writeFileSync(statePath, JSON.stringify({
+    players: [{
+      token: TOKEN_A, name: '테스터', preset: 'p1', x: 0, z: 0, dir: 'down',
+      bells: 'NaN아님',
+      inventory: { wood: '3', shell: 'x', weed: 0, stone: -2, ok: 2.9 },
+    }],
+  }));
+  // _loadState는 persist가 켜져 있을 때만 돈다(생성자).
+  const w = new WorldState({ statePath, persist: true });
+  const p = w.players.get(TOKEN_A);
+  assert.ok(p, '플레이어를 읽지 못했다');
+  assert.equal(p.bells, 0, '숫자가 아닌 벨이 정화되지 않았다');
+  assert.deepEqual(p.inventory, { wood: 3, ok: 2 },
+    `손상된 개수가 남았다: ${JSON.stringify(p.inventory)}`);
+});
+
+test('클라이언트와 공유하는 상수가 갈리지 않았다', () => {
+  // 목록을 테스트에 적지 않는다 — 등록소는 `server/world.js`의 CLIENT_SHARED이고
+  // **값을 쓰는 자리와 등록하는 자리가 같다**. 예전에는 여기에 3개를 손으로
+  // 적어 뒀는데, 서버가 스스로 "클라이언트와 같아야 한다"고 주석에 적어 둔
+  // GATHER_RANGE(= gatherable.gd의 INTERACT_DISTANCE)가 빠져 있었다 —
+  // gatherable.gd를 1.6 → 2.4로 올려도 서버 테스트는 전부 통과하고, 런타임에서만
+  // "버튼은 보이는데 서버가 거부하는" 구간이 생겼다(리뷰 지적).
+  const entries = Object.entries(CLIENT_SHARED);
+  assert.ok(entries.length >= 4, `CLIENT_SHARED가 비었거나 줄었다(${entries.length}개)`);
+  for (const [key, expected] of entries) {
+    const [file, name] = key.split(':');
+    assert.ok(file && name, `등록 키 형식이 "<파일>:<상수>"가 아니다: ${key}`);
+    const src = readFileSync(file, 'utf-8');
+    const m = src.match(new RegExp(`const ${name}\\s*:=\\s*(-?[0-9.]+)`));
+    assert.ok(m, `${file}에서 const ${name}을 찾지 못했다 — 이름이 바뀌었으면 CLIENT_SHARED를 고칠 것`);
+    assert.equal(Number(m[1]), expected,
+      `${file}의 ${name}=${m[1]} vs server CLIENT_SHARED=${expected} — 한쪽만 바뀌면 판정이 갈린다`);
+  }
+});
+
 test('items.json의 모든 아이템이 price_range를 갖는다(데이터 린트)', () => {
   // 범위가 없으면 서버는 폴백 [0, 1000000]을 쓰는데, 그건 "출처"가 아니라 마지막
   // 안전장치다. 새 아이템에서 빠뜨리면 사실상 아무 상한도 없는 상태가 되고,
@@ -1015,7 +1056,11 @@ test('부탁 상태의 reward는 항상 숫자다(null이 클라로 새지 않�
     p.inventory[req.item] = req.count;
     p.x = npc.x; p.z = npc.z;
     const rejected = w.npcDeliver(token, npc.id);
-    assert.ok(rejected.error, '가격 미상 부탁이 정산됐다');
+    // **에러 코드를 고정한다.** `assert.ok(error)`만 두면 not_enough나 rate_limited로
+    // 먼저 걸려도 초록불이고, 정작 회귀시키려던 bad_item_price 경로는 커버가
+    // 조용히 사라진다(리뷰 지적).
+    assert.equal(rejected.error.code, 'bad_item_price',
+      `기대한 거절 사유가 아니다: ${rejected.error.code}`);
     const st = rejected.state[npc.id];
     assert.equal(typeof st.reward, 'number', `거절 응답의 reward가 숫자가 아니다: ${st.reward}`);
     assert.equal(st.rewardKnown, false);
