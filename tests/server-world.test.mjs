@@ -992,6 +992,43 @@ test('손상된 상태 파일의 가방 개수는 로드할 때 걸러진다', (
     `손상된 개수가 남았다: ${JSON.stringify(p.inventory)}`);
 });
 
+test('화이트리스트가 비면(데이터 사고) 저장된 외형을 버리지 않는다', () => {
+  // 로드에서 버린 값은 save()가 그대로 덮어써 **디스크에서 사라진다**.
+  // characters.json이 깨지면 readJson이 조용히 빈 폴백을 쓰므로, "목록 밖"과
+  // "목록이 없음"을 구분하지 않으면 데이터 사고가 전원 외형 영구 손실로
+  // 승격된다(리뷰 지적).
+  const dir = mkdtempSync(join(tmpdir(), 'af-nopreset-'));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(dir, name), readFileSync(join('data', name)));
+  }
+  writeFileSync(join(dir, 'characters.json'), '{ 깨진 JSON');
+  const statePath = join(dir, 'world.json');
+  writeFileSync(statePath, JSON.stringify({
+    players: [{
+      token: TOKEN_A, name: '테스터', preset: 'p1', x: 0, z: 0, dir: 'down', bells: 0,
+      inventory: {}, custom: { hair: 'hair_black', outfit: 'outfit_yellow' },
+    }],
+  }));
+  const w = new WorldState({ dataDir: dir, statePath, persist: true });
+  assert.equal(w.presetIds.size, 0, '테스트 전제(빈 화이트리스트)가 깨졌다');
+  const p = w.players.get(TOKEN_A);
+  assert.ok(p, '플레이어를 읽지 못했다');
+  assert.deepEqual(p.custom, { hair: 'hair_black', outfit: 'outfit_yellow' },
+    `데이터 사고에 유저 외형이 지워졌다: ${JSON.stringify(p.custom)}`);
+  assert.equal(p.preset, 'p1', '프리셋까지 지워졌다');
+});
+
+test('프리셋도 목록 밖이면 무시한다(join·로드 양쪽)', () => {
+  const w = fresh();
+  const r = w.join({ token: TOKEN_A, name: '테스터', preset: '__없는프리셋__' });
+  assert.ok(!r.error, `join이 거절됐다: ${JSON.stringify(r.error)}`);
+  assert.equal(w.players.get(TOKEN_A).preset, '', '목록 밖 프리셋이 저장됐다');
+  const ok = w.join({ token: TOKEN_B, name: '테스터2', preset: [...w.presetIds][0] });
+  assert.ok(!ok.error);
+  assert.equal(w.players.get(TOKEN_B).preset, [...w.presetIds][0], '정상 프리셋까지 버렸다');
+});
+
 test('저장된 외형은 로드할 때 화이트리스트로 재검증된다', () => {
   // 이 값은 스냅샷으로 전원에게 방송된다 — characters.json에서 색이 빠지면 옛
   // 상태 파일이 없는 팔레트 키를 퍼뜨려 남의 화면에 마젠타가 뜬다(리뷰 지적).

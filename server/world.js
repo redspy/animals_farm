@@ -162,7 +162,13 @@ function addBells(current, delta) {
  * 가방을 정화한다. 값은 **1 이상의 정수 개수**만 남기고, 나머지는 그 항목을 버린다.
  * (0 이하를 남기면 "가진 것처럼 보이는데 팔 수 없는" 줄이 가방에 생긴다.)
  */
-function sanitizeInventory(raw, who = '') {
+/** 로그용 토큰 축약 — 서버 로그는 보관·반출 경로가 달라 원문을 찍지 않는다. */
+function shortToken(token) {
+  const t = String(token || '');
+  return t ? `${t.slice(0, 8)}…` : '?';
+}
+
+function sanitizeInventory(raw, who = '?') {
   if (!raw || typeof raw !== 'object') {
     if (raw !== undefined && raw !== null) {
       console.warn(`[world] ${who} 가방이 객체가 아니라 비움: ${JSON.stringify(raw)}`);
@@ -582,10 +588,20 @@ export class WorldState {
     // characters.json을 늘려도 서버가 안 따라온다(확장 지점이 거짓말이 된다).
     const charCfg = readJson(join(dataDir, 'characters.json'), { presets: [] });
     this.appearanceOptions = { hair: new Set(), skin: new Set(), outfit: new Set() };
+    this.presetIds = new Set();
     for (const preset of charCfg.presets || []) {
+      if (preset && preset.id) this.presetIds.add(String(preset.id));
       for (const key of ['hair', 'skin', 'outfit']) {
         if (preset[key]) this.appearanceOptions[key].add(String(preset[key]));
       }
+    }
+    // **데이터가 비었으면 크게 알린다.** readJson은 파싱 실패에 조용히 폴백하므로
+    // (그게 서버를 띄우기 위한 선택이다) 이 경고가 유일한 신호다. 화이트리스트가
+    // 비면 아래 정화들이 "목록 밖"과 "목록이 없음"을 구분해야 한다 — 구분하지
+    // 않으면 데이터 사고가 **플레이어 데이터 영구 손실로 승격된다**(리뷰 지적:
+    // 로드에서 버린 값을 save()가 그대로 덮어써 되돌릴 수 없다).
+    if (this.presetIds.size === 0) {
+      console.error('[world] characters.json에서 프리셋을 읽지 못했습니다 — 외형·프리셋 검증을 건너뜁니다(저장된 값은 그대로 지킵니다)');
     }
 
     const emoteCfg = readJson(join(dataDir, 'emotes.json'), { emotes: [] });
@@ -734,7 +750,7 @@ export class WorldState {
       p = {
         token,
         name: cleanName,
-        preset: String(preset || ''),
+        preset: this._sanitizePreset(preset, shortToken(token)),
         x: pos.x,
         z: pos.z,
         dir: 'down',
@@ -768,7 +784,7 @@ export class WorldState {
       // 재접속: 이름/외형은 클라이언트가 보낸 최신 값으로 갱신하되 위치와
       // 인벤토리는 서버 기록이 우선이다(docs/protocol.md §4).
       p.name = cleanName;
-      if (preset) p.preset = String(preset);
+      if (preset) p.preset = this._sanitizePreset(preset, shortToken(token));
       // **운동 상태는 초기화한다.** 새로 들어온 클라이언트는 아무 운동도 하지
       // 않는 상태로 시작하므로, 서버가 옛 상태를 들고 있으면 남들 화면에는
       // 계속 자전거를 탄 모습이 보이고 **서버 이동 상한도 자전거로 열려 있다**
@@ -1465,17 +1481,42 @@ export class WorldState {
   }
 
   /**
+   * 프리셋 id가 목록에 있는지. **목록이 비어 있으면(데이터 사고) 통과시킨다** —
+   * custom과 같은 이유다. custom은 요청·로드 양쪽에서 막는데 preset은 둘 다
+   * 열려 있어 방어가 비대칭이었다(리뷰 지적).
+   */
+  _sanitizePreset(raw, who = '?') {
+    const value = String(raw || '');
+    if (value === '') return '';
+    if (this.presetIds.size === 0 || this.presetIds.has(value)) return value;
+    console.warn(`[world] ${who} 프리셋이 목록에 없어 무시: ${value}`);
+    return '';
+  }
+
+  /**
    * 외형 값에서 **화이트리스트에 있는 것만** 남긴다. `appearance()`의 검증과 같은
    * 목록을 쓰되, 그쪽은 요청을 **거절**하고 이쪽은 상태 파일을 읽는 경로라
    * **버리고 알린다**(거절할 상대가 없다).
    */
-  _sanitizeCustom(raw, who = '') {
-    if (!raw || typeof raw !== 'object') return {};
+  _sanitizeCustom(raw, who = '?') {
+    if (raw === undefined || raw === null) return {};
+    if (typeof raw !== 'object' || Array.isArray(raw)) {
+      // sanitizeInventory와 같은 규칙으로 알린다 — 두 정화가 갈리면 안 된다.
+      console.warn(`[world] ${who} 저장된 외형이 객체가 아니라 비움: ${JSON.stringify(raw)}`);
+      return {};
+    }
     const out = {};
     const dropped = [];
     for (const key of ['hair', 'skin', 'outfit']) {
       if (raw[key] === undefined || raw[key] === null) continue;
       const value = String(raw[key]);
+      // **"목록이 없음"과 "목록 밖"은 다른 상황이다.** 화이트리스트가 비어 있는
+      // 것은 데이터 사고이지 그 값이 틀렸다는 뜻이 아니다 — 그때 버리면 멀쩡한
+      // 유저 값이 디스크에서 사라진다(리뷰 지적). 원값을 지키고 알린다.
+      if (this.appearanceOptions[key].size === 0) {
+        out[key] = value;
+        continue;
+      }
       if (this.appearanceOptions[key].has(value)) out[key] = value;
       else dropped.push(`${key}=${value}`);
     }
@@ -2194,13 +2235,13 @@ export class WorldState {
       this.players.set(p.token, {
         token: p.token,
         name: this.sanitizeName(p.name),
-        preset: String(p.preset || ''),
+        preset: this._sanitizePreset(p.preset, shortToken(p.token)),
         x: pos.x, z: pos.z,
         dir: ['up', 'down', 'left', 'right'].includes(p.dir) ? p.dir : 'down',
         // **개수까지 정화한다.** 객체 여부만 보면 `{"apple": "x"}` 같은 손상 값이
         // 그대로 살아남아 판매·정산에서 처음 드러난다 — 벨은 addBells로 다 막았는데
         // 가방만 방어가 없었다(리뷰 지적). 0 이하·비유한은 항목째 버린다.
-        inventory: sanitizeInventory(p.inventory, p.token),
+        inventory: sanitizeInventory(p.inventory, shortToken(p.token)),
         // addBells와 같은 규칙을 쓴다 — 로드 경로만 손으로 적어 두면 나중에
         // addBells에 상한을 넣을 때 여기만 갈린다(리뷰 지적).
         bells: addBells(p.bells, 0),
@@ -2210,7 +2251,7 @@ export class WorldState {
         // **화이트리스트로 재검증한다.** 이 값은 스냅샷으로 전원에게 방송되므로,
         // characters.json에서 프리셋·색이 빠지면 옛 상태 파일이 없는 팔레트 키를
         // 퍼뜨려 남의 화면에 마젠타가 뜬다(리뷰 지적). 목록 밖 값은 버린다.
-        custom: this._sanitizeCustom(p.custom, p.token),
+        custom: this._sanitizeCustom(p.custom, shortToken(p.token)),
         online: false,
         lastMoveAt: 0, lastChatAt: 0, lastEmoteAt: 0, lastGatherAt: 0, lastSellAt: 0,
         lastNpcAt: 0,
