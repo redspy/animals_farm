@@ -964,7 +964,7 @@ function worldWithItems(prefix, mutate) {
 
 function joinedWith(w, itemId, count = 3, bells = 100) {
   const token = TOKEN_A;
-  w.join({ token, name: '테스터', preset: 'p1' });
+  w.join({ token, name: '테스터', preset: 'f1' });
   const p = w.players.get(token);
   p.inventory[itemId] = count;
   p.bells = bells;
@@ -978,7 +978,7 @@ test('손상된 상태 파일의 가방 개수는 로드할 때 걸러진다', (
   const statePath = join(dir, 'world.json');
   writeFileSync(statePath, JSON.stringify({
     players: [{
-      token: TOKEN_A, name: '테스터', preset: 'p1', x: 0, z: 0, dir: 'down',
+      token: TOKEN_A, name: '테스터', preset: 'f1', x: 0, z: 0, dir: 'down',
       bells: 'NaN아님',
       inventory: { wood: '3', shell: 'x', weed: 0, stone: -2, ok: 2.9 },
     }],
@@ -1003,10 +1003,15 @@ test('화이트리스트가 비면(데이터 사고) 저장된 외형을 버리�
     writeFileSync(join(dir, name), readFileSync(join('data', name)));
   }
   writeFileSync(join(dir, 'characters.json'), '{ 깨진 JSON');
-  const statePath = join(dir, 'world.json');
+  // **상태 파일 이름을 world.json으로 두면 안 된다** — 생성자가 dataDir의
+  // world.json(월드 설정)을 먼저 읽으므로 방금 복사한 설정을 덮어써 섬 크기·운동장
+  // 설정이 사라진 가짜 월드에서 돌게 된다(리뷰 지적). 운영에서는 상태가
+  // server/data/world.json, 설정이 <repo>/data/world.json으로 디렉터리가 달라
+  // 겹치지 않는다.
+  const statePath = join(dir, 'state.json');
   writeFileSync(statePath, JSON.stringify({
     players: [{
-      token: TOKEN_A, name: '테스터', preset: 'p1', x: 0, z: 0, dir: 'down', bells: 0,
+      token: TOKEN_A, name: '테스터', preset: 'f1', x: 0, z: 0, dir: 'down', bells: 0,
       inventory: {}, custom: { hair: 'hair_black', outfit: 'outfit_yellow' },
     }],
   }));
@@ -1016,7 +1021,24 @@ test('화이트리스트가 비면(데이터 사고) 저장된 외형을 버리�
   assert.ok(p, '플레이어를 읽지 못했다');
   assert.deepEqual(p.custom, { hair: 'hair_black', outfit: 'outfit_yellow' },
     `데이터 사고에 유저 외형이 지워졌다: ${JSON.stringify(p.custom)}`);
-  assert.equal(p.preset, 'p1', '프리셋까지 지워졌다');
+  assert.equal(p.preset, 'f1', '프리셋까지 지워졌다');
+});
+
+test('정상 프리셋은 저장·로드 왕복에서 살아남고, 무효값이 그것을 지우지 않는다', () => {
+  // 이번 변경 전에는 (a) 정상 preset의 왕복을 보는 테스트가 없었고,
+  // (b) 재접속에서 목록 밖 값이 저장된 정상값을 ''로 덮었다(리뷰 지적).
+  const dir = mkdtempSync(join(tmpdir(), 'af-preset-'));
+  const statePath = join(dir, 'state.json');
+  const valid = [...new WorldState({ persist: false }).presetIds][0];
+  const w = new WorldState({ statePath, persist: true });
+  w.join({ token: TOKEN_A, name: '테스터', preset: valid });
+  assert.equal(w.players.get(TOKEN_A).preset, valid);
+  // 재접속에서 무효값을 보내도 기존 값이 남아야 한다.
+  w.join({ token: TOKEN_A, name: '테스터', preset: '__없는프리셋__' });
+  assert.equal(w.players.get(TOKEN_A).preset, valid, '무효값이 저장된 프리셋을 지웠다');
+  w.save();
+  const reloaded = new WorldState({ statePath, persist: true });
+  assert.equal(reloaded.players.get(TOKEN_A).preset, valid, '로드 왕복에서 프리셋이 사라졌다');
 });
 
 test('프리셋도 목록 밖이면 무시한다(join·로드 양쪽)', () => {
@@ -1036,7 +1058,7 @@ test('저장된 외형은 로드할 때 화이트리스트로 재검증된다', 
   const statePath = join(dir, 'world.json');
   writeFileSync(statePath, JSON.stringify({
     players: [{
-      token: TOKEN_A, name: '테스터', preset: 'p1', x: 0, z: 0, dir: 'down', bells: 0,
+      token: TOKEN_A, name: '테스터', preset: 'f1', x: 0, z: 0, dir: 'down', bells: 0,
       inventory: {},
       custom: { hair: '__없는키__', skin: null, outfit: 'outfit_yellow' },
     }],
@@ -1098,7 +1120,7 @@ test('부탁 상태의 reward는 항상 숫자다(null이 클라로 새지 않�
     for (const id of Object.keys(items.items)) items.items[id].sell_price = '비쌈';
   });
   const token = TOKEN_A;
-  w.join({ token, name: '테스터', preset: 'p1' });
+  w.join({ token, name: '테스터', preset: 'f1' });
   const state = w.npcState(token);
   for (const [id, st] of Object.entries(state)) {
     assert.equal(typeof st.reward, 'number', `${id}의 reward가 숫자가 아니다: ${st.reward}`);
@@ -1125,7 +1147,7 @@ test('부탁 상태의 reward는 항상 숫자다(null이 클라로 새지 않�
   }
   // 정상 데이터에서는 known이 true여야 한다(플래그가 항상 false면 의미가 없다).
   const ok = new WorldState({ persist: false });
-  ok.join({ token, name: '테스터', preset: 'p1' });
+  ok.join({ token, name: '테스터', preset: 'f1' });
   const okState = ok.npcState(token);
   const withReq = Object.values(okState).find((st) => st.request);
   assert.ok(withReq && withReq.rewardKnown === true && withReq.reward > 0,
@@ -1139,7 +1161,7 @@ test('부탁 아이템의 가격을 확정할 수 없으면 소비하지 않고 
     for (const id of Object.keys(items.items)) items.items[id].sell_price = '비쌈';
   });
   const token = TOKEN_A;
-  w.join({ token, name: '테스터', preset: 'p1' });
+  w.join({ token, name: '테스터', preset: 'f1' });
   const p = w.players.get(token);
   const npc = [...w.npcs.values()][0];
   const state = w.npcState(token);

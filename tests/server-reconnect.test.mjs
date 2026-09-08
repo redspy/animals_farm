@@ -72,16 +72,16 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
   const url = `ws://127.0.0.1:${PORT}/ws`;
   // 관찰자 — 남의 화면에서 어떻게 보이는지를 이 소켓으로 판정한다.
   const observer = await open(url);
-  observer.send(JSON.stringify({ t: 'join', token: WATCHER, name: 'Watcher', preset: 'p1' }));
+  observer.send(JSON.stringify({ t: 'join', token: WATCHER, name: 'Watcher', preset: 'f1' }));
   await waitFor(observer, (m) => m.t === 'welcome');
 
   const first = await open(url);
-  first.send(JSON.stringify({ t: 'join', token: DALLY, name: 'Dally', preset: 'p1' }));
+  first.send(JSON.stringify({ t: 'join', token: DALLY, name: 'Dally', preset: 'f1' }));
   await waitFor(observer, (m) => m.t === 'join' && m.player?.token === DALLY);
 
   // 같은 토큰으로 다시 들어온다(폰이 절전에서 깨어나 재접속하는 상황).
   const second = await open(url);
-  second.send(JSON.stringify({ t: 'join', token: DALLY, name: 'Dally', preset: 'p1' }));
+  second.send(JSON.stringify({ t: 'join', token: DALLY, name: 'Dally', preset: 'f1' }));
   await waitFor(second, (m) => m.t === 'welcome');
 
   // 옛 소켓의 close가 서버에 도착할 시간을 준다(서버가 직접 끊는다).
@@ -92,7 +92,7 @@ test('같은 토큰으로 다시 들어오면 캐릭터가 사라지지 않는�
 
   // 서버 상태에도 남아 있어야 한다: 새 스냅샷에 보이는지로 확인한다.
   const third = await open(url);
-  third.send(JSON.stringify({ t: 'join', token: LATE, name: 'Late', preset: 'p1' }));
+  third.send(JSON.stringify({ t: 'join', token: LATE, name: 'Late', preset: 'f1' }));
   const snap = await waitFor(third, (m) => m.t === 'snapshot');
   const names = (snap.players ?? []).map((p) => p.token);
   assert.ok(names.includes(DALLY), `스냅샷에 재접속한 캐릭터가 없다: ${names.join(',')}`);

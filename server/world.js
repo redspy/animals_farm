@@ -158,16 +158,16 @@ function addBells(current, delta) {
   return Number.isFinite(next) ? Math.max(0, Math.floor(next)) : Math.max(0, Math.floor(cur));
 }
 
-/**
- * 가방을 정화한다. 값은 **1 이상의 정수 개수**만 남기고, 나머지는 그 항목을 버린다.
- * (0 이하를 남기면 "가진 것처럼 보이는데 팔 수 없는" 줄이 가방에 생긴다.)
- */
 /** 로그용 토큰 축약 — 서버 로그는 보관·반출 경로가 달라 원문을 찍지 않는다. */
 function shortToken(token) {
   const t = String(token || '');
   return t ? `${t.slice(0, 8)}…` : '?';
 }
 
+/**
+ * 가방을 정화한다. 값은 **1 이상의 정수 개수**만 남기고, 나머지는 그 항목을 버린다.
+ * (0 이하를 남기면 "가진 것처럼 보이는데 팔 수 없는" 줄이 가방에 생긴다.)
+ */
 function sanitizeInventory(raw, who = '?') {
   if (!raw || typeof raw !== 'object') {
     if (raw !== undefined && raw !== null) {
@@ -784,7 +784,12 @@ export class WorldState {
       // 재접속: 이름/외형은 클라이언트가 보낸 최신 값으로 갱신하되 위치와
       // 인벤토리는 서버 기록이 우선이다(docs/protocol.md §4).
       p.name = cleanName;
-      if (preset) p.preset = this._sanitizePreset(preset, shortToken(token));
+      // **무효값으로 기존 값을 지우지 않는다.** `if (preset)`은 "클라가 안 보냈으면
+      // 건드리지 말자"는 뜻이었는데, 정화가 목록 밖에 ''를 돌려주게 되면서
+      // "보냈는데 무효면 지움"이 됐다 — characters.json에서 id 하나만 바뀌어도 그
+      // 프리셋 쓰던 사람이 재접속하는 순간 디스크에서 확정됐다(리뷰 지적).
+      const nextPreset = this._sanitizePreset(preset, shortToken(token));
+      if (nextPreset) p.preset = nextPreset;
       // **운동 상태는 초기화한다.** 새로 들어온 클라이언트는 아무 운동도 하지
       // 않는 상태로 시작하므로, 서버가 옛 상태를 들고 있으면 남들 화면에는
       // 계속 자전거를 탄 모습이 보이고 **서버 이동 상한도 자전거로 열려 있다**
@@ -1481,14 +1486,20 @@ export class WorldState {
   }
 
   /**
-   * 프리셋 id가 목록에 있는지. **목록이 비어 있으면(데이터 사고) 통과시킨다** —
-   * custom과 같은 이유다. custom은 요청·로드 양쪽에서 막는데 preset은 둘 다
-   * 열려 있어 방어가 비대칭이었다(리뷰 지적).
+   * 프리셋 id가 목록에 있는지.
+   *
+   * `fromDisk`일 때만 **목록이 비어 있으면 통과시킨다.** 그 관대함이 필요한 이유는
+   * "이미 저장된 값을 데이터 사고로 잃지 않는 것"이고, 그건 로드 경로에만 해당한다
+   * — 요청 경로까지 열어 두면 characters.json이 깨진 동안 클라이언트가 임의
+   * 문자열을 보내 스냅샷·세이브에 박을 수 있다(preset에는 길이·문자셋 캡이 없고,
+   * 정상 운영에서는 화이트리스트가 그 캡 역할을 했다 — 리뷰 지적).
+   * `appearance()`가 목록이 비어도 거절하는 것과 같은 축으로 맞춘 것이다.
    */
-  _sanitizePreset(raw, who = '?') {
+  _sanitizePreset(raw, who = '?', { fromDisk = false } = {}) {
     const value = String(raw || '');
     if (value === '') return '';
-    if (this.presetIds.size === 0 || this.presetIds.has(value)) return value;
+    if (this.presetIds.has(value)) return value;
+    if (fromDisk && this.presetIds.size === 0) return value;
     console.warn(`[world] ${who} 프리셋이 목록에 없어 무시: ${value}`);
     return '';
   }
@@ -2235,7 +2246,7 @@ export class WorldState {
       this.players.set(p.token, {
         token: p.token,
         name: this.sanitizeName(p.name),
-        preset: this._sanitizePreset(p.preset, shortToken(p.token)),
+        preset: this._sanitizePreset(p.preset, shortToken(p.token), { fromDisk: true }),
         x: pos.x, z: pos.z,
         dir: ['up', 'down', 'left', 'right'].includes(p.dir) ? p.dir : 'down',
         // **개수까지 정화한다.** 객체 여부만 보면 `{"apple": "x"}` 같은 손상 값이
