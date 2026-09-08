@@ -426,7 +426,20 @@ function handle(ws, msg) {
       const r = world.appearance(ws.token, msg.custom);
       if (r.error) { sendTo(ws, { t: 'error', ...r.error }); break; }
       // 남의 화면에도 바뀐 외형이 보여야 한다 — 서버를 거친다.
-      broadcast({ t: 'appearance', token: r.token, custom: r.custom });
+      //
+      // **자기와 남을 갈라 보낸다.** 이 방송이 지금까지 안전했던 것은
+      // `appearance()`가 목록 밖 값을 절대 돌려주지 않는다는 불변식 덕분이었는데,
+      // "가진 값과 같으면 통과"(19차)가 그 불변식을 깼다 — 옷만 바꿔도 목록 밖
+      // hair가 전원에게 방송돼 남의 화면이 그 세션 내내 마젠타로 남았다(스냅샷은
+      // join 때만 오므로 저절로 고쳐지지 않는다 — 리뷰 지적).
+      //
+      // 자기에게는 계속 원값을 보낸다(걸러 보내면 로컬 슬롯이 걸러진 값으로 덮여
+      // 19차가 막은 손실이 되살아난다 — docs/design.md §3).
+      sendTo(ws, { t: 'appearance', token: r.token, custom: r.custom });
+      broadcast({
+        t: 'appearance', token: r.token,
+        custom: world.publicCustom(world.players.get(r.token)),
+      }, r.token);
       break;
     }
     case 'race_join': {

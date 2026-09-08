@@ -151,5 +151,17 @@ test('welcome의 you는 목록 밖 외형도 원값으로 보낸다(남에게는
   assert.equal(row.custom.hair, undefined,
     `목록 밖 외형이 남의 스냅샷에 실렸다: ${JSON.stringify(row.custom)}`);
 
+  // **방송 지점은 셋이다**(스냅샷·join·appearance). 옷만 바꿨을 때 목록 밖 hair가
+  // appearance 방송으로 남에게 새지 않는지 — 19차에 그 구멍이 실제로 뚫렸다.
+  me.messages.length = 0;
+  other.messages.length = 0;
+  me.send(JSON.stringify({ t: 'appearance', custom: { hair: '__개명된키__', outfit: 'outfit_yellow' } }));
+  const mine = await waitFor(me, (m) => m.t === 'appearance');
+  assert.equal(mine.custom.hair, '__개명된키__', '자기에게 걸러진 값이 왔다(로컬 슬롯이 덮인다)');
+  const theirs = await waitFor(other, (m) => m.t === 'appearance');
+  assert.equal(theirs.custom.hair, undefined,
+    `목록 밖 외형이 남에게 방송됐다: ${JSON.stringify(theirs.custom)}`);
+  assert.equal(theirs.custom.outfit, 'outfit_yellow', '정상 값이 남에게 안 갔다');
+
   for (const sock of [me, other]) { try { sock.close(); } catch { /* 이미 닫힘 */ } }
 });
