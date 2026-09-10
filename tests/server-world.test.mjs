@@ -1118,6 +1118,78 @@ test('저장된 외형·프리셋은 로드에서 지켜지고 방송에서만 �
   assert.deepEqual(snap.custom, { outfit: 'outfit_yellow' });
 });
 
+test('공 차기에는 네트워크 지연 여유가 있다(경계에서 정상 플레이가 거절되지 않는다)', () => {
+  // 클라이언트는 data의 kick_range로 "찰 수 있다"를 정하고 서버도 같은 값을 쓰면,
+  // 한 틱 뒤처진 좌표 때문에 경계에서 거절된다 — 폰에서 "공이 안 차짐"으로
+  // 나타났다(2026-09-10 사용자 보고). 채집(GATHER_RANGE)과 같은 여유를 준다.
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '테스터', preset: [...w.presetIds][0] });
+  const p = w.players.get(TOKEN_A);
+  const f = w.playgroundCfg.field || {};
+  p.x = Number(f.x) || 0; p.z = Number(f.z) || 0;
+  w.activity(TOKEN_A, 'soccer', '');
+  assert.ok(w.ball.active, '공이 나오지 않았다');
+  const range = w.soccerCfg.kickRange;
+
+  // (1) 클라이언트 사거리보다 조금 밖 = 지연으로 뒤처진 좌표 → 차져야 한다.
+  p.x = w.ball.x - (range + 0.5); p.z = w.ball.z;
+  const lagged = w.kick(TOKEN_A, { dx: 1, dz: 0 }, 10_000);
+  assert.ok(!lagged.error, `지연 여유 안에서 거절됐다: ${JSON.stringify(lagged.error)}`);
+
+  // (2) 여유까지 넘으면 여전히 거절 — 여유가 무제한이 되면 안 된다.
+  w.ball.vx = 0; w.ball.vz = 0;
+  p.x = w.ball.x - (range + 2.0); p.z = w.ball.z;
+  const far = w.kick(TOKEN_A, { dx: 1, dz: 0 }, 20_000);
+  assert.ok(far.error && far.error.code === 'too_far',
+    `멀리서도 차졌다: ${JSON.stringify(far.error ?? 'ok')}`);
+});
+
+test('이동이 간격 제한에 걸려 서버 좌표가 뒤처져도 공을 찰 수 있다', () => {
+  // 클라이언트는 차기 직전에 좌표를 flush하는데, 그 move가 간격 제한(80ms)에
+  // 걸리면 서버는 **좌표를 갱신하지 않고 버린다** — 우회가 통하지 않았다.
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '테스터', preset: [...w.presetIds][0] });
+  const p = w.players.get(TOKEN_A);
+  const f = w.playgroundCfg.field || {};
+  p.x = Number(f.x) || 0; p.z = Number(f.z) || 0;
+  w.activity(TOKEN_A, 'soccer', '');
+  const t0 = 50_000;
+  // 공에서 사거리 바로 밖에 있는 상태로 서버 좌표를 굳힌다.
+  p.x = w.ball.x - (w.soccerCfg.kickRange + 0.3); p.z = w.ball.z;
+  p.lastMoveAt = t0;
+  // 클라이언트의 flush_move가 간격 제한에 걸려 버려진다.
+  const flushed = w.move(TOKEN_A, { x: w.ball.x - 0.5, z: w.ball.z, dir: 'right' }, t0 + 10);
+  assert.equal(flushed.throttled, true, '이 테스트의 전제(간격 제한)가 성립하지 않는다');
+  assert.equal(p.x, w.ball.x - (w.soccerCfg.kickRange + 0.3), '버려진 move가 좌표를 바꿨다');
+  // 그래도 차져야 한다 — 여유가 그 한 틱을 흡수한다.
+  const r = w.kick(TOKEN_A, { dx: 1, dz: 0 }, t0 + 20);
+  assert.ok(!r.error, `뒤처진 좌표 때문에 거절됐다: ${JSON.stringify(r.error)}`);
+});
+
+test('멀리 있는 물건은 주울 수 없다', () => {
+  // 줍기에만 거리 검사가 없어서 섬 반대편 물건도 주워졌다 — 남이 떨어뜨린 것을
+  // 화면 밖에서 쓸어 담을 수 있었다(2026-09-10 전수검사).
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '버리는사람', preset: [...w.presetIds][0] });
+  w.join({ token: TOKEN_B, name: '줍는사람', preset: [...w.presetIds][0] });
+  const a = w.players.get(TOKEN_A);
+  const b = w.players.get(TOKEN_B);
+  a.inventory.wood = 1;
+  const dropped = w.drop(TOKEN_A, 'wood');
+  assert.ok(!dropped.error, `드랍 실패: ${JSON.stringify(dropped.error)}`);
+  const id = dropped.item.id;
+
+  b.x = a.x + 20; b.z = a.z + 10;                    // 섬 반대편
+  const far = w.pickup(TOKEN_B, id);
+  assert.ok(far.error && far.error.code === 'too_far',
+    `멀리서 주워졌다: ${JSON.stringify(far.error ?? 'ok')}`);
+
+  b.x = dropped.item.x + 1.0; b.z = dropped.item.z;  // 사거리 안
+  const near = w.pickup(TOKEN_B, id);
+  assert.ok(!near.error, `가까이서도 거절됐다: ${JSON.stringify(near.error)}`);
+  assert.equal(near.inventory.wood, 1, '주웠는데 가방에 없다');
+});
+
 test('클라이언트와 공유하는 상수가 갈리지 않았다', () => {
   // 목록을 테스트에 적지 않는다 — 등록소는 `server/world.js`의 CLIENT_SHARED이고
   // **값을 쓰는 자리와 등록하는 자리가 같다**. 예전에는 여기에 3개를 손으로

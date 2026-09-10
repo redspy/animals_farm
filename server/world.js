@@ -30,11 +30,28 @@ const STATE_PATH = join(STATE_DIR, 'world.json');
  * 정규식으로 대조할 수 없고, 데이터에 키가 있는 한 양쪽이 같은 값을 읽으므로
  * 폴백끼리만 갈릴 수 있다 — 위험이 낮아 등록하지 않는다.
  */
+/**
+ * 상호작용 사거리에 주는 **네트워크 지연 여유**.
+ *
+ * 클라이언트는 자기 화면의 거리로 "지금 할 수 있다"를 정하고, 서버는 자기가 가진
+ * 마지막 좌표로 판정한다. 그 좌표는 최대 한 틱(이동 간격 제한 80ms) 뒤처지므로,
+ * 여유가 0이면 **정상 플레이도 경계에서 거절된다**. 걷기 4.2 기준 80ms면 0.34,
+ * 폰처럼 프레임이 낮거나 지연이 큰 환경에서는 그보다 커진다.
+ *
+ * 채집은 처음부터 이 여유가 있었지만 **축구 차기에는 없어서**, 공 앞에 서서
+ * 액션을 눌러도 "공이 너무 멉니다"로 거절되는 일이 잦았다(2026-09-10 사용자
+ * 보고 "폰에서 공이 안 차짐"). 차기 직전에 좌표를 flush하는 우회가 클라이언트에
+ * 있었지만, 그 move가 간격 제한에 걸리면 **서버 좌표가 갱신되지 않아** 우회가
+ * 통하지 않았다.
+ */
+const LAG_PAD = 0.7;
+
 export const CLIENT_SHARED = {
   'scripts/player.gd:SPEED': 4.2,
   'scripts/player.gd:RADIUS': 0.35,
   'scripts/player.gd:SEPARATION': 0.8,
   'scripts/gatherable.gd:INTERACT_DISTANCE': 1.6,
+  'scripts/world.gd:PICKUP_DISTANCE': 1.6,
 };
 
 export const LIMITS = {
@@ -76,7 +93,11 @@ export const LIMITS = {
   // 하면 정상 플레이도 간헐적으로 거부된다. **클라이언트 값을 파생시킨다** —
   // 예전에는 1.6을 리터럴로 적어 둬서, gatherable.gd를 2.4로 올려도 서버 테스트가
   // 전부 통과하고 "버튼은 보이는데 눌러도 안 되는" 구간만 생겼다(리뷰 지적).
-  GATHER_RANGE: CLIENT_SHARED['scripts/gatherable.gd:INTERACT_DISTANCE'] + 0.7,
+  GATHER_RANGE: CLIENT_SHARED['scripts/gatherable.gd:INTERACT_DISTANCE'] + LAG_PAD,
+  // 줍기 사거리. **예전에는 거리 검사가 아예 없었다** — 섬 반대편의 물건도
+  // 주울 수 있어서, 남이 떨어뜨린 것을 화면 밖에서 쓸어 담을 수 있었다
+  // (2026-09-10 전수검사에서 발견). 채집과 같은 규칙으로 맞춘다.
+  PICKUP_RANGE: CLIENT_SHARED['scripts/world.gd:PICKUP_DISTANCE'] + LAG_PAD,
   // 캐릭터끼리 유지할 최소 간격(클라이언트와의 일치는 CLIENT_SHARED가 강제한다).
   SEPARATION: CLIENT_SHARED['scripts/player.gd:SEPARATION'],
   SELL_MIN_INTERVAL_MS: 400,
@@ -1173,8 +1194,12 @@ export class WorldState {
     if (now - (p.lastKickAt || 0) < this.soccerCfg.kickInterval) {
       return { throttled: true };
     }
+    // **여유를 준다(LAG_PAD).** 클라이언트는 `soccer.kick_range`(같은 데이터)로
+    // "지금 찰 수 있다"를 정하는데, 서버가 같은 값으로 판정하면 한 틱 뒤처진
+    // 좌표 때문에 정상 플레이가 경계에서 거절된다 — 폰에서 "공이 안 차짐"으로
+    // 나타났다. 채집이 처음부터 쓰던 규칙(GATHER_RANGE)과 같게 맞춘다.
     const dist = Math.hypot(this.ball.x - p.x, this.ball.z - p.z);
-    if (dist > this.soccerCfg.kickRange) {
+    if (dist > this.soccerCfg.kickRange + LAG_PAD) {
       return { error: { code: 'too_far', message: '공이 너무 멉니다' } };
     }
     let vx = Number(dx);
@@ -2095,6 +2120,13 @@ export class WorldState {
       // 이미 남이 주웠거나 없는 id — 조용히 무시하지 않고 알려준다(클라이언트가
       // 화면에서 아이템을 지울 수 있도록).
       return { error: { code: 'gone', message: '이미 없는 물건입니다' } };
+    }
+    // **거리를 검사한다.** 없으면 섬 반대편의 물건도 주울 수 있어, 남이 떨어뜨린
+    // 것을 화면 밖에서 쓸어 담을 수 있었다(2026-09-10 전수검사에서 발견 —
+    // 채집·정산에는 있던 검사가 줍기에만 빠져 있었다).
+    const dist = Math.hypot(p.x - entity.x, p.z - entity.z);
+    if (dist > LIMITS.PICKUP_RANGE) {
+      return { error: { code: 'too_far', message: '너무 멉니다' } };
     }
     this.items.delete(entity.id);
     p.inventory[entity.item] = Number(p.inventory[entity.item] || 0) + 1;
