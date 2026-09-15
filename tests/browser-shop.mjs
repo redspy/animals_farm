@@ -255,8 +255,14 @@ const locked = await page.evaluate(() => window.afTest?.points?.shopBuy1 != null
 check(locked, '가게 화면이 그대로 열려 있다(그 자리에서 잠긴다)');
 // **산 사람에게만 응답한다**는 이 기능의 규약이다(protocol.md) — 관찰자 소켓에
 // bought가 오면 안 된다. 관찰자를 깔아 두고 안 보면 규약이 테스트되지 않는다.
+// 관찰자가 먼저 죽었으면 "안 왔다"가 아니라 "못 받았다"이므로, 살아 있는지 함께 본다
+// (안 그러면 소켓이 끊겨도 초록불인 위양성 통과가 된다).
 const leaked = await waitFor((m) => m.t === 'bought', 1500);
-check(leaked === null, '구매는 남에게 방송되지 않는다');
+check(leaked === null && observer.readyState === WebSocket.OPEN,
+  `구매는 남에게 방송되지 않는다 (관찰자 상태 ${observer.readyState})`);
+// 대신 **외형 변경은** 남에게 가야 한다 — 서버가 구매 시점에 입히기 때문이다.
+const looked = await waitFor((m) => m.t === 'appearance', 2500);
+check(looked !== null, '산 옷은 남의 화면에도 전달된다');
 await page.screenshot({ path: `${OUT}/2-구매후.png` }).catch(() => {});
 
 // --- 4. 산 색이 꾸미기 화면에 열린다 ---

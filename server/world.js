@@ -1750,6 +1750,14 @@ export class WorldState {
     p.lastBuyAt = now;
     p.bells = addBells(bells, -good.price);
     p.owned.push(good.id);
+    // **여기서 바로 입힌다.** 예전에는 클라이언트가 산 뒤 `appearance`를 따로 보냈는데,
+    // 구매 간격(400ms)이 외형 변경 간격(500ms)보다 **짧아서** 두 개를 빠르게 사면
+    // 두 번째 `appearance`가 rate_limited로 거절됐다 — 클라이언트는 새 옷을 입은 채
+    // 저장하고 서버는 옛 옷을 들고 있어, 재접속하면 **벨은 냈는데 입은 것이 사라진다**
+    // (2026-09-16 리뷰 지적). 방금 산 값이라 화이트리스트 검증이 자명하므로 왕복을
+    // 없애는 것이 맞다.
+    if (!p.custom || typeof p.custom !== 'object') p.custom = {};
+    p.custom[good.kind] = good.value;
     this._markDirty();
     return {
       good: { ...good },
@@ -1757,6 +1765,8 @@ export class WorldState {
       owned: this.ownedGoods(p),
       // 산 즉시 꾸미기 화면이 열려야 한다 — 새 목록을 함께 보낸다.
       choices: this.appearanceChoices(token),
+      // 서버가 확정한 외형. 클라이언트는 이 값을 그대로 쓴다(자기 것이라 원값).
+      custom: { ...p.custom },
     };
   }
 

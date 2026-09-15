@@ -52,7 +52,7 @@ signal race_received(race: Dictionary, results: Array)
 signal appearance_received(token: String, custom: Dictionary)
 ## 가게에서 물건을 샀을 때. **산 사람에게만 온다**(남에게 방송할 이유가 없다 —
 ## 실제로 입으면 그때 appearance 방송을 탄다).
-signal bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary)
+signal bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary, custom: Dictionary)
 ## 놀이기구 상태(시소 기울기·뺑뺑이 각도). 서버가 소유한다.
 signal park_state(state: Dictionary)
 
@@ -233,12 +233,13 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			appearance_received.emit(String(msg.get("token", "")), msg.get("custom", {}))
 		"bought":
 			bought.emit(msg.get("good", {}), int(msg.get("bells", 0)),
-				msg.get("owned", []), msg.get("choices", {}))
+				msg.get("owned", []), msg.get("choices", {}), msg.get("custom", {}))
 		"error":
 			var extra: Dictionary = {}
-			for key: String in ["need", "state"]:
-				if typeof(msg.get(key)) == TYPE_DICTIONARY:
-					extra[key] = msg[key]
+			# 지금 쓰는 것은 need(얼마 모자란지)뿐이다 — 안 쓰는 값을 담아 두면
+			# "이미 쓰고 있다"는 오해를 만든다(리뷰 지적).
+			if typeof(msg.get("need")) == TYPE_DICTIONARY:
+				extra["need"] = msg["need"]
 			server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")), extra)
 		_:
 			push_warning("알 수 없는 서버 메시지: %s" % String(msg.get("t", "")))

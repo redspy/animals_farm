@@ -453,8 +453,15 @@ function handle(ws, msg) {
       // **산 사람에게만 보낸다.** 남에게 방송할 이유가 없다 — 실제로 입으면 그때
       // 기존 appearance 방송을 탄다.
       sendTo(ws, {
-        t: 'bought', good: r.good, bells: r.bells, owned: r.owned, choices: r.choices,
+        t: 'bought', good: r.good, bells: r.bells, owned: r.owned,
+        choices: r.choices, custom: r.custom,
       });
+      // **산 즉시 입혀지므로 남에게도 알린다.** 서버가 외형을 바꿨는데 방송하지
+      // 않으면 남의 화면에는 옛 옷이 남는다(방송 지점은 셋 — design.md §3).
+      broadcast({
+        t: 'appearance', token: ws.token,
+        custom: world.publicCustom(world.players.get(ws.token)),
+      }, ws.token);
       break;
     }
     case 'appearance': {

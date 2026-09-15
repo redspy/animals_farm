@@ -316,7 +316,14 @@ console.log('\n[검증] 대상 클릭 → 자동 채집 → 드랍 → 상대가
 // 테스트가 흉내낼 필요가 없어져 판정이 안정된다.
 const treeA = await godotPoint(a.page, 'nearestGatherable');
 await a.page.mouse.click(treeA.x, treeA.y);
-await a.page.waitForTimeout(4500);
+// **고정 대기를 쓰지 않는다.** 4.5초를 세고 넘어가면 걸어가는 데 그보다 오래 걸린
+// 실행에서 가방이 빈 채로 드랍을 눌러 "드랍이 브로드캐스트되지 않았다"로 실패한다
+// — 실제로 이 스위트의 간헐 실패 둘 중 하나가 이것이었다(2026-09-16, 같은 커밋이
+// 어떤 날은 통과하고 어떤 날은 실패했다). 4 FPS 환경에서 고정 대기를 쓰지 말라는
+// 것은 이 저장소가 반복해서 배운 규칙이다.
+await a.page.waitForFunction(
+  () => Number(window.afTest?.state?.bagCount ?? 0) > 0, null, { timeout: 20000 },
+).catch(() => {});
 await a.page.screenshot({ path: `${OUT}/mp-05-A채집.png` });
 await a.page.keyboard.press('KeyQ');            // 발밑에 놓기
 const added = await waitFor((m) => m.t === 'item_add' && m.item?.item === TREE.item, '드랍이 브로드캐스트됨');
@@ -379,8 +386,12 @@ console.log(`  (플레이어 x=${(beforeRock?.x ?? 0).toFixed(1)} z=${(beforeRoc
 // 여기서는 **모든 바위에 대해** 통과 여부를 보고, "짧은 쪽으로 도는지"는
 // tests/test_path.gd가 정확히 검증한다.
 const trackFrom = seen.length;
-const beyond = await godotPoint(a.page, 'beyondNearestRock');
-await a.page.mouse.click(beyond.x, beyond.y);
+// **재시도 헬퍼를 쓴다.** 여기만 `godotPoint` + 직접 클릭이라, 카메라가 아직
+// 따라오는 중이면 그 지점이 화면 밖이어서 클릭이 통째로 버려졌다 — "이동 거리
+// 0.0"으로 나타나는 이 스위트의 간헐 실패가 그것이다(2026-09-16에 같은 커밋이
+// 실행마다 갈렸다). tapWorldPoint는 화면 안에 들어올 때까지 다시 조회한다.
+const rockTapped = await tapWorldPoint(a.page, 'beyondNearestRock', 6);
+if (!rockTapped) console.log('  (바위 건너편 지점이 화면에 들어오지 않았다 — 클릭 못 함)');
 // 고정 대기로는 우회 호를 도는 시간이 부족해 바위 앞에서 끝난 적이 있어
 // 멈출 때까지 폴링한다.
 let stableFor = 0;

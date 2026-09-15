@@ -1314,6 +1314,27 @@ test('산 색은 그 사람에게만 열린다', () => {
     'bad_appearance');
 });
 
+test('연속으로 사도 산 옷이 전부 서버에 반영된다', () => {
+  // 예전에는 클라이언트가 산 뒤 appearance를 따로 보냈는데, 구매 간격(400ms)이
+  // 외형 변경 간격(500ms)보다 **짧아서** 두 개를 빠르게 사면 두 번째가
+  // rate_limited로 거절됐다 — 클라이언트는 새 옷을 입은 채 저장하고 서버는 옛 옷을
+  // 들고 있어, 재접속하면 **벨은 냈는데 입은 것이 사라졌다**(리뷰 지적).
+  const w = fresh();
+  const p = shopper(w);
+  const [first, second] = w.shopCatalog();
+  const a = w.buy(TOKEN_A, first.id, 10_000);
+  assert.ok(!a.error, `첫 구매가 거절됐다: ${JSON.stringify(a.error)}`);
+  assert.equal(p.custom[first.kind], first.value, '산 옷이 서버에 반영되지 않았다');
+
+  // **구매 간격만 지나면 된다** — 외형 간격에 걸리지 않아야 한다.
+  const soon = 10_000 + LIMITS.BUY_MIN_INTERVAL_MS + 10;
+  const b = w.buy(TOKEN_A, second.id, soon);
+  assert.ok(!b.error, `두 번째 구매가 거절됐다: ${JSON.stringify(b.error)}`);
+  assert.equal(p.custom[second.kind], second.value,
+    '두 번째로 산 옷이 서버에 반영되지 않았다 — 재접속하면 사라진다');
+  assert.equal(b.custom[second.kind], second.value, '응답이 확정 외형을 싣지 않았다');
+});
+
 test('산 것은 재시작해도 남는다', () => {
   const dir = mkdtempSync(join(tmpdir(), 'af-shop-'));
   const statePath = join(dir, 'state.json');
@@ -1369,8 +1390,11 @@ test('상품 가격이 범위를 벗어나면 클램프한다(공짜가 되지 �
   }
   const shop = JSON.parse(readFileSync(join('data', 'shop.json'), 'utf-8'));
   const max = (shop.limits.price || [0, 100000])[1];
+  const min = (shop.limits.price || [1, 100000])[0];
   shop.goods[0].price = max + 50000;      // 범위를 넘는 오타
   shop.goods[1].price = 'x';              // 숫자가 아님
+  shop.goods[2].price = -500;             // 음수 — 클램프가 없으면 공짜가 된다
+  shop.goods[3].price = 0.5;              // floor로 0이 되던 값
   writeFileSync(join(dir, 'shop.json'), JSON.stringify(shop));
 
   const w = new WorldState({ dataDir: dir, persist: false });
@@ -1378,6 +1402,12 @@ test('상품 가격이 범위를 벗어나면 클램프한다(공짜가 되지 �
   assert.ok(clamped, '범위 밖 상품이 사라졌다');
   assert.equal(clamped.price, max, `공짜가 되거나 그대로 남았다: ${clamped.price}`);
   assert.ok(!w.shopGoods.has(shop.goods[1].id), '숫자가 아닌 가격이 카탈로그에 남았다');
+  for (const idx of [2, 3]) {
+    const g = w.shopGoods.get(shop.goods[idx].id);
+    assert.ok(g, `상품이 사라졌다: ${shop.goods[idx].id}`);
+    assert.ok(g.price >= min && g.price >= 1,
+      `공짜가 됐다(${shop.goods[idx].price} → ${g.price})`);
+  }
 });
 
 test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)', () => {
@@ -1392,8 +1422,10 @@ test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)
     ids.add(g.id);
     assert.ok(['hair', 'skin', 'outfit'].includes(g.kind), `${g.id}.kind가 외형 축이 아니다`);
     assert.ok(palette[g.value], `${g.id}.value(${g.value})가 팔레트에 없다 — 마젠타로 그려진다`);
-    assert.ok(Number.isFinite(g.price) && g.price >= range[0] && g.price <= range[1],
-      `${g.id}.price가 유효범위 밖이다: ${g.price}`);
+    // **1 이상을 따로 못박는다.** 범위 하한이 0이면 0원·음수가 전부 공짜가 되고,
+    // 그건 "가격이 있다"는 말과 같지 않다(리뷰 지적).
+    assert.ok(Number.isFinite(g.price) && g.price >= Math.max(1, range[0]) && g.price <= range[1],
+      `${g.id}.price가 유효범위 밖이거나 공짜다: ${g.price}`);
   }
 });
 

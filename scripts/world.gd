@@ -2157,7 +2157,9 @@ func _talk_to(npc: Npc) -> void:
 		npc.say(npc.next_greeting())
 		# 상품 목록은 서버가 welcome으로 준다 — 접속 전에는 빈 창이 뜬다.
 		if _shop_goods.is_empty():
-			_show_toast("서버에 연결돼야 가게를 볼 수 있습니다")
+			# 접속 전이거나(목록은 welcome으로 온다) 가격 오류로 전 상품이 제외된
+			# 경우다 — 둘 다 "지금은 살 것이 없다"가 사실이다.
+			_show_toast("지금은 가게에 물건이 없습니다")
 			return
 		_open_shop()
 		return
@@ -2425,7 +2427,7 @@ func _open_shop() -> void:
 
 ## 샀을 때. **서버가 차감한 잔액과 소유 목록을 그대로 받는다** — 클라이언트가
 ## 계산하면 재접속에 서버 값으로 덮여 "샀는데 없는" 상태가 된다.
-func _on_bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary) -> void:
+func _on_bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary, custom: Dictionary) -> void:
 	_slot["bells"] = bells
 	_owned_goods = owned
 	if typeof(choices) == TYPE_DICTIONARY and not choices.is_empty():
@@ -2436,16 +2438,12 @@ func _on_bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary)
 		_shop_ui.apply_bought(owned, bells)
 	# 산 것을 **바로 입어 보는 것**이 이 기능의 보상이다 — 꾸미기 화면을 열 때
 	# 그 색이 이미 골라져 있게 미리 반영한다.
-	var kind := String(good.get("kind", ""))
-	var value := String(good.get("value", ""))
-	if not kind.is_empty() and not value.is_empty():
-		_custom[kind] = value
-		_apply_my_custom(_custom, true)
-		# **서버에도 알린다.** 안 보내면 서버의 custom이 옛 값으로 남아 (a) 남의
-		# 화면에는 안 바뀌고 (b) 재접속하면 welcome이 옛 값으로 덮어써 **벨은 냈는데
-		# 입은 것이 사라진다**(리뷰 지적). 방금 산 값이라 화이트리스트를 통과한다.
-		if _net != null and _net.connected:
-			_net.send_appearance(_custom)
+	# **서버가 확정한 외형을 그대로 쓴다.** 예전에는 클라이언트가 입힌 뒤 따로
+	# `appearance`를 보냈는데, 구매 간격(400ms)이 외형 변경 간격(500ms)보다 짧아
+	# 두 개를 빠르게 사면 두 번째가 거절돼 **벨은 냈는데 입은 것이 사라졌다**
+	# (리뷰 지적). 이제 서버가 구매 시점에 입히고 남에게도 방송한다.
+	if typeof(custom) == TYPE_DICTIONARY and not custom.is_empty():
+		_apply_my_custom(custom, true)
 	_show_toast("%s을(를) 샀습니다" % String(good.get("label", "물건")))
 
 func _open_dex() -> void:
@@ -3306,7 +3304,7 @@ func _on_player_arrived() -> void:
 			# 가까운가"를 묻게 되는데, 탭은 **탭 지점** 기준으로 대상을 고르고
 			# 이 검사는 **플레이어** 기준이라 둘이 다른 id를 고를 수 있다 —
 			# 제자리에서 두 개를 버리면 좌표가 똑같아 영영 못 줍는다(리뷰 지적).
-			elif not _drops.has(id) or not is_instance_valid(_drops[id]) \
+			elif not is_instance_valid(_drops[id]) \
 					or _player.position.distance_to((_drops[id] as Node3D).position) > PICKUP_DISTANCE:
 				_show_toast("조금 더 가까이 가야 합니다")
 			elif _net != null and _net.connected:
