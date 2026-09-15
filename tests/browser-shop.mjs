@@ -285,9 +285,15 @@ await page.waitForTimeout(700);
 // **닫으면 훅도 사라져야 한다.** 남으면 아래 재오픈 판정이 "첫 인스턴스가 남긴 훅"을
 // 보고 클릭이 실패해도 통과한다 — 값 비교도 "언젠가 그 값을 그린 적 있다"가 된다
 // (2026-09-16 리뷰 지적. TestHooks._exit_tree가 자기 것을 치운다).
-const hookGone = await page.evaluate(() => window.afTest?.points?.shopBells == null
-  && window.afTest?.state?.shopBells == null);
-check(hookGone, '가게를 닫으면 그 화면의 훅이 사라진다');
+const afterClose = await page.evaluate(() => ({
+  gone: window.afTest?.points?.shopBells == null
+    && window.afTest?.state?.shopBells == null,
+  // **남의 상태까지 지우면 안 된다.** 상태 키를 이름으로 지우면 같은 이름을 쓰는
+  // 살아 있는 인스턴스의 값이 날아간다 — 월드의 벨이 그대로인지 함께 본다.
+  bells: Number(window.afTest?.state?.bells ?? -1),
+}));
+check(afterClose.gone, '가게를 닫으면 그 화면의 훅이 사라진다');
+check(afterClose.bells >= 0, `닫아도 월드 상태는 남는다 (벨 ${afterClose.bells})`);
 const tree2 = gcfg.spawns
   .map((s, index) => ({ ...s, index }))
   .filter((s) => s.item === 'wood')
@@ -297,8 +303,13 @@ const bagBefore = (await state()).bag;
 await walkTo('x', tree2.x);
 await walkTo('z', tree2.z + 1.2);
 await clickWorld(tree2.x, tree2.z);
+// **대기도 증분으로 본다.** 절대값(`> 0`)으로 기다리면 가방이 이미 비어 있지 않을 때
+// (앞 판매가 `unsold`를 남겼거나 판매 응답이 늦었을 때) 즉시 참이 되어 20초 대기가
+// 통째로 무력화되고, 채집 중인데 곧바로 읽어 실패한다 — 위양성을 위음성으로 바꾸는
+// 셈이다(리뷰 지적).
 await page.waitForFunction(
-  () => Number(window.afTest?.state?.bagCount ?? 0) > 0, null, { timeout: 20000 },
+  (before) => Number(window.afTest?.state?.bagCount ?? 0) > before,
+  bagBefore, { timeout: 20000 },
 ).catch(() => {});
 // **원인을 원인 자리에서 잡는다.** 위 대기가 타임아웃을 삼키므로, 못 캤으면 아래
 // "팔아서 벨이 늘었다"가 실패해 라벨과 원인이 어긋난다(리뷰 지적).

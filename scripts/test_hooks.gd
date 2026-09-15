@@ -82,19 +82,20 @@ func clear() -> void:
 func _exit_tree() -> void:
 	if not OS.has_feature("web"):
 		return
-	var keys: Array[String] = []
-	for key: String in _state.keys():
-		keys.append('"%s"' % key)
 	JavaScriptBridge.eval("""
 		(function(){
 			var t = window.%s; if (!t) return;
 			var mine = (t.owners || {})['%s'] || [];
 			mine.forEach(function(k){ delete t.points[k]; });
 			if (t.owners) delete t.owners['%s'];
-			var st = [%s];
-			st.forEach(function(k){ if (t.state) delete t.state[k]; });
+			// **상태도 내가 올린 것만** 지운다. 이름으로 지우면 같은 이름을 쓰는
+			// 살아 있는 인스턴스의 값까지 날아간다(씬 전환에서 옛 화면의 _exit_tree가
+			// 새 화면 게시 뒤에 돌면 새 값이 지워진다 — 리뷰 지적).
+			var sm = (t.stateOwners || {})['%s'] || [];
+			sm.forEach(function(k){ if (t.state) delete t.state[k]; });
+			if (t.stateOwners) delete t.stateOwners['%s'];
 		})();
-	""" % [GLOBAL_NAME, _instance_id, _instance_id, ", ".join(keys)], true)
+	""" % [GLOBAL_NAME, _instance_id, _instance_id, _instance_id, _instance_id], true)
 
 func _process(delta: float) -> void:
 	_timer += delta
@@ -144,18 +145,26 @@ func publish_now() -> void:
 			var next = %s;
 			for (var k in next) t.points[k] = next[k];
 			t.state = t.state || {};
+			t.stateOwners = t.stateOwners || {};
 			var st = %s;
+			// 상태도 **소유자 장부**를 남긴다 — 없으면 죽는 인스턴스가 살아 있는
+			// 다른 인스턴스의 같은 이름 키를 지운다(_exit_tree 주석 참고).
+			t.stateOwners['%s'] = Object.keys(st);
 			for (var k2 in st) t.state[k2] = st[k2];
 			t.vw = %.1f; t.vh = %.1f;
 		})();
-	""" % [GLOBAL_NAME, GLOBAL_NAME, _instance_id, _instance_id, ", ".join(keys), json, _state_json(), size.x, size.y], true)
+	""" % [GLOBAL_NAME, GLOBAL_NAME, _instance_id, _instance_id, ", ".join(keys), json,
+		_state_json(), _instance_id, size.x, size.y], true)
 
 func _state_json() -> String:
 	var parts: Array[String] = []
 	for key: String in _state.keys():
 		var v: Variant = _state[key]
 		if typeof(v) == TYPE_STRING:
-			parts.append('"%s":"%s"' % [key, String(v).replace('"', "")])
+			# **JSON으로 직렬화한다.** 따옴표만 지우면 역슬래시·개행이 그대로 나가
+			# JSON이 깨지고, 그러면 eval이 통째로 실패해 **훅 게시가 멈춘다** —
+			# `lastError`처럼 서버 문자열이 흘러드는 키가 있어 실제 경로다(리뷰 지적).
+			parts.append('"%s":%s' % [key, JSON.stringify(String(v))])
 		else:
 			parts.append('"%s":%s' % [key, str(v)])
 	return "{%s}" % ", ".join(parts)
