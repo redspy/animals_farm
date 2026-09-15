@@ -158,6 +158,9 @@ var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화�
 var _custom: Dictionary = {}
 var _appearance_choices: Dictionary = {}
 ## 가게 상품 목록과 내가 산 것 — 서버가 welcome/구매 응답으로 준다.
+## welcome을 한 번이라도 받았는가. 소켓이 열린 것(`_net.connected`)과 **서버 상태를
+## 받은 것**은 다르다 — 가게 목록·외형 선택지는 welcome으로만 온다.
+var _welcomed := false
 var _shop_goods: Array = []
 var _owned_goods: Array = []
 var _shop_ui: ShopUI = null
@@ -2158,7 +2161,10 @@ func _talk_to(npc: Npc) -> void:
 		# 상품 목록은 서버가 welcome으로 준다 — 접속 전에는 빈 창이 뜬다.
 		# **두 원인을 갈라서 말한다.** 미접속이면 목록이 **항상** 비어 있어서
 		# "물건이 없습니다"만 띄우면 아이가 접속 문제인 줄 알 방법이 없다(리뷰 지적).
-		if _net == null or not _net.connected:
+		# **`connected`가 아니라 "welcome을 받았는가"로 가른다.** connected는 소켓이
+		# 열린 시점에 true가 되고 상품 목록은 그 뒤 welcome에서 온다 — 그 사이 창에서
+		# 열면 "물건이 없습니다"가 떠서 이 구분이 무의미해진다(리뷰 지적).
+		if _net == null or not _net.connected or not _welcomed:
 			_show_toast("서버에 연결돼야 가게를 볼 수 있습니다")
 			return
 		if _shop_goods.is_empty():
@@ -2435,18 +2441,23 @@ func _on_bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary,
 	_owned_goods = owned
 	if typeof(choices) == TYPE_DICTIONARY and not choices.is_empty():
 		_appearance_choices = choices
-	_persist()
 	_refresh_hud()
 	if _shop_ui != null and is_instance_valid(_shop_ui):
 		_shop_ui.apply_bought(owned, bells)
-	# 산 것을 **바로 입어 보는 것**이 이 기능의 보상이다 — 꾸미기 화면을 열 때
-	# 그 색이 이미 골라져 있게 미리 반영한다.
+	# 산 것을 **바로 입어 보는 것**이 이 기능의 보상이다.
+	#
 	# **서버가 확정한 외형을 그대로 쓴다.** 예전에는 클라이언트가 입힌 뒤 따로
 	# `appearance`를 보냈는데, 구매 간격(400ms)이 외형 변경 간격(500ms)보다 짧아
 	# 두 개를 빠르게 사면 두 번째가 거절돼 **벨은 냈는데 입은 것이 사라졌다**
 	# (리뷰 지적). 이제 서버가 구매 시점에 입히고 남에게도 방송한다.
+	#
+	# 저장은 **정확히 한 번만** 한다 — `_apply_my_custom(..., true)`이 벨까지 포함한
+	# 슬롯을 통째로 저장하므로, 그 길로 가면 여기서 또 저장하지 않는다. 반대로
+	# 외형이 안 왔으면(옛 서버) 그 길이 없으니 여기서 저장해야 벨이 남는다.
 	if typeof(custom) == TYPE_DICTIONARY and not custom.is_empty():
 		_apply_my_custom(custom, true)
+	else:
+		_persist()
 	_show_toast("%s을(를) 샀습니다" % String(good.get("label", "물건")))
 
 func _open_dex() -> void:
@@ -2628,6 +2639,7 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 		_appearance_choices = you["appearanceChoices"]
 	# 가게 목록도 서버가 준다 — 클라이언트도 같은 data/shop.json을 읽지만, 가격은
 	# 서버 판정이 기준이므로 화면도 서버가 준 값을 그린다.
+	_welcomed = true
 	if typeof(you.get("shop")) == TYPE_ARRAY:
 		_shop_goods = you["shop"]
 	if typeof(you.get("owned")) == TYPE_ARRAY:

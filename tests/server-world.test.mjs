@@ -1406,13 +1406,23 @@ test('상품 가격이 범위를 벗어나면 클램프한다(공짜가 되지 �
     writeFileSync(join(broken, name), readFileSync(join('data', name)));
   }
   const noLimits = JSON.parse(readFileSync(join('data', 'shop.json'), 'utf-8'));
+  const dataRange = noLimits.limits.price;
   delete noLimits.limits;
   noLimits.goods[0].price = -500;
+  noLimits.goods[1].price = 999999;     // 폴백 상한도 데이터와 같아야 한다
+  noLimits.goods[2].value = '';         // 빈 value는 카탈로그에서 빠져야 한다
   writeFileSync(join(broken, 'shop.json'), JSON.stringify(noLimits));
   const w2 = new WorldState({ dataDir: broken, persist: false });
-  const fallback = w2.shopGoods.get(noLimits.goods[0].id);
-  assert.ok(fallback && fallback.price >= 1,
-    `limits가 없을 때 공짜가 됐다: ${fallback && fallback.price}`);
+  const low = w2.shopGoods.get(noLimits.goods[0].id);
+  assert.ok(low && low.price >= dataRange[0],
+    `limits가 없을 때 공짜가 됐다: ${low && low.price}`);
+  const high = w2.shopGoods.get(noLimits.goods[1].id);
+  assert.ok(high && high.price <= dataRange[1],
+    `폴백 상한이 데이터와 갈렸다: ${high && high.price} (데이터 상한 ${dataRange[1]})`);
+  // **빈 value는 살 수 있으면 안 된다** — 벨은 나가고 owned에 들어가 재구매도 막히는데
+  // 정작 꾸미기에는 열리지 않아 되돌릴 수 없는 손실이 된다.
+  assert.ok(!w2.shopGoods.has(noLimits.goods[2].id),
+    'value가 빈 상품이 카탈로그에 남았다');
 
   const clamped = w.shopGoods.get(shop.goods[0].id);
   assert.ok(clamped, '범위 밖 상품이 사라졌다');

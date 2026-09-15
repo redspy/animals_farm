@@ -261,8 +261,10 @@ const leaked = await waitFor((m) => m.t === 'bought', 1500);
 check(leaked === null && observer.readyState === WebSocket.OPEN,
   `구매는 남에게 방송되지 않는다 (관찰자 상태 ${observer.readyState})`);
 // 대신 **외형 변경은** 남에게 가야 한다 — 서버가 구매 시점에 입히기 때문이다.
-// **토큰과 값까지 본다.** `t === 'appearance'`만 보면 waitFor가 누적 기록 전체를
-// 훑으므로 구매와 무관한 옛 appearance를 집어 통과할 수 있다(위양성 — 리뷰 지적).
+// **값까지 본다.** `t === 'appearance'`만 보면 waitFor가 누적 기록 전체를 훑으므로
+// 구매와 무관한 옛 appearance를 집어 통과할 수 있다(위양성 — 리뷰 지적).
+// (토큰까지 보면 더 정확하지만 클라이언트에 토큰을 노출하는 훅이 없다 — 관찰자를
+// 하나 더 붙이게 되면 그때 훅을 만들고 토큰도 함께 볼 것.)
 const boughtValue = shopCfg.goods[0].value;
 const looked = await waitFor(
   (m) => m.t === 'appearance' && m.custom?.outfit === boughtValue, 2500);

@@ -457,7 +457,9 @@ function handle(ws, msg) {
         choices: r.choices, custom: r.custom,
       });
       // **산 즉시 입혀지므로 남에게도 알린다.** 서버가 외형을 바꿨는데 방송하지
-      // 않으면 남의 화면에는 옛 옷이 남는다(방송 지점은 셋 — design.md §3).
+      // 않으면 남의 화면에는 옛 옷이 남는다. **여기가 네 번째 방송 지점이다**
+      // (스냅샷·join·appearance·구매 — design.md §3). 새 지점을 만들 때는 그 넷을
+      // 함께 볼 것.
       broadcast({
         t: 'appearance', token: ws.token,
         custom: world.publicCustom(world.players.get(ws.token)),

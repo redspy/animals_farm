@@ -662,10 +662,20 @@ export class WorldState {
         console.warn(`[world] shop.json의 ${id}.price ${rawPrice}이 유효범위 [${priceRange[0]}, ${priceRange[1]}] 밖 — 클램프`);
       }
       const price = Math.floor(Math.min(priceRange[1], Math.max(priceRange[0], rawPrice)));
+      // **value도 kind와 대칭으로 검증한다.** 빈 값을 카탈로그에 넣으면 그 상품을
+      // 살 수 있는데, 벨은 차감되고 owned에 들어가 재구매도 막히면서(already_owned)
+      // 정작 `allowedLook`은 falsy 값을 안 넣어 **꾸미기에 열리지도 않는다** —
+      // 중복 구매를 막은 이유("이미 가진 것을 또 사면 벨만 사라진다")와 같은 급의
+      // 되돌릴 수 없는 손실이다(리뷰 지적). 데이터 린트는 커밋 게이트일 뿐이고,
+      // AF_DATA_DIR로 다른 데이터를 물리는 경로가 실제로 있다.
+      if (!String(raw.value || '')) {
+        console.warn(`[world] shop.json의 ${id}.value가 비어 제외합니다`);
+        continue;
+      }
       this.shopGoods.set(id, {
         id,
         kind,
-        value: String(raw.value || ''),
+        value: String(raw.value),
         label: String(raw.label || id),
         price,
       });
