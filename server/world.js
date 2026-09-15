@@ -60,7 +60,7 @@ export const CLIENT_SHARED = {
  * 팔레트에 없으므로 서버가 검증할 수단이 없다 — 그건 스프라이트 코드가 아는 것이고,
  * 데이터 린트와 화면으로 잡는다.
  */
-const LOOK_VALUE_PREFIX = { outfit: 'outfit_', skin: 'skin', hair: null };
+export const LOOK_VALUE_PREFIX = { outfit: 'outfit_', skin: 'skin', hair: null };
 
 /**
  * 외형 축 목록. **위 맵에서 유도한다** — 축 화이트리스트와 접두어 맵을 따로 두면,

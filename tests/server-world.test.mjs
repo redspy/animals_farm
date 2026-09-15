@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WorldState, LIMITS, CLIENT_SHARED } from '../server/world.js';
+import { WorldState, LIMITS, CLIENT_SHARED, LOOK_VALUE_PREFIX } from '../server/world.js';
 
 // 서버 규칙(docs/protocol.md §3) 테스트. 전송(WebSocket)과 분리돼 있어 소켓
 // 없이 규칙만 검증할 수 있다. persist:false로 디스크를 건드리지 않는다.
@@ -1443,32 +1443,35 @@ test('상품 가격이 범위를 벗어나면 클램프한다(공짜가 되지 �
   }
 });
 
-test('팔레트를 못 읽어도 가게가 통째로 사라지지 않는다', () => {
-  // 전부 제외하면 카탈로그가 비고, 산 색이 allowedLook에서 빠져 꾸미기에서 사라지며,
-  // publicCustom이 남들 화면에서 그 옷을 떨군다 — 데이터 사고 하나가 "상품 하나 제외"가
-  // 아니라 "가게 전체 소멸"로 번진다(리뷰 지적). characters.json과 같은 규칙이다.
-  const dir = mkdtempSync(join(tmpdir(), 'af-nopalette-'));
+// 데이터 사본에 palette.json만 바꿔 서버를 띄운다(가게 색 검증 회귀용).
+function worldWithPalette(prefix, mutate) {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
   for (const name of readdirSync('data')) {
     if (!name.endsWith('.json')) continue;
     writeFileSync(join(dir, name), readFileSync(join('data', name)));
   }
-  writeFileSync(join(dir, 'palette.json'), '{ 깨진 JSON');
-  const w = new WorldState({ dataDir: dir, persist: false });
-  assert.ok(w.shopCatalog().length > 0, '팔레트 사고에 가게가 통째로 비었다');
+  writeFileSync(join(dir, 'palette.json'), mutate(
+    JSON.parse(readFileSync(join('data', 'palette.json'), 'utf-8'))));
+  return new WorldState({ dataDir: dir, persist: false });
+}
 
-  // **character가 객체가 아닌 경우도 같은 사고다.** Object.keys가 인덱스를 뱉어
-  // "목록이 있다"로 오인되면 outfit·skin 상품이 전부 제외된다(리뷰 지적).
-  const dir2 = mkdtempSync(join(tmpdir(), 'af-badpalette-'));
-  for (const name of readdirSync('data')) {
-    if (!name.endsWith('.json')) continue;
-    writeFileSync(join(dir2, name), readFileSync(join('data', name)));
-  }
-  const broken = JSON.parse(readFileSync(join('data', 'palette.json'), 'utf-8'));
-  broken.character = ['#ffffff', '#000000'];
-  writeFileSync(join(dir2, 'palette.json'), JSON.stringify(broken));
-  const w2 = new WorldState({ dataDir: dir2, persist: false });
-  assert.ok(w2.shopCatalog().length > 0,
-    'character가 배열일 때 가게가 통째로 비었다');
+test('palette.json을 못 읽어도 가게가 통째로 사라지지 않는다', () => {
+  // 전부 제외하면 카탈로그가 비고, 산 색이 allowedLook에서 빠져 꾸미기에서 사라지며,
+  // publicCustom이 남들 화면에서 그 옷을 떨군다 — 데이터 사고 하나가 "상품 하나 제외"가
+  // 아니라 "가게 전체 소멸"로 번진다(리뷰 지적). characters.json과 같은 규칙이다.
+  const w = worldWithPalette('af-nopalette-', () => '{ 깨진 JSON');
+  assert.ok(w.shopCatalog().length > 0, '팔레트 사고에 가게가 통째로 비었다');
+});
+
+test('palette.character가 객체가 아닐 때도 가게가 사라지지 않는다', () => {
+  // **따로 둔다.** 앞 테스트와 한 덩어리로 묶으면 첫 단정이 깨질 때 이 케이스는
+  // 실행조차 안 돼 회귀 신호가 하나 가려진다(리뷰 지적).
+  // Object.keys가 인덱스를 뱉어 "목록이 있다"로 오인되면 outfit·skin이 전부 제외된다.
+  const w = worldWithPalette('af-badpalette-', (palette) => {
+    palette.character = ['#ffffff', '#000000'];
+    return JSON.stringify(palette);
+  });
+  assert.ok(w.shopCatalog().length > 0, 'character가 배열일 때 가게가 통째로 비었다');
 });
 
 test('상품 값이 그 축의 형식이어야 한다', () => {
@@ -1501,11 +1504,15 @@ test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)
   for (const g of shop.goods) {
     assert.ok(!ids.has(g.id), `상품 id가 중복이다: ${g.id}`);
     ids.add(g.id);
-    assert.ok(['hair', 'skin', 'outfit'].includes(g.kind), `${g.id}.kind가 외형 축이 아니다`);
+    // **축 목록도 서버에서 가져온다.** 여기 손으로 적어 두면, 서버에 축을 하나
+    // 늘렸을 때 런타임은 통과시키는데 **커밋 게이트만** 실패한다 — hair에서 고친 것과
+    // 같은 모양이 축 목록 쪽에 남아 있었다(리뷰 지적).
+    assert.ok(Object.hasOwn(LOOK_VALUE_PREFIX, g.kind), `${g.id}.kind가 외형 축이 아니다`);
     // **축별로 규칙이 다르다.** outfit·skin은 팔레트 색 키지만 hair는 그리는
     // 스타일 이름이라 팔레트에 없다 — 여기서 일괄로 팔레트를 요구하면 머리 상품을
     // 넣는 순간 런타임은 통과시키는데 **커밋 게이트만 실패한다**(리뷰 지적).
-    if (g.kind !== 'hair') {
+    // 팔레트를 요구할지도 같은 출처로 정한다(접두어가 없는 축 = 팔레트 키가 아니다).
+    if (LOOK_VALUE_PREFIX[g.kind]) {
       assert.ok(palette[g.value], `${g.id}.value(${g.value})가 팔레트에 없다 — 마젠타로 그려진다`);
     }
     // **1 이상을 따로 못박는다.** 범위 하한이 0이면 0원·음수가 전부 공짜가 되고,

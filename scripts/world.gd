@@ -2661,6 +2661,12 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 		_shop_goods = you["shop"]
 	if typeof(you.get("owned")) == TYPE_ARRAY:
 		_owned_goods = you["owned"]
+	# **열려 있는 가게 창도 갱신한다.** 창 복귀 재동기화(resync)는 소켓이 살아 있어
+	# `_on_net_closed`를 타지 않는데, ShopUI는 setup 때 받은 **옛 배열과 옛 벨**을
+	# 계속 들고 있다 — 다른 탭에서 사거나 부탁 보상을 받은 뒤 복귀하면 "화면에는 살 수
+	# 있는데 서버가 거절하는" 상태가 된다(리뷰 지적).
+	if _shop_ui != null and is_instance_valid(_shop_ui):
+		_shop_ui.apply_bought(_owned_goods, int(_slot.get("bells", 0)))
 	if typeof(you.get("custom")) == TYPE_DICTIONARY:
 		# 오프라인에서 바꿔 둔 것이 있으면 **그것이 이긴다**(사용자가 고른 값이
 		# 서버의 옛 값보다 최신이다). 세이브의 표시도 함께 본다 — 그래야 탭을
