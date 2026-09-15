@@ -1452,7 +1452,11 @@ function worldWithPalette(prefix, mutate) {
   }
   // 객체를 돌려주든 문자열을 돌려주든 받는다 — 이름만 보고 `(p) => { p.x = ... }`로
   // 쓰면 undefined가 기록돼 터졌다(리뷰 지적).
-  const out = mutate(JSON.parse(readFileSync(join('data', 'palette.json'), 'utf-8')));
+  // `JSON.stringify(undefined)`는 문자열이 아니라 **값 undefined**라, 제자리 변경만
+  // 하고 아무것도 반환하지 않는 mutate는 그대로 writeFileSync를 터뜨렸다 — 주석은
+  // "둘 다 받는다"고 적어 뒀는데 구현이 안 따라간 상태였다(리뷰 지적).
+  const palette = JSON.parse(readFileSync(join('data', 'palette.json'), 'utf-8'));
+  const out = mutate(palette) ?? palette;
   writeFileSync(join(dir, 'palette.json'), typeof out === 'string' ? out : JSON.stringify(out));
   return new WorldState({ dataDir: dir, persist: false });
 }

@@ -39,21 +39,29 @@ func setup(goods: Array, owned: Array, bells: int) -> void:
 ## **바뀐 게 없으면 다시 그리지 않는다.** 행을 전부 지우고 새로 만들면 스크롤 위치가
 ## 초기화되고, 값이 그대로인 재동기화에서도 그 일이 벌어진다(도감이 같은 이유로
 ## 서명을 비교한다).
-func apply_server_state(owned: Array, bells: int, goods: Array = []) -> void:
-	var next_goods: Array = goods if not goods.is_empty() else _goods
+func apply_server_state(owned: Array, bells: int, goods: Variant = null) -> void:
+	# `goods`를 빈 배열로 생략 신호를 삼으면 **서버가 빈 목록을 보낸 경우**와 구분이
+	# 안 된다 — 그때 창은 옛 목록의 [사기] 버튼을 계속 그린다(리뷰 지적).
+	var next_goods: Array = (goods as Array) if goods != null else _goods
 	if _bells == bells and _owned == owned and _goods == next_goods:
 		return
-	_owned = owned
+	# **복사해서 보관한다.** 호출자가 넘기는 것은 world.gd의 그 배열 자체라, 누가
+	# 제자리 변경(`append`·`clear`)을 넣으면 위 비교가 자기 자신 비교가 되어 가드가
+	# 항상 참이 되고 **창이 영영 갱신되지 않는다**(리뷰 지적).
+	_owned = owned.duplicate()
 	_bells = bells
-	_goods = next_goods
+	_goods = next_goods.duplicate()
 	if is_node_ready():
 		_fill()
 
 func _ready() -> void:
 	_hooks = TestHooks.new()
 	add_child(_hooks)
-	# **가방 화면 위에 뜬다.** 같은 레이어(기본 1)면 그리는 순서는 위여도 입력은
-	# 먼저 만들어진 화면이 먹는다(도감·꾸미기와 같은 이유).
+	# **다른 전체화면 모달과 같은 레이어(5).** 같은 레이어(기본 1)면 그리는 순서는
+	# 위여도 입력은 먼저 만들어진 화면이 먹는다(도감·꾸미기와 같은 이유).
+	#
+	# 모달은 서로 배타적이다 — 가게가 열려 있으면 `_modal_open()`이 키·탭 입력을 막아
+	# 가방이 그 위에 열리지 않는다. 그래서 "가게 위에 가방" 겹침은 생기지 않는다.
 	layer = 5
 
 	var dim := Button.new()
@@ -96,6 +104,7 @@ func _ready() -> void:
 	_bells_label.add_theme_font_size_override("font_size", UiScale.font(18))
 	_bells_label.add_theme_color_override("font_color", Palette.color("ui", "row_text"))
 	box.add_child(_bells_label)
+	_hooks.track("shopBells", _bells_label)
 
 	# 상품이 늘어나면 폰에서 패널을 넘어간다(도감과 같은 이유로 스크롤을 둔다).
 	var scroll := ScrollContainer.new()
@@ -144,13 +153,13 @@ func _fill() -> void:
 
 		# 색 견본 — 글을 못 읽는 아이도 **무엇을 사는지** 알 수 있어야 한다.
 		#
-		# **팔레트 색이 아닌 축은 견본을 비운다.** 머리는 색이 아니라 그리는 스타일
-		# 이름이라(`hair_bob`) 팔레트에 없고, 그대로 넣으면 견본이 **마젠타**로 뜬다
-		# — 서버도 린트도 그건 안 잡는다(리뷰 지적). 스타일 미리보기를 붙이기 전까지는
-		# 빈 자리로 두는 편이 "색이 저렇다"고 오해하게 만드는 것보다 낫다.
+		# **판정은 서버가 실어 보낸 `swatch`로 한다.** 색이 MISSING인지로 가르면
+		# "색 축이 아님"(머리 — 비우는 게 맞다)과 "팔레트가 깨짐"(outfit·skin —
+		# **마젠타로 시끄럽게 알려야 하는 사고**)을 구분하지 못해 고장 신호를 삼킨다
+		# (리뷰 지적). 클라이언트가 직접 판단하면 축 목록을 또 들고 있어야 한다.
 		var swatch := ColorRect.new()
-		var color := Palette.color("character", String(good.get("value", "")))
-		swatch.color = color if color != Palette.MISSING else Color(0, 0, 0, 0)
+		swatch.color = Palette.color("character", String(good.get("value", ""))) \
+			if bool(good.get("swatch", true)) else Color(0, 0, 0, 0)
 		swatch.custom_minimum_size = Vector2(UiScale.dim(SWATCH), UiScale.dim(SWATCH))
 		row.add_child(swatch)
 

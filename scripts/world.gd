@@ -2231,11 +2231,12 @@ func _on_npc_deliver(npc_id: String) -> void:
 func _on_npc_done(npc_id: String, reward: int, given: Dictionary, bells: int,
 		inventory: Dictionary, state: Dictionary) -> void:
 	_slot["bells"] = bells
-	_refresh_shop_ui()
 	if typeof(inventory) == TYPE_DICTIONARY:
 		_slot["inventory"] = inventory
 	if typeof(state) == TYPE_DICTIONARY:
 		_apply_npc_state(state)
+	# 다른 호출부(경주·판매)와 같이 **상태를 반영한 뒤** 부른다.
+	_refresh_shop_ui()
 	var npc := _npc_by_id(npc_id)
 	if npc != null:
 		npc.say(npc.dialogue("thanks", "고마워!"))
@@ -2415,9 +2416,6 @@ func _is_uuid(text: String) -> bool:
 		_uuid_re.compile("^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 	return _uuid_re.search(text) != null
 
-## 도감을 연다(가방 화면의 [도감] 버튼).
-## 가게 화면. 목록·가격·잔액은 전부 서버가 준 값을 그린다 — 클라이언트가 계산하면
-## "화면에는 살 수 있는데 서버가 거절하는" 상태가 된다.
 ## 열려 있는 가게 창을 서버 값으로 맞춘다. **벨이 바뀌는 모든 자리에서 부른다** —
 ## 한 지점만 막으면 다른 경로(경주 보상·부탁 정산·판매)에서 창이 옛 잔액을 그려
 ## "살 수 있어 보이는데 서버가 거절"이 된다(리뷰 지적).
@@ -2425,6 +2423,8 @@ func _refresh_shop_ui() -> void:
 	if _shop_ui != null and is_instance_valid(_shop_ui):
 		_shop_ui.apply_server_state(_owned_goods, int(_slot.get("bells", 0)), _shop_goods)
 
+## 가게 화면을 연다. 목록·가격·잔액은 전부 서버가 준 값을 그린다 — 클라이언트가
+## 계산하면 "화면에는 살 수 있는데 서버가 거절하는" 상태가 된다.
 func _open_shop() -> void:
 	if _shop_ui != null and is_instance_valid(_shop_ui):
 		return
@@ -2468,6 +2468,7 @@ func _on_bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary,
 		_persist()
 	_show_toast("%s을(를) 샀습니다" % String(good.get("label", "물건")))
 
+## 도감을 연다(가방 화면의 [도감] 버튼).
 func _open_dex() -> void:
 	if _dex_ui != null and is_instance_valid(_dex_ui):
 		return

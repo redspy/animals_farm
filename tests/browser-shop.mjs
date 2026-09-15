@@ -271,6 +271,55 @@ const looked = await waitFor(
 check(looked !== null, `산 옷(${boughtValue})이 남의 화면에도 전달된다`);
 await page.screenshot({ path: `${OUT}/2-구매후.png` }).catch(() => {});
 
+// --- 3-b. 다시 연 가게가 서버 잔액을 그린다 ---
+// 이 커밋들의 요지인데 E2E가 없어서 같은 회귀가 반복해서 났다(가게 창이 옛 잔액을
+// 그려 "살 수 있어 보이는데 서버가 거절").
+//
+// **가게를 연 채 파는 흐름은 없다** — 모달은 서로 배타적이라 가게가 열려 있으면
+// 가방이 안 열린다(그 사실을 여기서 함께 고정한다). 벨이 열린 채 바뀌는 실제 경로는
+// 경주 보상·재동기화처럼 비동기로 오는 것들이고, 그건 서버 유닛과 `_refresh_shop_ui`
+// 호출부로 덮는다.
+console.log('\n[검증] 가게가 서버 잔액을 그린다');
+await tapGodot(page, 'shopClose');
+await page.waitForTimeout(500);
+const tree2 = gcfg.spawns
+  .map((s, index) => ({ ...s, index }))
+  .filter((s) => s.item === 'wood')
+  .sort((a, b) => Math.hypot(a.x - shopNpc.x, a.z - shopNpc.z)
+    - Math.hypot(b.x - shopNpc.x, b.z - shopNpc.z))[0];
+await walkTo('x', tree2.x);
+await walkTo('z', tree2.z + 1.2);
+await clickWorld(tree2.x, tree2.z);
+await page.waitForFunction(
+  () => Number(window.afTest?.state?.bagCount ?? 0) > 0, null, { timeout: 20000 },
+).catch(() => {});
+const beforeSell = (await state()).bells;
+await page.keyboard.press('KeyI');
+await page.waitForFunction(() => window.afTest?.points?.invSellAll != null,
+  null, { timeout: 8000 });
+await tapGodot(page, 'invSellAll');
+await page.waitForTimeout(900);
+await tapGodot(page, 'invClose');
+await page.waitForTimeout(700);
+const afterSell = await state();
+check(afterSell.bells > beforeSell, `팔아서 벨이 늘었다 (${beforeSell} → ${afterSell.bells})`);
+
+// 다시 연 가게가 **그 잔액**을 그려야 한다.
+await walkTo('x', shopNpc.x);
+await walkTo('z', shopNpc.z + 2.0);
+let reopened = false;
+for (let i = 0; i < 6; i += 1) {
+  const pt = await godotPoint(page, 'nearestNpc').catch(() => null);
+  if (pt) await page.mouse.click(pt.x, pt.y);
+  reopened = await page.waitForFunction(
+    () => window.afTest?.points?.shopBells != null, null, { timeout: 2500 },
+  ).then(() => true).catch(() => false);
+  if (reopened) break;
+  await page.waitForTimeout(400);
+}
+check(reopened, '가게를 다시 열었다');
+await page.screenshot({ path: `${OUT}/4-판매후가게.png` }).catch(() => {});
+
 // --- 4. 산 색이 꾸미기 화면에 열린다 ---
 console.log('\n[검증] 산 것이 꾸미기에 열린다');
 await tapGodot(page, 'shopClose');

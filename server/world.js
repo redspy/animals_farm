@@ -729,6 +729,11 @@ export class WorldState {
         value,
         label: String(raw.label || id),
         price,
+        // 화면이 **색 견본을 그릴 수 있는 축인가.** 클라이언트가 직접 판단하려면 축
+        // 목록을 또 들고 있어야 하고(방금 테스트에서 없앤 이중화가 클라이언트에
+        // 되살아난다), 색이 MISSING인지로 가르면 **팔레트 고장 신호까지 삼킨다**
+        // — outfit·skin의 마젠타는 시끄럽게 알려야 하는 사고다(리뷰 지적).
+        swatch: Boolean(LOOK_VALUE_PREFIX[kind]),
       });
     }
 
