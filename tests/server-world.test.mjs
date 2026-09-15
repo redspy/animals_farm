@@ -1411,18 +1411,25 @@ test('상품 가격이 범위를 벗어나면 클램프한다(공짜가 되지 �
   noLimits.goods[0].price = -500;
   noLimits.goods[1].price = 999999;     // 폴백 상한도 데이터와 같아야 한다
   noLimits.goods[2].value = '';         // 빈 value는 카탈로그에서 빠져야 한다
+  noLimits.goods[3].value = 'outfit_pinkk';   // 오타 — 팔레트에 없는 키
   writeFileSync(join(broken, 'shop.json'), JSON.stringify(noLimits));
   const w2 = new WorldState({ dataDir: broken, persist: false });
+  // **등호로 조인다.** `>=`/`<=`만 보면 폴백이 데이터보다 **좁아진** 경우
+  // (예: [1, 50])를 못 잡는다 — 입력이 양쪽 범위를 다 넘게 잡혀 있으므로 클램프
+  // 결과는 정확히 데이터의 경계여야 한다(리뷰 지적).
   const low = w2.shopGoods.get(noLimits.goods[0].id);
-  assert.ok(low && low.price >= dataRange[0],
-    `limits가 없을 때 공짜가 됐다: ${low && low.price}`);
+  assert.equal(low && low.price, dataRange[0],
+    `폴백 하한이 데이터와 갈렸다: ${low && low.price} (데이터 하한 ${dataRange[0]})`);
   const high = w2.shopGoods.get(noLimits.goods[1].id);
-  assert.ok(high && high.price <= dataRange[1],
+  assert.equal(high && high.price, dataRange[1],
     `폴백 상한이 데이터와 갈렸다: ${high && high.price} (데이터 상한 ${dataRange[1]})`);
   // **빈 value는 살 수 있으면 안 된다** — 벨은 나가고 owned에 들어가 재구매도 막히는데
   // 정작 꾸미기에는 열리지 않아 되돌릴 수 없는 손실이 된다.
   assert.ok(!w2.shopGoods.has(noLimits.goods[2].id),
     'value가 빈 상품이 카탈로그에 남았다');
+  // 팔레트에 없는 키도 같은 손실이다 — 사면 벨은 나가고 마젠타로 그려진다.
+  assert.ok(!w2.shopGoods.has(noLimits.goods[3].id),
+    'value가 팔레트에 없는 상품이 카탈로그에 남았다');
 
   const clamped = w.shopGoods.get(shop.goods[0].id);
   assert.ok(clamped, '범위 밖 상품이 사라졌다');
@@ -1434,6 +1441,40 @@ test('상품 가격이 범위를 벗어나면 클램프한다(공짜가 되지 �
     assert.ok(g.price >= min && g.price >= 1,
       `공짜가 됐다(${shop.goods[idx].price} → ${g.price})`);
   }
+});
+
+test('팔레트를 못 읽어도 가게가 통째로 사라지지 않는다', () => {
+  // 전부 제외하면 카탈로그가 비고, 산 색이 allowedLook에서 빠져 꾸미기에서 사라지며,
+  // publicCustom이 남들 화면에서 그 옷을 떨군다 — 데이터 사고 하나가 "상품 하나 제외"가
+  // 아니라 "가게 전체 소멸"로 번진다(리뷰 지적). characters.json과 같은 규칙이다.
+  const dir = mkdtempSync(join(tmpdir(), 'af-nopalette-'));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(dir, name), readFileSync(join('data', name)));
+  }
+  writeFileSync(join(dir, 'palette.json'), '{ 깨진 JSON');
+  const w = new WorldState({ dataDir: dir, persist: false });
+  assert.ok(w.shopCatalog().length > 0, '팔레트 사고에 가게가 통째로 비었다');
+});
+
+test('상품 값이 그 축의 형식이어야 한다', () => {
+  // `{kind:"outfit", value:"eye_white"}`는 팔레트에 있지만 옷이 아니다 — 사면
+  // 입을 수가 없다. 반대로 hair는 **그리는 스타일 이름**이라 팔레트에 없으므로
+  // 팔레트만 보고 걸렀다면 머리 상품이 조용히 제외됐을 것이다.
+  const dir = mkdtempSync(join(tmpdir(), 'af-shopkind-'));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(dir, name), readFileSync(join('data', name)));
+  }
+  const shop = JSON.parse(readFileSync(join('data', 'shop.json'), 'utf-8'));
+  shop.goods[0].value = 'eye_white';                 // 팔레트엔 있지만 옷이 아니다
+  shop.goods[1] = { id: 'hair_bob_good', kind: 'hair', value: 'hair_bob', label: '단발', price: 500 };
+  writeFileSync(join(dir, 'shop.json'), JSON.stringify(shop));
+
+  const w = new WorldState({ dataDir: dir, persist: false });
+  assert.ok(!w.shopGoods.has(shop.goods[0].id), '축에 안 맞는 값이 카탈로그에 남았다');
+  assert.ok(w.shopGoods.has('hair_bob_good'),
+    '머리 스타일 상품이 제외됐다 — hair 값은 팔레트 키가 아니다');
 });
 
 test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)', () => {

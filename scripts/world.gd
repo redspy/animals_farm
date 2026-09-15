@@ -2598,6 +2598,19 @@ func _on_net_opened() -> void:
 func _on_net_closed(reason: String) -> void:
 	_net_label.text = "서버 끊김 — 혼자 플레이 (재연결 시도 중)"
 	push_warning("서버 연결 종료: %s" % reason)
+	# **다음 welcome까지는 서버 상태를 모르는 것으로 친다.** 자동 재연결이 돌기 때문에
+	# 이걸 안 내리면 재연결 직후(welcome 도착 전) `connected and _welcomed`가 되어
+	# 방금 막은 창이 그대로 열린다 — 그때 그려지는 것은 **이 세션의 옛 값**이다
+	# (토큰 이전은 씬을 다시 불러서 여기 해당하지 않는다 — 리뷰 지적).
+	#
+	# 게이트만 닫고 데이터를 남겨 두면, welcome에 그 키가 빠졌을 때 옛 목록이 그대로
+	# 열린다 — **값도 함께 비운다.** 열려 있던 가게 창도 닫는다(옛 잔액·보유가 그려진
+	# 채 남아 있을 이유가 없다).
+	_welcomed = false
+	_shop_goods.clear()
+	_owned_goods.clear()
+	if _shop_ui != null and is_instance_valid(_shop_ui):
+		_shop_ui.close()
 	# 남아 있던 다른 캐릭터/물건은 지운다 — 끊긴 뒤에도 남겨두면 유령이 된다.
 	for token: String in _remotes.keys():
 		(_remotes[token] as Node).queue_free()

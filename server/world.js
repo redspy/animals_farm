@@ -54,6 +54,14 @@ export const CLIENT_SHARED = {
   'scripts/world.gd:PICKUP_DISTANCE': 1.6,
 };
 
+/**
+ * 외형 축별 값 형식. **outfit·skin은 팔레트 색 키**라 접두어가 곧 축이고, 팔레트에
+ * 있는지까지 볼 수 있다. **hair는 그리는 스타일 이름**(`hair_long`·`hair_bob` …)이라
+ * 팔레트에 없으므로 서버가 검증할 수단이 없다 — 그건 스프라이트 코드가 아는 것이고,
+ * 데이터 린트와 화면으로 잡는다.
+ */
+const LOOK_VALUE_PREFIX = { outfit: 'outfit_', skin: 'skin', hair: null };
+
 export const LIMITS = {
   NAME_MAX: 12,
   CHAT_MAX: 200,
@@ -633,6 +641,21 @@ export class WorldState {
 
     // 가게 상품. **클라이언트와 같은 파일을 읽는다** — 가격을 두 곳에 나눠 두면
     // "화면에는 200인데 서버는 400을 받는" 상태가 된다.
+    // 상품이 가리키는 색이 실제로 있는지 보려면 팔레트가 필요하다 — 없는 키는
+    // 화면에 마젠타로 그려진다(docs/design.md §5).
+    //
+    // ⚠️ 이 검사가 보는 것은 **서버의** palette.json이고 실제로 그리는 것은 웹 빌드에
+    // 번들된 **클라이언트의** palette.json이다. 둘이 같을 때만 "마젠타를 막는다"가
+    // 성립한다(AF_DATA_DIR로 서버 데이터만 갈아 끼우면 갈린다 — 리뷰 지적).
+    const paletteCfg = readJson(join(dataDir, 'palette.json'), {});
+    const paletteColors = new Set(Object.keys(paletteCfg.character || {}));
+    if (paletteColors.size === 0) {
+      // **데이터 사고를 "가게 전체 소멸"로 키우지 않는다.** 전부 제외하면 카탈로그가
+      // 비고, 산 색이 allowedLook에서 빠져 꾸미기에서 사라지며, publicCustom이 남들
+      // 화면에서 그 옷을 떨군다. characters.json이 같은 상황을 다루는 방식과 맞춘다
+      // ("목록 밖"과 "목록이 없음"은 다르다 — 리뷰 지적).
+      console.error('[world] palette.json에서 character 색을 읽지 못했습니다 — 상품 색 검증을 건너뜁니다');
+    }
     const shopCfg = readJson(join(dataDir, 'shop.json'), { goods: [] });
     const slim = (key, fallback) => rangeOf(shopCfg.limits, key, 'shop.json', fallback);
     // **폴백 하한도 1이다.** limits 블록이 통째로 빠지거나 형식이 깨지면 이 폴백이
@@ -649,6 +672,30 @@ export class WorldState {
         console.warn(`[world] shop.json의 ${id}.kind가 외형 축이 아니라 제외: ${raw.kind}`);
         continue;
       }
+      // **value도 같은 자리에서 검증한다**(상품 형태 검증 → 가격 판정 순서).
+      //
+      // 팔레트에 없는 키까지 본다: 오타 하나면 벨은 차감되고 `already_owned`로
+      // 재구매도 막히는데 정작 **마젠타로 그려진다** — 중복 구매를 막은 이유
+      // ("이미 가진 것을 또 사면 벨만 사라진다")와 같은 급의 손실이다. 데이터 린트가
+      // 리포의 데이터는 지켜 주지만 그건 커밋 게이트일 뿐이고, AF_DATA_DIR로 다른
+      // 데이터를 물리는 경로가 실제로 있다(리뷰 지적).
+      const value = typeof raw.value === 'string' ? raw.value : '';
+      if (!value) {
+        console.warn(`[world] shop.json의 ${id}.value가 비었거나 문자열이 아니라 제외: ${JSON.stringify(raw.value)}`);
+        continue;
+      }
+      // **축마다 값의 성격이 다르다.** outfit·skin은 팔레트 색 키지만 hair는
+      // **그리는 스타일 이름**이라(`hair_long` 등) 팔레트에 없다 — 팔레트만 보고
+      // 걸렀다면 나중에 머리 상품을 넣는 순간 조용히 제외됐을 것이다.
+      const prefix = LOOK_VALUE_PREFIX[kind];
+      if (prefix && !value.startsWith(prefix)) {
+        console.warn(`[world] shop.json의 ${id}.value(${value})가 ${kind} 값 형식이 아니라 제외`);
+        continue;
+      }
+      if (prefix && paletteColors.size > 0 && !paletteColors.has(value)) {
+        console.warn(`[world] shop.json의 ${id}.value(${value})가 팔레트에 없어 제외 — 샀는데 마젠타로 그려진다`);
+        continue;
+      }
       // **가격은 클램프한다(폴백이 아니다).** num()은 범위를 벗어나면 폴백을
       // 돌려주는데 여기 폴백은 0이라, `"price": 150000` 오타 하나가 **그 상품을
       // 공짜로** 만든다 — 틀리는 방향이 최악이다(리뷰 지적). 판매가(`priceOf`)가
@@ -662,20 +709,10 @@ export class WorldState {
         console.warn(`[world] shop.json의 ${id}.price ${rawPrice}이 유효범위 [${priceRange[0]}, ${priceRange[1]}] 밖 — 클램프`);
       }
       const price = Math.floor(Math.min(priceRange[1], Math.max(priceRange[0], rawPrice)));
-      // **value도 kind와 대칭으로 검증한다.** 빈 값을 카탈로그에 넣으면 그 상품을
-      // 살 수 있는데, 벨은 차감되고 owned에 들어가 재구매도 막히면서(already_owned)
-      // 정작 `allowedLook`은 falsy 값을 안 넣어 **꾸미기에 열리지도 않는다** —
-      // 중복 구매를 막은 이유("이미 가진 것을 또 사면 벨만 사라진다")와 같은 급의
-      // 되돌릴 수 없는 손실이다(리뷰 지적). 데이터 린트는 커밋 게이트일 뿐이고,
-      // AF_DATA_DIR로 다른 데이터를 물리는 경로가 실제로 있다.
-      if (!String(raw.value || '')) {
-        console.warn(`[world] shop.json의 ${id}.value가 비어 제외합니다`);
-        continue;
-      }
       this.shopGoods.set(id, {
         id,
         kind,
-        value: String(raw.value),
+        value,
         label: String(raw.label || id),
         price,
       });
