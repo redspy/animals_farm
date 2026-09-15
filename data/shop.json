@@ -1,0 +1,14 @@
+{
+  "_comment": "가게 상품. 클라이언트는 목록을 그리고, 서버는 같은 파일로 가격·존재를 판정한다 — 두 곳에 숫자를 나눠 두면 '화면에는 200인데 서버는 400을 받는' 상태가 된다. kind는 외형의 어느 축인지(1차는 outfit뿐)이고 value는 data/palette.json의 character 그룹 키다. 가격대는 하루 수입 감각으로 나눴다(조개 180, 오징어 600, 실러캔스 2500): 200~400은 몇 번 캐면 사는 것, 800은 하루 모아야 사는 것, 1500은 며칠 목표가 되는 것. 상품을 추가하면 팔레트에 색부터 넣을 것 — 없는 키는 마젠타로 그려진다(데이터 린트가 커밋 전에 잡는다).",
+  "schema_version": 1,
+  "limits": {
+    "price": [0, 100000]
+  },
+  "goods": [
+    { "id": "outfit_pink", "kind": "outfit", "value": "outfit_pink", "label": "분홍 옷", "price": 200 },
+    { "id": "outfit_mint", "kind": "outfit", "value": "outfit_mint", "label": "민트 옷", "price": 300 },
+    { "id": "outfit_orange", "kind": "outfit", "value": "outfit_orange", "label": "주황 옷", "price": 400 },
+    { "id": "outfit_black", "kind": "outfit", "value": "outfit_black", "label": "검정 옷", "price": 800 },
+    { "id": "outfit_gold", "kind": "outfit", "value": "outfit_gold", "label": "금색 옷", "price": 1500 }
+  ]
+}

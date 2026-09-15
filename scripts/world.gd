@@ -157,6 +157,10 @@ var _tracked_buttons: Dictionary = {}   # 훅 이름 -> Control(줌·전체화�
 ## 외형 커스터마이즈(프리셋 위에 덮는 값)와 서버가 준 선택지.
 var _custom: Dictionary = {}
 var _appearance_choices: Dictionary = {}
+## 가게 상품 목록과 내가 산 것 — 서버가 welcome/구매 응답으로 준다.
+var _shop_goods: Array = []
+var _owned_goods: Array = []
+var _shop_ui: ShopUI = null
 var _look_ui: AppearanceUI = null
 ## 서버가 없을 때 바꾼 외형 — 재접속하면 **실제로 흘려보낸다**(외형은 뒤늦게 보내도
 ## 검증할 것이 화이트리스트뿐이라 안전하다). `_pending_gathers`는 반대로 버린다 —
@@ -2148,6 +2152,11 @@ func _talk_to(npc: Npc) -> void:
 	# 가방 경로(_open_inventory)의 해제가 여기엔 적용되지 않았다(리뷰 지적).
 	if _touch != null:
 		_touch.release_stick()
+	# 가게 주인은 부탁을 주지 않는다 — 대화창 대신 가게를 연다(설계 회의 §2).
+	if npc.is_shop:
+		npc.say(npc.next_greeting())
+		_open_shop()
+		return
 	var state: Dictionary = _npc_state.get(npc.id, {})
 	var done := bool(state.get("done", false))
 	var request: Variant = state.get("request", null)
@@ -2390,6 +2399,46 @@ func _is_uuid(text: String) -> bool:
 	return _uuid_re.search(text) != null
 
 ## 도감을 연다(가방 화면의 [도감] 버튼).
+## 가게 화면. 목록·가격·잔액은 전부 서버가 준 값을 그린다 — 클라이언트가 계산하면
+## "화면에는 살 수 있는데 서버가 거절하는" 상태가 된다.
+func _open_shop() -> void:
+	if _shop_ui != null and is_instance_valid(_shop_ui):
+		return
+	if _touch != null:
+		_touch.release_stick()
+	_shop_ui = ShopUI.new()
+	_shop_ui.setup(_shop_goods, _owned_goods, int(_slot.get("bells", 0)))
+	_shop_ui.buy_requested.connect(func(good_id: String) -> void:
+		if _net != null and _net.connected:
+			_net.send_buy(good_id)
+		else:
+			_show_toast("서버에 연결돼 있지 않아 살 수 없습니다"))
+	_shop_ui.closed.connect(func() -> void:
+		_shop_ui = null
+		_publish_fullscreen_hotspot.call_deferred())
+	add_child(_shop_ui)
+	_publish_fullscreen_hotspot.call_deferred()
+
+## 샀을 때. **서버가 차감한 잔액과 소유 목록을 그대로 받는다** — 클라이언트가
+## 계산하면 재접속에 서버 값으로 덮여 "샀는데 없는" 상태가 된다.
+func _on_bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary) -> void:
+	_slot["bells"] = bells
+	_owned_goods = owned
+	if typeof(choices) == TYPE_DICTIONARY and not choices.is_empty():
+		_appearance_choices = choices
+	_persist()
+	_refresh_hud()
+	if _shop_ui != null and is_instance_valid(_shop_ui):
+		_shop_ui.apply_bought(owned, bells)
+	# 산 것을 **바로 입어 보는 것**이 이 기능의 보상이다 — 꾸미기 화면을 열 때
+	# 그 색이 이미 골라져 있게 미리 반영한다.
+	var kind := String(good.get("kind", ""))
+	var value := String(good.get("value", ""))
+	if not kind.is_empty() and not value.is_empty():
+		_custom[kind] = value
+		_apply_my_custom(_custom, true)
+	_show_toast("%s을(를) 샀습니다" % String(good.get("label", "물건")))
+
 func _open_dex() -> void:
 	if _dex_ui != null and is_instance_valid(_dex_ui):
 		return
@@ -2421,6 +2470,7 @@ func _npc_data() -> Array:
 ## 조이스틱만 뚫렸다** — 가방을 연 채 스틱으로 걸어 다닐 수 있었다(리뷰 지적).
 func _modal_open() -> bool:
 	return (_inventory_ui != null and is_instance_valid(_inventory_ui)) \
+		or (_shop_ui != null and is_instance_valid(_shop_ui)) \
 		or (_dex_ui != null and is_instance_valid(_dex_ui)) \
 		or (_look_ui != null and is_instance_valid(_look_ui)) \
 		or (_npc_ui != null and is_instance_valid(_npc_ui)) \
@@ -2505,6 +2555,7 @@ func _start_net() -> void:
 	_net.rename_received.connect(_on_rename)
 	_net.activity_received.connect(_on_activity_received)
 	_net.ball_received.connect(_on_ball_received)
+	_net.bought.connect(_on_bought)
 	_net.goal_scored.connect(_on_goal_scored)
 	_net.park_state.connect(_on_park_state)
 	_net.server_error.connect(_on_server_error)
@@ -2565,6 +2616,12 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 	# 검사한다). 선택지 목록도 서버가 보낸 것만 그린다.
 	if typeof(you.get("appearanceChoices")) == TYPE_DICTIONARY:
 		_appearance_choices = you["appearanceChoices"]
+	# 가게 목록도 서버가 준다 — 클라이언트도 같은 data/shop.json을 읽지만, 가격은
+	# 서버 판정이 기준이므로 화면도 서버가 준 값을 그린다.
+	if typeof(you.get("shop")) == TYPE_ARRAY:
+		_shop_goods = you["shop"]
+	if typeof(you.get("owned")) == TYPE_ARRAY:
+		_owned_goods = you["owned"]
 	if typeof(you.get("custom")) == TYPE_DICTIONARY:
 		# 오프라인에서 바꿔 둔 것이 있으면 **그것이 이긴다**(사용자가 고른 값이
 		# 서버의 옛 값보다 최신이다). 세이브의 표시도 함께 본다 — 그래야 탭을
@@ -3219,10 +3276,16 @@ func _on_player_arrived() -> void:
 			elif target != null:
 				_show_toast("조금 더 가까이 가야 합니다")
 		"pickup":
-			if _drops.has(id) and _net != null and _net.connected:
-				_net.send_pickup(id)
-			elif not _drops.has(id):
+			# **도착 후 거리를 다시 본다.** 다른 분기(gather/kick/npc)는 전부 재검사를
+			# 하는데 줍기만 `_drops.has(id)`만 봤다 — 경로가 막혀 도착점에 못 닿으면
+			# 서버가 `too_far`를 돌려주고 화면에는 "서버: 너무 멉니다"가 떴다
+			# (2026-09-10 줍기에 사거리가 생기면서 드러난 경로).
+			if not _drops.has(id):
 				_show_toast("아쉽게도 물건이 사라졌습니다")
+			elif _nearest_drop() != id:
+				_show_toast("조금 더 가까이 가야 합니다")
+			elif _net != null and _net.connected:
+				_net.send_pickup(id)
 		"mount":
 			var parts := id.split(":")
 			if parts.size() == 2:

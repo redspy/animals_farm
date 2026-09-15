@@ -22,6 +22,7 @@ const LIMIT_READERS = [
   { fn: 'rlim', file: 'world.json', limitsOf: (d) => ((d.playground || {}).race || {}).limits || {} },
   { fn: 'nlim', file: 'npcs.json', limitsOf: (d) => d.limits || {} },
   { fn: 'glim', file: 'gatherables.json', limitsOf: (d) => d.limits || {} },
+  { fn: 'slim', file: 'shop.json', limitsOf: (d) => d.limits || {} },
 ];
 
 // 큰따옴표·백틱도 받는다(작은따옴표만 보면 표기를 바꾼 호출이 조용히 빠진다).
@@ -205,6 +206,10 @@ test('채집 → 드랍 → 다른 사람 줍기까지 서버 가방으로 이�
   w.gather(TOKEN_A, g.index, 6_000_000);
   const dropped = w.drop(TOKEN_A, 'wood', 2, 2);
   assert.ok(dropped.item, '채집한 물건은 드랍할 수 있어야 함');
+  // **주우려면 그 앞에 서야 한다**(2026-09-10에 줍기 사거리가 생겼다 — 예전에는
+  // 섬 반대편에서도 주워졌다). 클라이언트는 원래 1.6 안에서만 줍기를 보낸다.
+  const picker = w.players.get(TOKEN_B);
+  picker.x = dropped.item.x; picker.z = dropped.item.z;
   assert.equal(w.pickup(TOKEN_B, dropped.item.id).inventory.wood, 1);
 });
 
@@ -1166,6 +1171,47 @@ test('이동이 간격 제한에 걸려 서버 좌표가 뒤처져도 공을 찰
   assert.ok(!r.error, `뒤처진 좌표 때문에 거절됐다: ${JSON.stringify(r.error)}`);
 });
 
+test('여유는 활동 속도에서 나온다(달리면서도 정상 플레이가 거절되지 않는다)', () => {
+  // 고정 0.7은 걷기(4.2 × 80ms)를 기준으로 잡은 값인데 줍기·채집은 **달리는
+  // 중에도 된다** — 킥보드(6.0, 존 제한 없음)로 달리면 한 틱이 버려졌을 때
+  // 지연이 1.2유닛까지 벌어져 고정 여유로는 거절됐다(리뷰 지적).
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '테스터', preset: [...w.presetIds][0] });
+  const p = w.players.get(TOKEN_A);
+  const walking = w.lagPadOf(p);
+  p.activity = 'kickboard';
+  const riding = w.lagPadOf(p);
+  assert.ok(riding > walking, `달릴 때 여유가 늘지 않는다 (걷기 ${walking}, 킥보드 ${riding})`);
+  assert.ok(riding >= w.speedOf(p) * 0.08 * 2 - 1e-9, '여유가 한 틱의 두 배보다 작다');
+
+  // 킥보드 사거리 밖(걷기 여유로는 거절되는 거리)에서 실제로 주워지는지 본다.
+  p.inventory.wood = 1;
+  const dropped = w.drop(TOKEN_A, 'wood', p.x, p.z);
+  const item = dropped.item;
+  const between = 1.6 + (walking + riding) / 2;   // 걷기 여유 밖, 킥보드 여유 안
+  p.x = item.x + between; p.z = item.z;
+  const r = w.pickup(TOKEN_A, item.id);
+  assert.ok(!r.error, `달리는 중에 거절됐다(거리 ${between.toFixed(2)}): ${JSON.stringify(r.error)}`);
+});
+
+test('버리는 자리는 내 손이 닿는 곳으로 강제된다', () => {
+  // 줍기에 사거리가 생긴 뒤로, 변조 클라가 도달 불가 지점에 놓으면 **아무도
+  // 회수할 수 없다** — 아이템 만료가 없어 MAX_WORLD_ITEMS를 채우면 월드 전체
+  // 드랍이 막힌다(리뷰 지적).
+  const w = fresh();
+  w.join({ token: TOKEN_A, name: '테스터', preset: [...w.presetIds][0] });
+  const p = w.players.get(TOKEN_A);
+  p.inventory.wood = 1;
+  const dropped = w.drop(TOKEN_A, 'wood', p.x + 30, p.z + 20);
+  assert.ok(dropped.item, '드랍이 거절됐다');
+  const away = Math.hypot(dropped.item.x - p.x, dropped.item.z - p.z);
+  assert.ok(away <= LIMITS.PICKUP_DISTANCE + w.lagPadOf(p) + 1e-9,
+    `손이 닿지 않는 곳에 놓였다(거리 ${away.toFixed(2)})`);
+  // 그 자리에서 실제로 주울 수 있어야 한다.
+  const r = w.pickup(TOKEN_A, dropped.item.id);
+  assert.ok(!r.error, `내가 버린 것을 못 줍는다: ${JSON.stringify(r.error)}`);
+});
+
 test('멀리 있는 물건은 주울 수 없다', () => {
   // 줍기에만 거리 검사가 없어서 섬 반대편 물건도 주워졌다 — 남이 떨어뜨린 것을
   // 화면 밖에서 쓸어 담을 수 있었다(2026-09-10 전수검사).
@@ -1179,7 +1225,7 @@ test('멀리 있는 물건은 주울 수 없다', () => {
   assert.ok(!dropped.error, `드랍 실패: ${JSON.stringify(dropped.error)}`);
   const id = dropped.item.id;
 
-  b.x = a.x + 20; b.z = a.z + 10;                    // 섬 반대편
+  b.x = dropped.item.x + 20; b.z = dropped.item.z + 10;   // 물건에서 멀리
   const far = w.pickup(TOKEN_B, id);
   assert.ok(far.error && far.error.code === 'too_far',
     `멀리서 주워졌다: ${JSON.stringify(far.error ?? 'ok')}`);
@@ -1188,6 +1234,145 @@ test('멀리 있는 물건은 주울 수 없다', () => {
   const near = w.pickup(TOKEN_B, id);
   assert.ok(!near.error, `가까이서도 거절됐다: ${JSON.stringify(near.error)}`);
   assert.equal(near.inventory.wood, 1, '주웠는데 가방에 없다');
+});
+
+// ---------------------------------------------------------------------------
+// 가게 (벨의 첫 소비처 — 재화·소유는 서버가 소유한다)
+// ---------------------------------------------------------------------------
+
+function shopper(w, bells = 5000) {
+  w.join({ token: TOKEN_A, name: '손님', preset: [...w.presetIds][0] });
+  const p = w.players.get(TOKEN_A);
+  p.bells = bells;
+  return p;
+}
+
+test('물건을 사면 벨이 줄고 소유에 남는다', () => {
+  const w = fresh();
+  const p = shopper(w);
+  const good = w.shopCatalog()[0];
+  const r = w.buy(TOKEN_A, good.id, 10_000);
+  assert.ok(!r.error, `구매가 거절됐다: ${JSON.stringify(r.error)}`);
+  assert.equal(p.bells, 5000 - good.price, '벨이 정확히 차감되지 않았다');
+  assert.ok(w.ownedGoods(p).includes(good.id), '소유에 안 남았다');
+});
+
+test('벨이 모자라면 거절하고 벨을 건드리지 않는다', () => {
+  const w = fresh();
+  const good = w.shopCatalog().reduce((a, b) => (a.price >= b.price ? a : b));
+  const p = shopper(w, good.price - 1);
+  const r = w.buy(TOKEN_A, good.id, 10_000);
+  assert.equal(r.error && r.error.code, 'not_enough_bells');
+  assert.equal(p.bells, good.price - 1, '거절인데 벨이 바뀌었다');
+  assert.equal(w.ownedGoods(p).length, 0, '거절인데 소유에 남았다');
+  // 얼마가 모자란지 알려준다 — 없으면 가게와 가방을 왕복하게 된다.
+  assert.equal(r.need.price, good.price);
+});
+
+test('이미 산 것은 다시 살 수 없다(벨만 사라지는 사고를 막는다)', () => {
+  const w = fresh();
+  const p = shopper(w);
+  const good = w.shopCatalog()[0];
+  w.buy(TOKEN_A, good.id, 10_000);
+  const after = p.bells;
+  const again = w.buy(TOKEN_A, good.id, 20_000);
+  assert.equal(again.error && again.error.code, 'already_owned');
+  assert.equal(p.bells, after, '중복 구매로 벨이 사라졌다');
+});
+
+test('없는 상품과 연타는 거절한다', () => {
+  const w = fresh();
+  const p = shopper(w);
+  assert.equal(w.buy(TOKEN_A, '__없는상품__', 10_000).error.code, 'bad_good');
+  assert.equal(p.bells, 5000, '없는 상품인데 벨이 줄었다');
+  const good = w.shopCatalog()[0];
+  w.buy(TOKEN_A, good.id, 30_000);
+  const second = w.shopCatalog()[1];
+  assert.equal(w.buy(TOKEN_A, second.id, 30_100).error.code, 'rate_limited');
+});
+
+test('산 색은 그 사람에게만 열린다', () => {
+  const w = fresh();
+  const p = shopper(w);
+  const good = w.shopCatalog()[0];
+  // 사기 전에는 프리셋에 없는 색이라 거절된다.
+  const before = w.appearance(TOKEN_A, { [good.kind]: good.value }, 10_000);
+  assert.equal(before.error && before.error.code, 'bad_appearance');
+
+  w.buy(TOKEN_A, good.id, 20_000);
+  const after = w.appearance(TOKEN_A, { [good.kind]: good.value }, 30_000);
+  assert.ok(!after.error, `산 색인데 거절됐다: ${JSON.stringify(after.error)}`);
+  assert.equal(after.custom[good.kind], good.value);
+  assert.ok(w.appearanceChoices(TOKEN_A)[good.kind].includes(good.value),
+    '내 선택지에 안 들어왔다');
+
+  // **안 산 사람에게는 안 열린다.**
+  w.join({ token: TOKEN_B, name: '남', preset: [...w.presetIds][0] });
+  assert.ok(!w.appearanceChoices(TOKEN_B)[good.kind].includes(good.value),
+    '안 산 사람 선택지에 들어갔다');
+  assert.equal(w.appearance(TOKEN_B, { [good.kind]: good.value }, 40_000).error.code,
+    'bad_appearance');
+});
+
+test('산 것은 재시작해도 남는다', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'af-shop-'));
+  const statePath = join(dir, 'state.json');
+  const w = new WorldState({ statePath, persist: true });
+  const p = shopper(w);
+  const good = w.shopCatalog()[0];
+  w.buy(TOKEN_A, good.id, 10_000);
+  const bells = p.bells;
+  w.save();
+
+  const again = new WorldState({ statePath, persist: true });
+  const back = again.players.get(TOKEN_A);
+  assert.ok(back, '플레이어가 사라졌다');
+  assert.equal(back.bells, bells, '벨이 달라졌다');
+  assert.ok(again.ownedGoods(back).includes(good.id), '산 것이 사라졌다 — 벨은 이미 냈다');
+});
+
+test('가게 주인은 부탁 후보에서 빠진다(requests가 있어도)', () => {
+  // **requests를 넣어서 확인한다.** 지금 데이터는 가게 주인의 requests가 비어 있어
+  // 다른 조건에 먼저 걸린다 — 그 상태로 검사하면 `shop` 플래그를 지워도 테스트가
+  // 통과한다(플래그를 검증하지 못하는 테스트).
+  const dir = mkdtempSync(join(tmpdir(), 'af-shopnpc-'));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(dir, name), readFileSync(join('data', name)));
+  }
+  const npcs = JSON.parse(readFileSync(join('data', 'npcs.json'), 'utf-8'));
+  const shopEntries = npcs.npcs.filter((n) => n.shop === true);
+  assert.ok(shopEntries.length > 0, '가게 주인이 데이터에 없다');
+  for (const n of shopEntries) n.requests = [{ item: 'wood', count: 1 }];
+  writeFileSync(join(dir, 'npcs.json'), JSON.stringify(npcs));
+
+  const w = new WorldState({ dataDir: dir, persist: false });
+  w.join({ token: TOKEN_A, name: '손님', preset: [...w.presetIds][0] });
+  const state = w.npcState(TOKEN_A);
+  for (const n of shopEntries) {
+    assert.equal(state[n.id].request, null,
+      `가게 주인(${n.id})이 부탁을 준다 — 대화창에 버튼이 둘이 된다`);
+  }
+  // 평범한 이웃은 여전히 부탁을 준다(전부 막아 버리면 안 된다).
+  const normal = [...w.npcs.values()].find((n) => !n.shop);
+  assert.ok(state[normal.id].request, '일반 이웃까지 부탁이 막혔다');
+});
+
+test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)', () => {
+  // 없는 팔레트 키는 화면에 마젠타로 그려진다 — 커밋 전에 잡는다.
+  const shop = JSON.parse(readFileSync(join('data', 'shop.json'), 'utf-8'));
+  const palette = JSON.parse(readFileSync(join('data', 'palette.json'), 'utf-8')).character || {};
+  const range = (shop.limits || {}).price || [0, 100000];
+  assert.ok(Array.isArray(shop.goods) && shop.goods.length > 0, '상품이 없다');
+  const ids = new Set();
+  for (const g of shop.goods) {
+    assert.ok(!ids.has(g.id), `상품 id가 중복이다: ${g.id}`);
+    ids.add(g.id);
+    assert.ok(['hair', 'skin', 'outfit'].includes(g.kind), `${g.id}.kind가 외형 축이 아니다`);
+    assert.ok(palette[g.value], `${g.id}.value(${g.value})가 팔레트에 없다 — 마젠타로 그려진다`);
+    assert.ok(Number.isFinite(g.price) && g.price >= range[0] && g.price <= range[1],
+      `${g.id}.price가 유효범위 밖이다: ${g.price}`);
+  }
 });
 
 test('클라이언트와 공유하는 상수가 갈리지 않았다', () => {

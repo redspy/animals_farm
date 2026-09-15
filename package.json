@@ -28,7 +28,8 @@
     "test:fishing": "node tests/browser-fishing.mjs",
     "test:npc": "node tests/browser-npc.mjs",
     "test:race": "node tests/browser-race.mjs",
-    "sprites": "\"${GODOT_BIN:-$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot}\" --headless --path . --script tools/sprite_sheet.gd"
+    "sprites": "\"${GODOT_BIN:-$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot}\" --headless --path . --script tools/sprite_sheet.gd",
+    "test:shop": "node tests/browser-shop.mjs"
   },
   "keywords": [],
   "author": "",

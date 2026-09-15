@@ -24,6 +24,9 @@ var label := ""
 var species := "cat"
 var base_position := Vector3.ZERO
 var wander_radius := 3.0
+## 가게 주인인가(`data/npcs.json`의 shop). 부탁 대신 가게 화면을 연다 — 서버도
+## 같은 플래그로 이 동물을 부탁 후보에서 뺀다.
+var is_shop := false
 
 var _sprite: NpcSprite
 var _extras: AvatarExtras
@@ -46,6 +49,7 @@ func setup(data: Dictionary) -> void:
 		float(data.get("wander_radius", 3.0)),
 		limits.get("wander_radius", null),
 		"npcs.%s.wander_radius" % id, "wander_radius")
+	is_shop = bool(data.get("shop", false))
 	_dialogue = data.get("dialogue", {}) as Dictionary
 	_greet = _dialogue.get("greet", []) as Array
 	# 위상은 id에서 뽑는다 — 세 마리가 같은 리듬으로 움직이면 한 몸처럼 보인다.

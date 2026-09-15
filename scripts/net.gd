@@ -47,6 +47,9 @@ signal race_received(race: Dictionary, results: Array)
 
 ## 외형 변경 브로드캐스트 — 남의 화면에도 바뀐 색이 보여야 한다.
 signal appearance_received(token: String, custom: Dictionary)
+## 가게에서 물건을 샀을 때. **산 사람에게만 온다**(남에게 방송할 이유가 없다 —
+## 실제로 입으면 그때 appearance 방송을 탄다).
+signal bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary)
 ## 놀이기구 상태(시소 기울기·뺑뺑이 각도). 서버가 소유한다.
 signal park_state(state: Dictionary)
 
@@ -225,6 +228,9 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			race_received.emit(msg.get("race", {}), msg.get("results", []))
 		"appearance":
 			appearance_received.emit(String(msg.get("token", "")), msg.get("custom", {}))
+		"bought":
+			bought.emit(msg.get("good", {}), int(msg.get("bells", 0)),
+				msg.get("owned", []), msg.get("choices", {}))
 		"error":
 			server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")))
 		_:
@@ -290,6 +296,11 @@ func send_npc_deliver(npc_id: String) -> void:
 ## 클라이언트에 퍼지면 데이터가 오염된다.
 func send_appearance(custom: Dictionary) -> void:
 	_send({"t": "appearance", "custom": custom})
+
+## 가게 구매. **가격·잔액·중복 판정은 전부 서버가 한다** — 클라이언트가 차감하면
+## 재접속에 서버 값으로 덮여 "샀는데 없는" 상태가 된다(판매와 같은 이유).
+func send_buy(good_id: String) -> void:
+	_send({"t": "buy", "id": good_id})
 
 ## 달리기 경주 참가/포기. 상태 기계와 순위·보상은 전부 서버가 갖는다.
 func send_race_join() -> void:

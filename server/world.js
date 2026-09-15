@@ -17,20 +17,6 @@ const STATE_DIR = join(__dirname, 'data');
 const STATE_PATH = join(STATE_DIR, 'world.json');
 
 /**
- * **클라이언트와 같은 값이어야 하는 상수의 등록소.** 키는 `<파일>:<상수 이름>`이고,
- * `tests/server-world.test.mjs`가 이 객체를 돌며 그 파일의 `const X := 값`을 읽어
- * 대조한다 — 테스트에 목록을 따로 적지 않으므로 **값을 쓰는 자리와 등록하는 자리가
- * 같다**(손으로 관리하는 목록은 새 항목을 넣고 갱신을 잊는 쪽이 잊기 쉽다).
- *
- * 데이터로 빼지 않은 이유: 이동·충돌·사거리 판정의 기본값이라 데이터 로드 전에
- * 필요하다. 한쪽만 바꾸면 "버튼은 보이는데 서버가 거부하는" 구간이 생긴다.
- *
- * ⚠️ 여기 없는 짝: `CAROUSEL_SLOT_INSET`(0.75)은 클라이언트 `park.gd`가 **데이터에서
- * 읽고 같은 값을 폴백으로만** 쓴다(`get("slot_inset", 0.75)`). `const` 선언이 아니라
- * 정규식으로 대조할 수 없고, 데이터에 키가 있는 한 양쪽이 같은 값을 읽으므로
- * 폴백끼리만 갈릴 수 있다 — 위험이 낮아 등록하지 않는다.
- */
-/**
  * 상호작용 사거리에 주는 **네트워크 지연 여유**.
  *
  * 클라이언트는 자기 화면의 거리로 "지금 할 수 있다"를 정하고, 서버는 자기가 가진
@@ -46,6 +32,20 @@ const STATE_PATH = join(STATE_DIR, 'world.json');
  */
 const LAG_PAD = 0.7;
 
+/**
+ * **클라이언트와 같은 값이어야 하는 상수의 등록소.** 키는 `<파일>:<상수 이름>`이고,
+ * `tests/server-world.test.mjs`가 이 객체를 돌며 그 파일의 `const X := 값`을 읽어
+ * 대조한다 — 테스트에 목록을 따로 적지 않으므로 **값을 쓰는 자리와 등록하는 자리가
+ * 같다**(손으로 관리하는 목록은 새 항목을 넣고 갱신을 잊는 쪽이 잊기 쉽다).
+ *
+ * 데이터로 빼지 않은 이유: 이동·충돌·사거리 판정의 기본값이라 데이터 로드 전에
+ * 필요하다. 한쪽만 바꾸면 "버튼은 보이는데 서버가 거부하는" 구간이 생긴다.
+ *
+ * ⚠️ 여기 없는 짝: `CAROUSEL_SLOT_INSET`(0.75)은 클라이언트 `park.gd`가 **데이터에서
+ * 읽고 같은 값을 폴백으로만** 쓴다(`get("slot_inset", 0.75)`). `const` 선언이 아니라
+ * 정규식으로 대조할 수 없고, 데이터에 키가 있는 한 양쪽이 같은 값을 읽으므로
+ * 폴백끼리만 갈릴 수 있다 — 위험이 낮아 등록하지 않는다.
+ */
 export const CLIENT_SHARED = {
   'scripts/player.gd:SPEED': 4.2,
   'scripts/player.gd:RADIUS': 0.35,
@@ -93,14 +93,16 @@ export const LIMITS = {
   // 하면 정상 플레이도 간헐적으로 거부된다. **클라이언트 값을 파생시킨다** —
   // 예전에는 1.6을 리터럴로 적어 둬서, gatherable.gd를 2.4로 올려도 서버 테스트가
   // 전부 통과하고 "버튼은 보이는데 눌러도 안 되는" 구간만 생겼다(리뷰 지적).
-  GATHER_RANGE: CLIENT_SHARED['scripts/gatherable.gd:INTERACT_DISTANCE'] + LAG_PAD,
+  GATHER_DISTANCE: CLIENT_SHARED['scripts/gatherable.gd:INTERACT_DISTANCE'],
   // 줍기 사거리. **예전에는 거리 검사가 아예 없었다** — 섬 반대편의 물건도
   // 주울 수 있어서, 남이 떨어뜨린 것을 화면 밖에서 쓸어 담을 수 있었다
   // (2026-09-10 전수검사에서 발견). 채집과 같은 규칙으로 맞춘다.
-  PICKUP_RANGE: CLIENT_SHARED['scripts/world.gd:PICKUP_DISTANCE'] + LAG_PAD,
+  PICKUP_DISTANCE: CLIENT_SHARED['scripts/world.gd:PICKUP_DISTANCE'],
   // 캐릭터끼리 유지할 최소 간격(클라이언트와의 일치는 CLIENT_SHARED가 강제한다).
   SEPARATION: CLIENT_SHARED['scripts/player.gd:SEPARATION'],
   SELL_MIN_INTERVAL_MS: 400,
+  // 구매도 정산이다 — 판매와 같은 간격 제한을 쓴다(연타로 두 번 사는 것을 막는다).
+  BUY_MIN_INTERVAL_MS: 400,
   // 새 캐릭터를 스폰 지점에 그대로 놓으면 모두 한 점에 겹친다. 접속 순서에
   // 따라 링 위로 흩어 놓는다 — 무작위가 아니라 **결정적**이어야 테스트가
   // 재현된다.
@@ -597,6 +599,9 @@ export class WorldState {
         z: Number(raw.z) || 0,
         // 배회 반경 + 여유가 정산 허용 거리다. 배회는 클라이언트가 시간
         // 함수로 그리므로(scripts/npc.gd) 보이는 위치가 기기마다 조금 다르다.
+        // 가게 주인은 부탁을 주지 않는다 — 한 동물이 부탁도 주고 물건도 팔면
+        // 대화창에 버튼이 둘이 되어 아이가 헷갈린다(상점 설계 회의 §2).
+        shop: raw.shop === true,
         wanderRadius: num(raw.wander_radius, 3.0,
           ...nlim('wander_radius', [0, 8]),
           `npcs.json/${id}/wander_radius`),
@@ -623,6 +628,30 @@ export class WorldState {
     // 로드에서 버린 값을 save()가 그대로 덮어써 되돌릴 수 없다).
     if (this.presetIds.size === 0) {
       console.error('[world] characters.json에서 프리셋을 읽지 못했습니다 — 외형·프리셋 검증을 건너뜁니다(저장된 값은 그대로 지킵니다)');
+    }
+
+    // 가게 상품. **클라이언트와 같은 파일을 읽는다** — 가격을 두 곳에 나눠 두면
+    // "화면에는 200인데 서버는 400을 받는" 상태가 된다.
+    const shopCfg = readJson(join(dataDir, 'shop.json'), { goods: [] });
+    const slim = (key, fallback) => rangeOf(shopCfg.limits, key, 'shop.json', fallback);
+    const priceRange = slim('price', [0, 100000]);
+    this.shopGoods = new Map();
+    for (const raw of shopCfg.goods || []) {
+      if (!raw || !raw.id) continue;
+      const id = String(raw.id);
+      const kind = String(raw.kind || '');
+      // 파는 축은 외형의 축이어야 한다 — 모르는 축이면 산 뒤에 입을 수가 없다.
+      if (!['hair', 'skin', 'outfit'].includes(kind)) {
+        console.warn(`[world] shop.json의 ${id}.kind가 외형 축이 아니라 제외: ${raw.kind}`);
+        continue;
+      }
+      this.shopGoods.set(id, {
+        id,
+        kind,
+        value: String(raw.value || ''),
+        label: String(raw.label || id),
+        price: Math.floor(num(raw.price, 0, ...priceRange, `shop.json/${id}.price`)),
+      });
     }
 
     const emoteCfg = readJson(join(dataDir, 'emotes.json'), { emotes: [] });
@@ -777,6 +806,8 @@ export class WorldState {
         dir: 'down',
         inventory: {},
         bells: 0,
+        // 가게에서 산 상품 id. 외형 화이트리스트가 여기서 넓어진다.
+        owned: [],
         // 외형 커스터마이즈(프리셋 위에 덮는 값). 비어 있으면 프리셋 그대로다.
         custom: {},
         // NPC별 마지막 완료 날짜(서버 날짜 문자열). 기기 시계로 반복하는 것을
@@ -977,6 +1008,24 @@ export class WorldState {
       return { x: val(s.x, 0) + (seat === 0 ? -arm : arm), z: val(s.z, 0) };
     }
     return null;
+  }
+
+  /**
+   * 이 플레이어의 상호작용 사거리 여유. **활동 속도에서 유도한다.**
+   *
+   * 고정 0.7은 걷기(4.2 × 80ms = 0.34)를 기준으로 잡은 값인데, 줍기·채집은
+   * **달리는 중에도 된다** — 킥보드(6.0, 존 제한 없음)·자전거(7.6)·인라인(6.6).
+   * 클라이언트는 0.1초마다 좌표를 보내고 서버는 80ms 미만을 버리므로 지터로 한
+   * 번 버려지면 지연이 ~200ms까지 벌어진다: 킥보드면 1.2유닛이라 고정 0.7로는
+   * 정상 플레이가 거절된다(2026-09-10 리뷰 지적 — 줍기는 이번에 검사가 새로
+   * 생긴 자리라 새 회귀 경로였다).
+   *
+   * 한 틱의 두 배를 여유로 주되(버려지는 경우까지), 걷기 기준 LAG_PAD보다
+   * 작아지지는 않게 한다.
+   */
+  lagPadOf(p) {
+    const perTick = this.speedOf(p) * (LIMITS.MOVE_MIN_INTERVAL_MS / 1000) * 2;
+    return Math.max(LAG_PAD, perTick);
   }
 
   /** 활동별 이동 속도 상한(초당 유닛). 지터 여유는 걷기와 같은 비율로 준다. */
@@ -1199,7 +1248,7 @@ export class WorldState {
     // 좌표 때문에 정상 플레이가 경계에서 거절된다 — 폰에서 "공이 안 차짐"으로
     // 나타났다. 채집이 처음부터 쓰던 규칙(GATHER_RANGE)과 같게 맞춘다.
     const dist = Math.hypot(this.ball.x - p.x, this.ball.z - p.z);
-    if (dist > this.soccerCfg.kickRange + LAG_PAD) {
+    if (dist > this.soccerCfg.kickRange + this.lagPadOf(p)) {
       return { error: { code: 'too_far', message: '공이 너무 멉니다' } };
     }
     let vx = Number(dx);
@@ -1409,7 +1458,7 @@ export class WorldState {
       return { error: { code: 'not_grown', message: '아직 자라지 않았습니다' } };
     }
     const dist = Math.hypot(p.x - g.x, p.z - g.z);
-    if (dist > LIMITS.GATHER_RANGE) {
+    if (dist > LIMITS.GATHER_DISTANCE + this.lagPadOf(p)) {
       return { error: { code: 'too_far', message: '너무 멉니다' } };
     }
     // 낚시터·벌레 스폿은 무엇이 잡히는지를 **여기서** 정한다. 지금 시간·월에
@@ -1499,7 +1548,7 @@ export class WorldState {
     for (const key of ['hair', 'skin', 'outfit']) {
       if (custom[key] === undefined || custom[key] === null) continue;
       const value = String(custom[key]);
-      if (!this.appearanceOptions[key].has(value)) {
+      if (!this.allowedLook(p, key).has(value)) {
         // **지금 그 사람이 이미 갖고 있는 값과 똑같으면 통과시킨다.**
         //
         // 클라이언트는 커밋할 때 바꾸지 않은 키까지 포함해 `custom` 전체를 보낸다.
@@ -1588,7 +1637,27 @@ export class WorldState {
       const value = raw[key];
       if (value === undefined || value === null) continue;
       const str = String(value);
-      if (this.appearanceOptions[key].size === 0 || this.appearanceOptions[key].has(str)) out[key] = str;
+      const allowed = this.allowedLook(p, key);
+      if (allowed.size === 0 || allowed.has(str)) out[key] = str;
+    }
+    return out;
+  }
+
+  /**
+   * 그 사람이 **지금 쓸 수 있는** 외형 값 집합. 프리셋에서 유도한 전역 집합에
+   * **산 것**을 더한다 — 상점이 생기면서 화이트리스트가 사람마다 달라졌다.
+   *
+   * 저장된 `owned`에 카탈로그에 없는 id가 있어도 버리지 않고 여기서 거른다
+   * (상품을 데이터에서 잠깐 뺐다가 되돌리면 복구돼야 한다 — docs/design.md §3).
+   */
+  allowedLook(p, key) {
+    const base = this.appearanceOptions[key];
+    const owned = (p && Array.isArray(p.owned)) ? p.owned : [];
+    if (owned.length === 0) return base;
+    const out = new Set(base);
+    for (const id of owned) {
+      const good = this.shopGoods.get(String(id));
+      if (good && good.kind === key && good.value) out.add(good.value);
     }
     return out;
   }
@@ -1612,12 +1681,68 @@ export class WorldState {
     return '';
   }
 
-  // 클라이언트에 보낼 외형 목록(꾸미기 화면이 그대로 그린다).
-  appearanceChoices() {
+  /**
+   * 클라이언트에 보낼 외형 목록(꾸미기 화면이 그대로 그린다).
+   *
+   * **그 사람 기준이다** — 상점이 생기면서 "산 사람만 열리는 색"이 생겼다.
+   * 토큰을 주지 않으면 프리셋 유도분만 돌려준다(가진 것이 없는 사람과 같다).
+   */
+  appearanceChoices(token = null) {
+    const p = token ? this.players.get(token) : null;
     return {
-      hair: [...this.appearanceOptions.hair],
-      skin: [...this.appearanceOptions.skin],
-      outfit: [...this.appearanceOptions.outfit],
+      hair: [...this.allowedLook(p, 'hair')],
+      skin: [...this.allowedLook(p, 'skin')],
+      outfit: [...this.allowedLook(p, 'outfit')],
+    };
+  }
+
+  /** 가게 상품 목록(클라이언트도 같은 파일을 읽지만, 응답에 실어 한 번에 맞춘다). */
+  shopCatalog() {
+    return [...this.shopGoods.values()].map((g) => ({ ...g }));
+  }
+
+  /** 이 사람이 산 상품 id들(카탈로그에 있는 것만). */
+  ownedGoods(p) {
+    const owned = (p && Array.isArray(p.owned)) ? p.owned : [];
+    return owned.map(String).filter((id) => this.shopGoods.has(id));
+  }
+
+  /**
+   * 상품을 산다. **재화의 단일 출처가 서버**이므로 여기서 차감한다.
+   *
+   * 중복 구매를 막는 이유: 이미 가진 것을 또 사면 **벨만 사라진다**. 되돌릴 수 없는
+   * 손실이라 판매(sell)의 "팔 수 없는 것은 가방에 남긴다"와 같은 급으로 다룬다.
+   */
+  buy(token, goodId, now = Date.now()) {
+    const p = this.players.get(token);
+    if (!p) return { error: { code: 'not_joined', message: '먼저 join이 필요합니다' } };
+    if (now - (p.lastBuyAt || 0) < LIMITS.BUY_MIN_INTERVAL_MS) {
+      return { error: { code: 'rate_limited', message: '너무 빠릅니다' } };
+    }
+    const good = this.shopGoods.get(String(goodId));
+    if (!good) return { error: { code: 'bad_good', message: '없는 상품입니다' } };
+    if (!Array.isArray(p.owned)) p.owned = [];
+    if (p.owned.map(String).includes(good.id)) {
+      return { error: { code: 'already_owned', message: '이미 가지고 있습니다' } };
+    }
+    const bells = Number.isFinite(Number(p.bells)) ? Number(p.bells) : 0;
+    if (bells < good.price) {
+      // 얼마가 모자란지 함께 알려준다 — "부족하다"만 말하면 가게와 가방을 왕복한다.
+      return {
+        error: { code: 'not_enough_bells', message: '벨이 모자랍니다' },
+        need: { price: good.price, have: Math.floor(bells) },
+      };
+    }
+    p.lastBuyAt = now;
+    p.bells = addBells(bells, -good.price);
+    p.owned.push(good.id);
+    this._markDirty();
+    return {
+      good: { ...good },
+      bells: p.bells,
+      owned: this.ownedGoods(p),
+      // 산 즉시 꾸미기 화면이 열려야 한다 — 새 목록을 함께 보낸다.
+      choices: this.appearanceChoices(token),
     };
   }
 
@@ -1962,7 +2087,9 @@ export class WorldState {
   // 저장하면 세이브 스키마가 늘어난다.
   npcRequest(token, npcId, now = Date.now()) {
     const npc = this.npcs.get(String(npcId));
-    if (!npc || npc.requests.length === 0) return null;
+    // 가게 주인은 부탁을 주지 않는다(설계 회의 §2). requests가 비어 있어도 걸리지만,
+    // **뜻을 코드에 남긴다** — 나중에 상품 교환 같은 requests를 붙여도 안전하다.
+    if (!npc || npc.shop || npc.requests.length === 0) return null;
     const seed = `${token}|${npcId}|${this.dayKey(now)}`;
     let h = 2166136261;
     for (let i = 0; i < seed.length; i++) {
@@ -2102,7 +2229,21 @@ export class WorldState {
     if (this.items.size >= LIMITS.MAX_WORLD_ITEMS) {
       return { error: { code: 'world_full', message: '월드에 놓인 물건이 너무 많습니다' } };
     }
-    const pos = this.clampPos(x, z);
+    // **놓는 자리를 플레이어 근처로 강제한다.** 예전에는 클라이언트가 준 좌표를
+    // 경계만 잘라 그대로 저장했다 — 줍기에 사거리가 생긴 지금은 변조 클라가
+    // 도달 불가 지점(바위 안·섬 반대편)에 놓으면 **아무도 회수할 수 없고**,
+    // 아이템 만료가 없어 MAX_WORLD_ITEMS를 채우면 월드 전체 드랍이 막힌다
+    // (2026-09-10 리뷰 지적). 정상 클라는 항상 자기 발밑을 보내므로 영향이 없다.
+    let pos = this.clampPos(x, z);
+    const reach = LIMITS.PICKUP_DISTANCE + this.lagPadOf(p);
+    const away = Math.hypot(pos.x - p.x, pos.z - p.z);
+    if (!Number.isFinite(away) || away > reach) {
+      const k = Number.isFinite(away) && away > 0 ? reach / away : 0;
+      pos = this.clampPos(p.x + (pos.x - p.x) * k, p.z + (pos.z - p.z) * k);
+    }
+    // 바위 안에 놓이면 걸어가 주울 수 없다 — 이동과 같은 규칙으로 밀어낸다.
+    const pushed = this.pushOutObstacles(pos);
+    pos = this.clampPos(pushed.x, pushed.z);
     if (have === 1) delete p.inventory[id]; else p.inventory[id] = have - 1;
     // 누가 버렸는지 남긴다 — 자기가 버린 것을 자기가 줍는 경우를 도감에서
     // 빼려면 필요하다(버리고 줍기 반복으로 숫자를 올릴 수 있다).
@@ -2125,7 +2266,7 @@ export class WorldState {
     // 것을 화면 밖에서 쓸어 담을 수 있었다(2026-09-10 전수검사에서 발견 —
     // 채집·정산에는 있던 검사가 줍기에만 빠져 있었다).
     const dist = Math.hypot(p.x - entity.x, p.z - entity.z);
-    if (dist > LIMITS.PICKUP_RANGE) {
+    if (dist > LIMITS.PICKUP_DISTANCE + this.lagPadOf(p)) {
       return { error: { code: 'too_far', message: '너무 멉니다' } };
     }
     this.items.delete(entity.id);
@@ -2295,6 +2436,8 @@ export class WorldState {
       players: [...this.players.values()].map((p) => ({
         token: p.token, name: p.name, preset: p.preset,
         x: p.x, z: p.z, dir: p.dir, inventory: p.inventory, bells: p.bells,
+        // 산 것은 진행도다 — 재시작해도 남아야 한다(벨을 이미 냈다).
+        owned: Array.isArray(p.owned) ? p.owned : [],
         // NPC 부탁 완료 날짜와 도감은 진행도다 — 재시작해도 남아야 한다.
         npcDone: p.npcDone || {}, dex: p.dex || {},
         custom: p.custom || {},
@@ -2345,6 +2488,9 @@ export class WorldState {
         // addBells에 상한을 넣을 때 여기만 갈린다(리뷰 지적).
         bells: addBells(p.bells, 0),
         // 없으면 빈 값 — 옛 상태 파일에는 이 필드가 없다(마이그레이션 불필요).
+        // 카탈로그에 없는 id도 **버리지 않는다** — 상품을 데이터에서 잠깐 뺐다가
+        // 되돌리면 복구돼야 한다(allowedLook이 쓰는 시점에 거른다).
+        owned: Array.isArray(p.owned) ? p.owned.map(String) : [],
         npcDone: p.npcDone && typeof p.npcDone === 'object' ? p.npcDone : {},
         dex: p.dex && typeof p.dex === 'object' ? p.dex : {},
         // **화이트리스트로 재검증한다.** 이 값은 스냅샷으로 전원에게 방송되므로,

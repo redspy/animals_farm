@@ -207,8 +207,10 @@ const reqState = await waitState((s) => s.requests.length > 0, 8000);
 check(reqState.requests.includes(':wood:2'),
   `서버가 부탁을 알려준다 (${reqState.requests})`);
 
-// 스폰(0,0)에서 가장 가까운 이웃을 고른다.
+// 스폰(0,0)에서 가장 가까운 이웃을 고른다. **가게 주인은 뺀다** — 부탁 대신 가게가
+// 열려서 이 테스트가 기다리는 대화창이 안 뜬다(가게는 browser-shop.mjs가 본다).
 const npc = npcCfg.npcs
+  .filter((n) => n.shop !== true)
   .map((n) => ({ ...n }))
   .sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z))[0];
 console.log(`\n[검증] 이웃 — ${npc.label} (${npc.x}, ${npc.z})`);

@@ -332,8 +332,11 @@ function handle(ws, msg) {
         // 이유가 없고, 방송하면 스냅샷이 인원수만큼 커진다).
         npc: world.npcState(ws.token), dex: p.dex || {},
         custom: p.custom || {},
-        // 꾸미기 화면이 그릴 선택지(프리셋에서 유도한 화이트리스트).
-        appearanceChoices: world.appearanceChoices(),
+        // 꾸미기 화면이 그릴 선택지. **그 사람 기준**이다 — 가게에서 산 색이 여기
+        // 들어온다(안 산 사람에게는 안 보인다).
+        appearanceChoices: world.appearanceChoices(ws.token),
+        // 가게 화면이 그릴 목록과 내가 이미 산 것.
+        shop: world.shopCatalog(), owned: world.ownedGoods(p),
       },
       world: { size_x: world.sizeX, size_z: world.sizeZ },
     });
@@ -434,13 +437,24 @@ function handle(ws, msg) {
           x: me.x, z: me.z, dir: me.dir,
           inventory: me.inventory, bells: me.bells,
           npc: world.npcState(ws.token), dex: me.dex || {},
-          custom: me.custom || {}, appearanceChoices: world.appearanceChoices(),
+          custom: me.custom || {}, appearanceChoices: world.appearanceChoices(ws.token),
+          shop: world.shopCatalog(), owned: world.ownedGoods(me),
         },
         world: { size_x: world.sizeX, size_z: world.sizeZ },
         resync: true,
       });
       sendTo(ws, { t: 'snapshot', ...world.snapshot() });
       lastParkSent = null;   // resync한 사람에게 다음 변화가 반드시 가도록
+      break;
+    }
+    case 'buy': {
+      const r = world.buy(ws.token, msg.id);
+      if (r.error) { sendTo(ws, { t: 'error', ...r.error, need: r.need }); break; }
+      // **산 사람에게만 보낸다.** 남에게 방송할 이유가 없다 — 실제로 입으면 그때
+      // 기존 appearance 방송을 탄다.
+      sendTo(ws, {
+        t: 'bought', good: r.good, bells: r.bells, owned: r.owned, choices: r.choices,
+      });
       break;
     }
     case 'appearance': {
