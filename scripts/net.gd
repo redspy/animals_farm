@@ -50,8 +50,8 @@ signal race_received(race: Dictionary, results: Array)
 
 ## 외형 변경 브로드캐스트 — 남의 화면에도 바뀐 색이 보여야 한다.
 signal appearance_received(token: String, custom: Dictionary)
-## 가게에서 물건을 샀을 때. **산 사람에게만 온다**(남에게 방송할 이유가 없다 —
-## 실제로 입으면 그때 appearance 방송을 탄다).
+## 가게에서 물건을 샀을 때. **산 사람에게만 온다**(잔액·소유는 남이 알 이유가 없다).
+## 산 옷 자체는 서버가 그 자리에서 입히고 남에게는 appearance로 따로 방송한다.
 signal bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary, custom: Dictionary)
 ## 놀이기구 상태(시소 기울기·뺑뺑이 각도). 서버가 소유한다.
 signal park_state(state: Dictionary)

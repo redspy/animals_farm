@@ -2156,9 +2156,12 @@ func _talk_to(npc: Npc) -> void:
 	if npc.is_shop:
 		npc.say(npc.next_greeting())
 		# 상품 목록은 서버가 welcome으로 준다 — 접속 전에는 빈 창이 뜬다.
+		# **두 원인을 갈라서 말한다.** 미접속이면 목록이 **항상** 비어 있어서
+		# "물건이 없습니다"만 띄우면 아이가 접속 문제인 줄 알 방법이 없다(리뷰 지적).
+		if _net == null or not _net.connected:
+			_show_toast("서버에 연결돼야 가게를 볼 수 있습니다")
+			return
 		if _shop_goods.is_empty():
-			# 접속 전이거나(목록은 welcome으로 온다) 가격 오류로 전 상품이 제외된
-			# 경우다 — 둘 다 "지금은 살 것이 없다"가 사실이다.
 			_show_toast("지금은 가게에 물건이 없습니다")
 			return
 		_open_shop()

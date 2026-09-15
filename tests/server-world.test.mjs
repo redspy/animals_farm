@@ -1398,6 +1398,22 @@ test('상품 가격이 범위를 벗어나면 클램프한다(공짜가 되지 �
   writeFileSync(join(dir, 'shop.json'), JSON.stringify(shop));
 
   const w = new WorldState({ dataDir: dir, persist: false });
+  // **limits가 통째로 깨진 경우도 본다** — 그때 쓰이는 코드 폴백의 하한이 0이면
+  // 음수 가격이 0원(공짜)이 되어, 데이터에서 막은 것과 같은 구멍이 남는다.
+  const broken = mkdtempSync(join(tmpdir(), 'af-shopnolimit-'));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(broken, name), readFileSync(join('data', name)));
+  }
+  const noLimits = JSON.parse(readFileSync(join('data', 'shop.json'), 'utf-8'));
+  delete noLimits.limits;
+  noLimits.goods[0].price = -500;
+  writeFileSync(join(broken, 'shop.json'), JSON.stringify(noLimits));
+  const w2 = new WorldState({ dataDir: broken, persist: false });
+  const fallback = w2.shopGoods.get(noLimits.goods[0].id);
+  assert.ok(fallback && fallback.price >= 1,
+    `limits가 없을 때 공짜가 됐다: ${fallback && fallback.price}`);
+
   const clamped = w.shopGoods.get(shop.goods[0].id);
   assert.ok(clamped, '범위 밖 상품이 사라졌다');
   assert.equal(clamped.price, max, `공짜가 되거나 그대로 남았다: ${clamped.price}`);

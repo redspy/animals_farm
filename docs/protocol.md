@@ -79,7 +79,7 @@
 | `park` | `park` (`{seesaw, carousel, carouselSpeed}`) | 놀이기구 상태(시소 기울기·뺑뺑이 각도). **움직일 때만** 보낸다 |
 | `system` | `text`, `kind`, `token` | 서버가 모두에게 보내는 알림(입장·퇴장). 클라이언트가 각자 문구를 만들면 사람마다 다른 문장을 보게 되고, 놓친 이벤트는 아무에게도 안 보인다. 본인의 입장 알림은 본인에게 보내지 않는다 |
 | `npc_done` | `npc`, `reward`, `given`, `bells`, `inventory`, `state` | 부탁 정산 결과. 벨·가방은 서버 값이 진실이고 `state`는 NPC별 `{done, request, reward}` |
-| `buy` → `bought` | (요청) `id` / (응답) `good`, `bells`, `owned`, `choices` | 가게 구매. 가격·잔액·중복은 **전부 서버가 판정**하고 벨도 서버가 차감한다. **산 사람에게만** 응답한다(남에게 방송할 이유가 없다 — 실제로 입으면 그때 `appearance` 방송을 탄다). 응답에 새 `choices`를 실어, 산 즉시 꾸미기 화면에 그 색이 열린다 |
+| `buy` → `bought` | (요청) `id` / (응답) `good`, `bells`, `owned`, `choices`, `custom` | 가게 구매. 가격·잔액·중복은 **전부 서버가 판정**하고 벨도 서버가 차감한다. `bought`는 **산 사람에게만** 간다(잔액·소유는 남이 알 이유가 없다). 다만 **서버가 구매 시점에 그 옷을 입히므로**, 남에게는 `appearance`가 함께 방송된다(걸러진 값) — 클라이언트가 따로 `appearance`를 보내면 구매 간격(400ms)이 외형 간격(500ms)보다 짧아 두 번째 구매에서 거절돼 **입은 것이 사라졌다**. 응답의 `custom`은 서버가 확정한 내 외형이고, `choices`는 새로 열린 선택지다 |
 | `appearance` | `token`, `custom` | 외형 변경 브로드캐스트 — 남의 화면에도 보여야 하므로 서버를 거친다. `snapshot`·`join`의 player에도 `custom`이 실린다(없으면 나중에 들어온 사람에게는 안 보인다) |
 | `race` | `race`(`{phase, remainMs, laps, runners[]}`), `results`(결과 국면에서만) | 경주 상태. **국면과 주행 진행이 바뀔 때만** 보낸다 — 남은 시간까지 보내면 10Hz 방송이 되므로 클라이언트가 자기 시계로 센다 |
 | `npc_error` | `code`, `message`, `need`(선택), `state` | 부탁 정산 거절. **일반 `error`와 나눈 이유**: 클라이언트가 필드 유무로 "이 거절이 정산에 대한 것인지"를 추측하면 `too_far`·`already_done`·`rate_limited`가 그 추측에서 빠져, 누른 즉시 잠근 버튼이 회색으로 굳는다. 거절에도 `state`를 실어 자정을 넘긴 세션의 낡은 상태를 푼다 |

@@ -261,8 +261,12 @@ const leaked = await waitFor((m) => m.t === 'bought', 1500);
 check(leaked === null && observer.readyState === WebSocket.OPEN,
   `구매는 남에게 방송되지 않는다 (관찰자 상태 ${observer.readyState})`);
 // 대신 **외형 변경은** 남에게 가야 한다 — 서버가 구매 시점에 입히기 때문이다.
-const looked = await waitFor((m) => m.t === 'appearance', 2500);
-check(looked !== null, '산 옷은 남의 화면에도 전달된다');
+// **토큰과 값까지 본다.** `t === 'appearance'`만 보면 waitFor가 누적 기록 전체를
+// 훑으므로 구매와 무관한 옛 appearance를 집어 통과할 수 있다(위양성 — 리뷰 지적).
+const boughtValue = shopCfg.goods[0].value;
+const looked = await waitFor(
+  (m) => m.t === 'appearance' && m.custom?.outfit === boughtValue, 2500);
+check(looked !== null, `산 옷(${boughtValue})이 남의 화면에도 전달된다`);
 await page.screenshot({ path: `${OUT}/2-구매후.png` }).catch(() => {});
 
 // --- 4. 산 색이 꾸미기 화면에 열린다 ---

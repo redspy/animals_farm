@@ -635,7 +635,10 @@ export class WorldState {
     // "화면에는 200인데 서버는 400을 받는" 상태가 된다.
     const shopCfg = readJson(join(dataDir, 'shop.json'), { goods: [] });
     const slim = (key, fallback) => rangeOf(shopCfg.limits, key, 'shop.json', fallback);
-    const priceRange = slim('price', [0, 100000]);
+    // **폴백 하한도 1이다.** limits 블록이 통째로 빠지거나 형식이 깨지면 이 폴백이
+    // 쓰이는데, 하한이 0이면 `"price": -500`이 0원이 되어 `bells < price`를 언제나
+    // 통과한다 — 데이터에서 막은 것과 같은 구멍이 폴백에 남아 있었다(리뷰 지적).
+    const priceRange = slim('price', [1, 100000]);
     this.shopGoods = new Map();
     for (const raw of shopCfg.goods || []) {
       if (!raw || !raw.id) continue;

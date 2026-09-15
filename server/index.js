@@ -450,8 +450,8 @@ function handle(ws, msg) {
     case 'buy': {
       const r = world.buy(ws.token, msg.id);
       if (r.error) { sendTo(ws, { t: 'error', ...r.error, need: r.need }); break; }
-      // **산 사람에게만 보낸다.** 남에게 방송할 이유가 없다 — 실제로 입으면 그때
-      // 기존 appearance 방송을 탄다.
+      // `bought`는 **산 사람에게만** 보낸다(잔액·소유는 남이 알 이유가 없다).
+      // 외형은 아래에서 따로 방송한다 — 서버가 구매 시점에 입히기 때문이다.
       sendTo(ws, {
         t: 'bought', good: r.good, bells: r.bells, owned: r.owned,
         choices: r.choices, custom: r.custom,
