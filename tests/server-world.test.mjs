@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdtempSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { WorldState, LIMITS, CLIENT_SHARED, LOOK_VALUE_PREFIX } from '../server/world.js';
+import { WorldState, LIMITS, CLIENT_SHARED, LOOK_VALUE_PREFIX, LOOK_KINDS } from '../server/world.js';
 
 // 서버 규칙(docs/protocol.md §3) 테스트. 전송(WebSocket)과 분리돼 있어 소켓
 // 없이 규칙만 검증할 수 있다. persist:false로 디스크를 건드리지 않는다.
@@ -1450,8 +1450,10 @@ function worldWithPalette(prefix, mutate) {
     if (!name.endsWith('.json')) continue;
     writeFileSync(join(dir, name), readFileSync(join('data', name)));
   }
-  writeFileSync(join(dir, 'palette.json'), mutate(
-    JSON.parse(readFileSync(join('data', 'palette.json'), 'utf-8'))));
+  // 객체를 돌려주든 문자열을 돌려주든 받는다 — 이름만 보고 `(p) => { p.x = ... }`로
+  // 쓰면 undefined가 기록돼 터졌다(리뷰 지적).
+  const out = mutate(JSON.parse(readFileSync(join('data', 'palette.json'), 'utf-8')));
+  writeFileSync(join(dir, 'palette.json'), typeof out === 'string' ? out : JSON.stringify(out));
   return new WorldState({ dataDir: dir, persist: false });
 }
 
@@ -1469,7 +1471,7 @@ test('palette.character가 객체가 아닐 때도 가게가 사라지지 않는
   // Object.keys가 인덱스를 뱉어 "목록이 있다"로 오인되면 outfit·skin이 전부 제외된다.
   const w = worldWithPalette('af-badpalette-', (palette) => {
     palette.character = ['#ffffff', '#000000'];
-    return JSON.stringify(palette);
+    return palette;
   });
   assert.ok(w.shopCatalog().length > 0, 'character가 배열일 때 가게가 통째로 비었다');
 });
@@ -1507,7 +1509,9 @@ test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)
     // **축 목록도 서버에서 가져온다.** 여기 손으로 적어 두면, 서버에 축을 하나
     // 늘렸을 때 런타임은 통과시키는데 **커밋 게이트만** 실패한다 — hair에서 고친 것과
     // 같은 모양이 축 목록 쪽에 남아 있었다(리뷰 지적).
-    assert.ok(Object.hasOwn(LOOK_VALUE_PREFIX, g.kind), `${g.id}.kind가 외형 축이 아니다`);
+    // **런타임이 실제로 쓰는 목록**(LOOK_KINDS)을 쓴다 — 접두어 맵에서 되유도하면
+    // 나중에 LOOK_KINDS가 필터를 하나라도 더 걸 때 린트만 안 따라온다(리뷰 지적).
+    assert.ok(LOOK_KINDS.includes(g.kind), `${g.id}.kind가 외형 축이 아니다`);
     // **축별로 규칙이 다르다.** outfit·skin은 팔레트 색 키지만 hair는 그리는
     // 스타일 이름이라 팔레트에 없다 — 여기서 일괄로 팔레트를 요구하면 머리 상품을
     // 넣는 순간 런타임은 통과시키는데 **커밋 게이트만 실패한다**(리뷰 지적).

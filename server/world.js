@@ -67,7 +67,7 @@ export const LOOK_VALUE_PREFIX = { outfit: 'outfit_', skin: 'skin', hair: null }
  * 축을 하나 늘리면서 맵에 안 넣었을 때 `prefix === undefined`가 되어 값 검증이
  * **조용히 fail-open** 된다(이 파일이 막으려던 손실 경로 그대로 — 리뷰 지적).
  */
-const LOOK_KINDS = Object.keys(LOOK_VALUE_PREFIX);
+export const LOOK_KINDS = Object.keys(LOOK_VALUE_PREFIX);
 
 export const LIMITS = {
   NAME_MAX: 12,

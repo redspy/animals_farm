@@ -32,10 +32,20 @@ func setup(goods: Array, owned: Array, bells: int) -> void:
 	if is_node_ready():
 		_fill()
 
-## 산 직후 서버 응답으로 갱신한다(화면을 닫지 않고 그 자리에서 잠긴다).
-func apply_bought(owned: Array, bells: int) -> void:
+## 서버가 준 최신 상태로 갱신한다 — **구매 직후만이 아니다.** 창 복귀 재동기화,
+## 경주 보상, 부탁 정산, 판매처럼 **벨이 바뀌는 모든 자리**가 이걸 부른다(안 부르면
+## 창이 옛 잔액을 그려서 "살 수 있어 보이는데 서버가 거절"이 된다).
+##
+## **바뀐 게 없으면 다시 그리지 않는다.** 행을 전부 지우고 새로 만들면 스크롤 위치가
+## 초기화되고, 값이 그대로인 재동기화에서도 그 일이 벌어진다(도감이 같은 이유로
+## 서명을 비교한다).
+func apply_server_state(owned: Array, bells: int, goods: Array = []) -> void:
+	var next_goods: Array = goods if not goods.is_empty() else _goods
+	if _bells == bells and _owned == owned and _goods == next_goods:
+		return
 	_owned = owned
 	_bells = bells
+	_goods = next_goods
 	if is_node_ready():
 		_fill()
 
@@ -133,8 +143,14 @@ func _fill() -> void:
 		_list.add_child(row)
 
 		# 색 견본 — 글을 못 읽는 아이도 **무엇을 사는지** 알 수 있어야 한다.
+		#
+		# **팔레트 색이 아닌 축은 견본을 비운다.** 머리는 색이 아니라 그리는 스타일
+		# 이름이라(`hair_bob`) 팔레트에 없고, 그대로 넣으면 견본이 **마젠타**로 뜬다
+		# — 서버도 린트도 그건 안 잡는다(리뷰 지적). 스타일 미리보기를 붙이기 전까지는
+		# 빈 자리로 두는 편이 "색이 저렇다"고 오해하게 만드는 것보다 낫다.
 		var swatch := ColorRect.new()
-		swatch.color = Palette.color("character", String(good.get("value", "")))
+		var color := Palette.color("character", String(good.get("value", "")))
+		swatch.color = color if color != Palette.MISSING else Color(0, 0, 0, 0)
 		swatch.custom_minimum_size = Vector2(UiScale.dim(SWATCH), UiScale.dim(SWATCH))
 		row.add_child(swatch)
 

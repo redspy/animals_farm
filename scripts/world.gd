@@ -2069,6 +2069,7 @@ func _show_race_results(results: Array) -> void:
 			_slot["bells"] = int(row.get("bells", _slot.get("bells", 0)))
 	_show_toast("\n".join(lines))
 	_refresh_hud()
+	_refresh_shop_ui()
 	_persist()
 
 ## 내가 경주에 참가 중인지.
@@ -2230,6 +2231,7 @@ func _on_npc_deliver(npc_id: String) -> void:
 func _on_npc_done(npc_id: String, reward: int, given: Dictionary, bells: int,
 		inventory: Dictionary, state: Dictionary) -> void:
 	_slot["bells"] = bells
+	_refresh_shop_ui()
 	if typeof(inventory) == TYPE_DICTIONARY:
 		_slot["inventory"] = inventory
 	if typeof(state) == TYPE_DICTIONARY:
@@ -2416,6 +2418,13 @@ func _is_uuid(text: String) -> bool:
 ## 도감을 연다(가방 화면의 [도감] 버튼).
 ## 가게 화면. 목록·가격·잔액은 전부 서버가 준 값을 그린다 — 클라이언트가 계산하면
 ## "화면에는 살 수 있는데 서버가 거절하는" 상태가 된다.
+## 열려 있는 가게 창을 서버 값으로 맞춘다. **벨이 바뀌는 모든 자리에서 부른다** —
+## 한 지점만 막으면 다른 경로(경주 보상·부탁 정산·판매)에서 창이 옛 잔액을 그려
+## "살 수 있어 보이는데 서버가 거절"이 된다(리뷰 지적).
+func _refresh_shop_ui() -> void:
+	if _shop_ui != null and is_instance_valid(_shop_ui):
+		_shop_ui.apply_server_state(_owned_goods, int(_slot.get("bells", 0)), _shop_goods)
+
 func _open_shop() -> void:
 	if _shop_ui != null and is_instance_valid(_shop_ui):
 		return
@@ -2442,8 +2451,7 @@ func _on_bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary,
 	if typeof(choices) == TYPE_DICTIONARY and not choices.is_empty():
 		_appearance_choices = choices
 	_refresh_hud()
-	if _shop_ui != null and is_instance_valid(_shop_ui):
-		_shop_ui.apply_bought(owned, bells)
+	_refresh_shop_ui()
 	# 산 것을 **바로 입어 보는 것**이 이 기능의 보상이다.
 	#
 	# **서버가 확정한 외형을 그대로 쓴다.** 예전에는 클라이언트가 입힌 뒤 따로
@@ -2661,12 +2669,9 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 		_shop_goods = you["shop"]
 	if typeof(you.get("owned")) == TYPE_ARRAY:
 		_owned_goods = you["owned"]
-	# **열려 있는 가게 창도 갱신한다.** 창 복귀 재동기화(resync)는 소켓이 살아 있어
-	# `_on_net_closed`를 타지 않는데, ShopUI는 setup 때 받은 **옛 배열과 옛 벨**을
-	# 계속 들고 있다 — 다른 탭에서 사거나 부탁 보상을 받은 뒤 복귀하면 "화면에는 살 수
-	# 있는데 서버가 거절하는" 상태가 된다(리뷰 지적).
-	if _shop_ui != null and is_instance_valid(_shop_ui):
-		_shop_ui.apply_bought(_owned_goods, int(_slot.get("bells", 0)))
+	# 창 복귀 재동기화(resync)는 소켓이 살아 있어 `_on_net_closed`를 타지 않는다 —
+	# 열려 있는 가게 창을 여기서 맞춘다.
+	_refresh_shop_ui()
 	if typeof(you.get("custom")) == TYPE_DICTIONARY:
 		# 오프라인에서 바꿔 둔 것이 있으면 **그것이 이긴다**(사용자가 고른 값이
 		# 서버의 옛 값보다 최신이다). 세이브의 표시도 함께 본다 — 그래야 탭을
@@ -2889,6 +2894,7 @@ func _on_sold(sold: Dictionary, total: int, bells: int, inventory: Dictionary, u
 		_show_toast("%d벨에 판매했습니다 (%d종)" % [total, kinds])
 	else:
 		_show_toast("%d벨에 판매했습니다 (가격 미상 %d종은 남겨둠)" % [total, unsold.size()])
+	_refresh_shop_ui()
 	_refresh_hud()
 	_refresh_inventory_ui()
 	_persist()
