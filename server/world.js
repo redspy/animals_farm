@@ -589,7 +589,8 @@ export class WorldState {
           }
           return true;
         });
-      if (requests.length === 0) {
+      // 가게 주인은 **원래** 부탁을 주지 않는다 — 경고하면 기동마다 오해를 만든다.
+      if (requests.length === 0 && raw.shop !== true) {
         console.warn(`[world] NPC ${id}에 유효한 부탁이 없습니다 — 부탁을 주지 않습니다`);
       }
       this.npcs.set(id, {
@@ -645,12 +646,25 @@ export class WorldState {
         console.warn(`[world] shop.json의 ${id}.kind가 외형 축이 아니라 제외: ${raw.kind}`);
         continue;
       }
+      // **가격은 클램프한다(폴백이 아니다).** num()은 범위를 벗어나면 폴백을
+      // 돌려주는데 여기 폴백은 0이라, `"price": 150000` 오타 하나가 **그 상품을
+      // 공짜로** 만든다 — 틀리는 방향이 최악이다(리뷰 지적). 판매가(`priceOf`)가
+      // 이미 쓰는 규칙(클램프 + 경고 + 확정 불가면 거절)에 맞춘다.
+      const rawPrice = Number(raw.price);
+      if (!Number.isFinite(rawPrice)) {
+        console.warn(`[world] shop.json의 ${id}.price가 숫자가 아니라 제외: ${raw.price}`);
+        continue;
+      }
+      if (rawPrice < priceRange[0] || rawPrice > priceRange[1]) {
+        console.warn(`[world] shop.json의 ${id}.price ${rawPrice}이 유효범위 [${priceRange[0]}, ${priceRange[1]}] 밖 — 클램프`);
+      }
+      const price = Math.floor(Math.min(priceRange[1], Math.max(priceRange[0], rawPrice)));
       this.shopGoods.set(id, {
         id,
         kind,
         value: String(raw.value || ''),
         label: String(raw.label || id),
-        price: Math.floor(num(raw.price, 0, ...priceRange, `shop.json/${id}.price`)),
+        price,
       });
     }
 

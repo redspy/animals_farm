@@ -2155,6 +2155,10 @@ func _talk_to(npc: Npc) -> void:
 	# 가게 주인은 부탁을 주지 않는다 — 대화창 대신 가게를 연다(설계 회의 §2).
 	if npc.is_shop:
 		npc.say(npc.next_greeting())
+		# 상품 목록은 서버가 welcome으로 준다 — 접속 전에는 빈 창이 뜬다.
+		if _shop_goods.is_empty():
+			_show_toast("서버에 연결돼야 가게를 볼 수 있습니다")
+			return
 		_open_shop()
 		return
 	var state: Dictionary = _npc_state.get(npc.id, {})
@@ -2437,6 +2441,11 @@ func _on_bought(good: Dictionary, bells: int, owned: Array, choices: Dictionary)
 	if not kind.is_empty() and not value.is_empty():
 		_custom[kind] = value
 		_apply_my_custom(_custom, true)
+		# **서버에도 알린다.** 안 보내면 서버의 custom이 옛 값으로 남아 (a) 남의
+		# 화면에는 안 바뀌고 (b) 재접속하면 welcome이 옛 값으로 덮어써 **벨은 냈는데
+		# 입은 것이 사라진다**(리뷰 지적). 방금 산 값이라 화이트리스트를 통과한다.
+		if _net != null and _net.connected:
+			_net.send_appearance(_custom)
 	_show_toast("%s을(를) 샀습니다" % String(good.get("label", "물건")))
 
 func _open_dex() -> void:
@@ -2937,9 +2946,20 @@ func _on_system_message(text: String, kind: String) -> void:
 	if kind == "join" or kind == "leave":
 		_show_toast(text)
 
-func _on_server_error(code: String, message: String) -> void:
+func _on_server_error(code: String, message: String, extra: Dictionary = {}) -> void:
 	# 서버 거절을 조용히 삼키면 "왜 안 되는지" 알 수 없다 — 화면에 띄우고,
 	# E2E도 볼 수 있게 상태로 남긴다(캔버스라 토스트를 읽을 수 없다).
+	#
+	# **얼마가 모자란지까지 말한다.** "벨이 모자랍니다"만 띄우면 가게와 가방을
+	# 왕복하게 된다(가게 설계 회의 §5) — 서버가 실어 보낸 값을 쓴다.
+	if code == "not_enough_bells" and typeof(extra.get("need")) == TYPE_DICTIONARY:
+		var need: Dictionary = extra["need"]
+		var short := int(need.get("price", 0)) - int(need.get("have", 0))
+		_show_toast("%d벨이 더 필요합니다" % maxi(short, 0))
+		push_warning("서버 오류(%s): %s" % [code, message])
+		if _hooks != null:
+			_hooks.set_state("lastError", code)
+		return
 	_show_toast("서버: %s" % message)
 	push_warning("서버 오류(%s): %s" % [code, message])
 	if _hooks != null:
@@ -3282,7 +3302,12 @@ func _on_player_arrived() -> void:
 			# (2026-09-10 줍기에 사거리가 생기면서 드러난 경로).
 			if not _drops.has(id):
 				_show_toast("아쉽게도 물건이 사라졌습니다")
-			elif _nearest_drop() != id:
+			# **그 물건과의 거리만 본다.** `_nearest_drop() != id`로 보면 "가장
+			# 가까운가"를 묻게 되는데, 탭은 **탭 지점** 기준으로 대상을 고르고
+			# 이 검사는 **플레이어** 기준이라 둘이 다른 id를 고를 수 있다 —
+			# 제자리에서 두 개를 버리면 좌표가 똑같아 영영 못 줍는다(리뷰 지적).
+			elif not _drops.has(id) or not is_instance_valid(_drops[id]) \
+					or _player.position.distance_to((_drops[id] as Node3D).position) > PICKUP_DISTANCE:
 				_show_toast("조금 더 가까이 가야 합니다")
 			elif _net != null and _net.connected:
 				_net.send_pickup(id)

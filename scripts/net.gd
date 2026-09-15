@@ -24,7 +24,10 @@ signal gathered(index: int, item: String, available_at: float, by: String)
 signal inventory_received(inventory: Dictionary)
 ## 판매 결과(서버가 정산). bells는 서버가 보관하는 최종 값이다.
 signal sold(sold: Dictionary, total: int, bells: int, inventory: Dictionary, unsold: Array)
-signal server_error(code: String, message: String)
+## 서버 거절. `extra`에는 거절 사유에 딸린 값이 온다(예: 벨이 얼마 모자란지) —
+## 없으면 빈 딕셔너리다. **이 값이 없으면 "부족하다"만 말하게 되어** 가게와 가방을
+## 왕복하게 된다(가게 설계 회의 §5).
+signal server_error(code: String, message: String, extra: Dictionary)
 ## 서버가 모두에게 알리는 시스템 문구(입장·퇴장 등).
 signal system_message(text: String, kind: String)
 signal rename_received(token: String, name: String)
@@ -232,7 +235,11 @@ func _handle_packet(bytes: PackedByteArray) -> void:
 			bought.emit(msg.get("good", {}), int(msg.get("bells", 0)),
 				msg.get("owned", []), msg.get("choices", {}))
 		"error":
-			server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")))
+			var extra: Dictionary = {}
+			for key: String in ["need", "state"]:
+				if typeof(msg.get(key)) == TYPE_DICTIONARY:
+					extra[key] = msg[key]
+			server_error.emit(String(msg.get("code", "")), String(msg.get("message", "")), extra)
 		_:
 			push_warning("알 수 없는 서버 메시지: %s" % String(msg.get("t", "")))
 

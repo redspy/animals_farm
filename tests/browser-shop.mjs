@@ -253,6 +253,10 @@ check(afterBuy.bells === beforeBuy - shopCfg.goods[0].price,
   `사면 서버가 벨을 차감한다 (${beforeBuy} → ${afterBuy.bells})`);
 const locked = await page.evaluate(() => window.afTest?.points?.shopBuy1 != null);
 check(locked, '가게 화면이 그대로 열려 있다(그 자리에서 잠긴다)');
+// **산 사람에게만 응답한다**는 이 기능의 규약이다(protocol.md) — 관찰자 소켓에
+// bought가 오면 안 된다. 관찰자를 깔아 두고 안 보면 규약이 테스트되지 않는다.
+const leaked = await waitFor((m) => m.t === 'bought', 1500);
+check(leaked === null, '구매는 남에게 방송되지 않는다');
 await page.screenshot({ path: `${OUT}/2-구매후.png` }).catch(() => {});
 
 // --- 4. 산 색이 꾸미기 화면에 열린다 ---

@@ -1358,6 +1358,28 @@ test('가게 주인은 부탁 후보에서 빠진다(requests가 있어도)', ()
   assert.ok(state[normal.id].request, '일반 이웃까지 부탁이 막혔다');
 });
 
+test('상품 가격이 범위를 벗어나면 클램프한다(공짜가 되지 않는다)', () => {
+  // num()은 클램프가 아니라 **폴백**이라, 여기 폴백 0을 그대로 쓰면 `price: 150000`
+  // 오타 하나가 그 상품을 **공짜로** 만든다 — 틀리는 방향이 최악이다(리뷰 지적).
+  // 판매가(priceOf)가 이미 쓰는 규칙(클램프)에 맞춘다.
+  const dir = mkdtempSync(join(tmpdir(), 'af-shopprice-'));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(dir, name), readFileSync(join('data', name)));
+  }
+  const shop = JSON.parse(readFileSync(join('data', 'shop.json'), 'utf-8'));
+  const max = (shop.limits.price || [0, 100000])[1];
+  shop.goods[0].price = max + 50000;      // 범위를 넘는 오타
+  shop.goods[1].price = 'x';              // 숫자가 아님
+  writeFileSync(join(dir, 'shop.json'), JSON.stringify(shop));
+
+  const w = new WorldState({ dataDir: dir, persist: false });
+  const clamped = w.shopGoods.get(shop.goods[0].id);
+  assert.ok(clamped, '범위 밖 상품이 사라졌다');
+  assert.equal(clamped.price, max, `공짜가 되거나 그대로 남았다: ${clamped.price}`);
+  assert.ok(!w.shopGoods.has(shop.goods[1].id), '숫자가 아닌 가격이 카탈로그에 남았다');
+});
+
 test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)', () => {
   // 없는 팔레트 키는 화면에 마젠타로 그려진다 — 커밋 전에 잡는다.
   const shop = JSON.parse(readFileSync(join('data', 'shop.json'), 'utf-8'));

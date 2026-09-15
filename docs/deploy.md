@@ -121,7 +121,7 @@ npm run test:browser            # build/web를 서버에 올려 Chromium으로 �
 | 웹 export 산출물(index.html/.wasm/.pck) | ✅ 로컬 실측 생성 |
 | 정적 서버 MIME·COOP/COEP·`/healthz` | ✅ 로컬 실측 통과 |
 | 브라우저 기동·입력·채집·판매 1사이클 | ✅ 로컬 실측 통과(`npm run test:browser`, Chromium) |
-| 서버 규칙(검증·소유권·레이트 리밋·활동·놀이터·낚시·NPC·경주·외형) | ✅ 유닛 테스트 **148종** 통과(환경변수 정규화 4종 + 데이터 손상 회귀 12종 + 데이터·상수 린트 + welcome 규약 실서버 테스트 포함)(`npm run test:server`) |
+| 서버 규칙(검증·소유권·레이트 리밋·활동·놀이터·낚시·NPC·경주·외형) | ✅ 유닛 테스트 **149종** 통과(환경변수 정규화 4종 + 데이터 손상 회귀 12종 + 데이터·상수 린트 + welcome 규약 실서버 테스트 포함)(`npm run test:server`) |
 | 낚시·벌레(대기→물기→타이밍, 헛챔질·놓침) | ✅ 로컬 실측 통과(`npm run test:fishing`) |
 | 이웃 부탁·도감(부족→수집→정산→도감 2탭) | ✅ 로컬 실측 통과(`npm run test:npc`) |
 | 가게(채집→판매→구매→꾸미기에 열림) | ✅ 로컬 실측 통과(`npm run test:shop`) |
