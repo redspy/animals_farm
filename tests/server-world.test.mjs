@@ -1455,6 +1455,20 @@ test('팔레트를 못 읽어도 가게가 통째로 사라지지 않는다', ()
   writeFileSync(join(dir, 'palette.json'), '{ 깨진 JSON');
   const w = new WorldState({ dataDir: dir, persist: false });
   assert.ok(w.shopCatalog().length > 0, '팔레트 사고에 가게가 통째로 비었다');
+
+  // **character가 객체가 아닌 경우도 같은 사고다.** Object.keys가 인덱스를 뱉어
+  // "목록이 있다"로 오인되면 outfit·skin 상품이 전부 제외된다(리뷰 지적).
+  const dir2 = mkdtempSync(join(tmpdir(), 'af-badpalette-'));
+  for (const name of readdirSync('data')) {
+    if (!name.endsWith('.json')) continue;
+    writeFileSync(join(dir2, name), readFileSync(join('data', name)));
+  }
+  const broken = JSON.parse(readFileSync(join('data', 'palette.json'), 'utf-8'));
+  broken.character = ['#ffffff', '#000000'];
+  writeFileSync(join(dir2, 'palette.json'), JSON.stringify(broken));
+  const w2 = new WorldState({ dataDir: dir2, persist: false });
+  assert.ok(w2.shopCatalog().length > 0,
+    'character가 배열일 때 가게가 통째로 비었다');
 });
 
 test('상품 값이 그 축의 형식이어야 한다', () => {
@@ -1488,7 +1502,12 @@ test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)
     assert.ok(!ids.has(g.id), `상품 id가 중복이다: ${g.id}`);
     ids.add(g.id);
     assert.ok(['hair', 'skin', 'outfit'].includes(g.kind), `${g.id}.kind가 외형 축이 아니다`);
-    assert.ok(palette[g.value], `${g.id}.value(${g.value})가 팔레트에 없다 — 마젠타로 그려진다`);
+    // **축별로 규칙이 다르다.** outfit·skin은 팔레트 색 키지만 hair는 그리는
+    // 스타일 이름이라 팔레트에 없다 — 여기서 일괄로 팔레트를 요구하면 머리 상품을
+    // 넣는 순간 런타임은 통과시키는데 **커밋 게이트만 실패한다**(리뷰 지적).
+    if (g.kind !== 'hair') {
+      assert.ok(palette[g.value], `${g.id}.value(${g.value})가 팔레트에 없다 — 마젠타로 그려진다`);
+    }
     // **1 이상을 따로 못박는다.** 범위 하한이 0이면 0원·음수가 전부 공짜가 되고,
     // 그건 "가격이 있다"는 말과 같지 않다(리뷰 지적).
     assert.ok(Number.isFinite(g.price) && g.price >= Math.max(1, range[0]) && g.price <= range[1],

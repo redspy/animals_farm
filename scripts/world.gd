@@ -2607,10 +2607,14 @@ func _on_net_closed(reason: String) -> void:
 	# 열린다 — **값도 함께 비운다.** 열려 있던 가게 창도 닫는다(옛 잔액·보유가 그려진
 	# 채 남아 있을 이유가 없다).
 	_welcomed = false
-	_shop_goods.clear()
-	_owned_goods.clear()
+	# **창을 먼저 닫고 비운다.** ShopUI가 `_shop_goods` 배열을 참조로 들고 있어서,
+	# 비운 뒤 닫으면 순서에 의존하게 된다(리뷰 지적).
 	if _shop_ui != null and is_instance_valid(_shop_ui):
 		_shop_ui.close()
+	_shop_goods.clear()
+	_owned_goods.clear()
+	# `_appearance_choices`는 일부러 남긴다 — 오프라인에서 꾸미기를 계속 쓸 수 있어야
+	# 하고(`_pending_custom`), 재연결 때 서버가 다시 검증하므로 손실이 없다.
 	# 남아 있던 다른 캐릭터/물건은 지운다 — 끊긴 뒤에도 남겨두면 유령이 된다.
 	for token: String in _remotes.keys():
 		(_remotes[token] as Node).queue_free()
@@ -2650,8 +2654,8 @@ func _on_welcome(you: Dictionary, world_cfg: Dictionary, resync: bool = false) -
 	# 검사한다). 선택지 목록도 서버가 보낸 것만 그린다.
 	if typeof(you.get("appearanceChoices")) == TYPE_DICTIONARY:
 		_appearance_choices = you["appearanceChoices"]
-	# 가게 목록도 서버가 준다 — 클라이언트도 같은 data/shop.json을 읽지만, 가격은
-	# 서버 판정이 기준이므로 화면도 서버가 준 값을 그린다.
+	# 가게 목록은 **서버만 준다** — 클라이언트는 data/shop.json을 읽지 않는다.
+	# 가격 판정의 유일한 출처가 서버이므로 화면도 서버가 준 값을 그린다.
 	_welcomed = true
 	if typeof(you.get("shop")) == TYPE_ARRAY:
 		_shop_goods = you["shop"]

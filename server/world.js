@@ -62,6 +62,13 @@ export const CLIENT_SHARED = {
  */
 const LOOK_VALUE_PREFIX = { outfit: 'outfit_', skin: 'skin', hair: null };
 
+/**
+ * 외형 축 목록. **위 맵에서 유도한다** — 축 화이트리스트와 접두어 맵을 따로 두면,
+ * 축을 하나 늘리면서 맵에 안 넣었을 때 `prefix === undefined`가 되어 값 검증이
+ * **조용히 fail-open** 된다(이 파일이 막으려던 손실 경로 그대로 — 리뷰 지적).
+ */
+const LOOK_KINDS = Object.keys(LOOK_VALUE_PREFIX);
+
 export const LIMITS = {
   NAME_MAX: 12,
   CHAT_MAX: 200,
@@ -622,11 +629,11 @@ export class WorldState {
     // 전부 허용하면 skin에 "rope"를 넣을 수 있고, 코드에 목록을 박으면
     // characters.json을 늘려도 서버가 안 따라온다(확장 지점이 거짓말이 된다).
     const charCfg = readJson(join(dataDir, 'characters.json'), { presets: [] });
-    this.appearanceOptions = { hair: new Set(), skin: new Set(), outfit: new Set() };
+    this.appearanceOptions = Object.fromEntries(LOOK_KINDS.map((k) => [k, new Set()]));
     this.presetIds = new Set();
     for (const preset of charCfg.presets || []) {
       if (preset && preset.id) this.presetIds.add(String(preset.id));
-      for (const key of ['hair', 'skin', 'outfit']) {
+      for (const key of LOOK_KINDS) {
         if (preset[key]) this.appearanceOptions[key].add(String(preset[key]));
       }
     }
@@ -639,8 +646,9 @@ export class WorldState {
       console.error('[world] characters.json에서 프리셋을 읽지 못했습니다 — 외형·프리셋 검증을 건너뜁니다(저장된 값은 그대로 지킵니다)');
     }
 
-    // 가게 상품. **클라이언트와 같은 파일을 읽는다** — 가격을 두 곳에 나눠 두면
-    // "화면에는 200인데 서버는 400을 받는" 상태가 된다.
+    // 가게 상품. **클라이언트는 이 파일을 읽지 않는다** — 목록과 가격은 welcome으로만
+    // 내려간다(서버가 유일한 출처). 클라이언트 로더를 만들면 "화면에는 200인데 서버는
+    // 400을 받는" 상태가 생길 수 있으므로 만들지 말 것.
     // 상품이 가리키는 색이 실제로 있는지 보려면 팔레트가 필요하다 — 없는 키는
     // 화면에 마젠타로 그려진다(docs/design.md §5).
     //
@@ -648,7 +656,13 @@ export class WorldState {
     // 번들된 **클라이언트의** palette.json이다. 둘이 같을 때만 "마젠타를 막는다"가
     // 성립한다(AF_DATA_DIR로 서버 데이터만 갈아 끼우면 갈린다 — 리뷰 지적).
     const paletteCfg = readJson(join(dataDir, 'palette.json'), {});
-    const paletteColors = new Set(Object.keys(paletteCfg.character || {}));
+    // **객체인지까지 본다.** `character`가 배열·문자열로 깨져 들어오면 Object.keys가
+    // 인덱스를 뱉어 size > 0이 되고, 아래 "목록이 없음" 가드를 통과해 outfit·skin
+    // 상품이 **전부** 제외된다 — 막으려던 "가게 전체 소멸"이 그대로 재현된다(리뷰 지적).
+    const charPalette = paletteCfg.character;
+    const paletteColors = new Set(
+      (charPalette && typeof charPalette === 'object' && !Array.isArray(charPalette))
+        ? Object.keys(charPalette) : []);
     if (paletteColors.size === 0) {
       // **데이터 사고를 "가게 전체 소멸"로 키우지 않는다.** 전부 제외하면 카탈로그가
       // 비고, 산 색이 allowedLook에서 빠져 꾸미기에서 사라지며, publicCustom이 남들
@@ -668,7 +682,7 @@ export class WorldState {
       const id = String(raw.id);
       const kind = String(raw.kind || '');
       // 파는 축은 외형의 축이어야 한다 — 모르는 축이면 산 뒤에 입을 수가 없다.
-      if (!['hair', 'skin', 'outfit'].includes(kind)) {
+      if (!LOOK_KINDS.includes(kind)) {
         console.warn(`[world] shop.json의 ${id}.kind가 외형 축이 아니라 제외: ${raw.kind}`);
         continue;
       }
@@ -1609,7 +1623,7 @@ export class WorldState {
       return { error: { code: 'bad_appearance', message: '외형 값이 올바르지 않습니다' } };
     }
     const next = {};
-    for (const key of ['hair', 'skin', 'outfit']) {
+    for (const key of LOOK_KINDS) {
       if (custom[key] === undefined || custom[key] === null) continue;
       const value = String(custom[key]);
       if (!this.allowedLook(p, key).has(value)) {
@@ -1665,7 +1679,7 @@ export class WorldState {
     }
     const out = {};
     const outside = [];
-    for (const key of ['hair', 'skin', 'outfit']) {
+    for (const key of LOOK_KINDS) {
       if (raw[key] === undefined || raw[key] === null) continue;
       if (typeof raw[key] !== 'string' && typeof raw[key] !== 'number') {
         console.warn(`[world] ${who} 저장된 외형 ${key}가 문자열이 아니라 버림(다음 저장에서 사라진다): ${JSON.stringify(raw[key])}`);
@@ -1697,7 +1711,7 @@ export class WorldState {
   publicCustom(p) {
     const raw = (p && p.custom) || {};
     const out = {};
-    for (const key of ['hair', 'skin', 'outfit']) {
+    for (const key of LOOK_KINDS) {
       const value = raw[key];
       if (value === undefined || value === null) continue;
       const str = String(value);
@@ -1754,9 +1768,7 @@ export class WorldState {
   appearanceChoices(token = null) {
     const p = token ? this.players.get(token) : null;
     return {
-      hair: [...this.allowedLook(p, 'hair')],
-      skin: [...this.allowedLook(p, 'skin')],
-      outfit: [...this.allowedLook(p, 'outfit')],
+      ...Object.fromEntries(LOOK_KINDS.map((k) => [k, [...this.allowedLook(p, k)]])),
     };
   }
 
