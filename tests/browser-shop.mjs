@@ -293,6 +293,10 @@ await clickWorld(tree2.x, tree2.z);
 await page.waitForFunction(
   () => Number(window.afTest?.state?.bagCount ?? 0) > 0, null, { timeout: 20000 },
 ).catch(() => {});
+// **원인을 원인 자리에서 잡는다.** 위 대기가 타임아웃을 삼키므로, 못 캤으면 아래
+// "팔아서 벨이 늘었다"가 실패해 라벨과 원인이 어긋난다(리뷰 지적).
+const bagged = (await state()).bag;
+check(bagged > 0, `다시 나무를 캤다 (가방 ${bagged})`);
 const beforeSell = (await state()).bells;
 await page.keyboard.press('KeyI');
 await page.waitForFunction(() => window.afTest?.points?.invSellAll != null,
@@ -318,11 +322,25 @@ for (let i = 0; i < 6; i += 1) {
   await page.waitForTimeout(400);
 }
 check(reopened, '가게를 다시 열었다');
+// **그려진 잔액을 읽어 서버 값과 비교한다.** 훅 존재만 보면 "창이 열렸다"까지만
+// 증명하고, 라벨에 옛 숫자가 찍혀 있어도 통과한다(리뷰 지적).
+// `afTest.state`는 값이 남는 사전이고 게시가 주기적이라, 바로 읽으면 **첫 가게
+// 인스턴스가 남긴 옛 값**을 볼 수 있다 — 조건 대기로 갈라야 "안 바뀐 것"과
+// "아직 안 올라온 것"이 구분된다(고정 대기 금지 규칙과 같은 이유).
+await page.waitForFunction(
+  (want) => Number(window.afTest?.state?.shopBells ?? -1) === want,
+  afterSell.bells, { timeout: 5000 },
+).catch(() => {});
+const shownBells = await page.evaluate(
+  () => Number(window.afTest?.state?.shopBells ?? -1));
+check(shownBells === afterSell.bells,
+  `가게가 서버 잔액을 그린다 (화면 ${shownBells} / 서버 ${afterSell.bells})`);
 await page.screenshot({ path: `${OUT}/4-판매후가게.png` }).catch(() => {});
 
 // --- 4. 산 색이 꾸미기 화면에 열린다 ---
 console.log('\n[검증] 산 것이 꾸미기에 열린다');
-await tapGodot(page, 'shopClose');
+// 가게를 못 열었으면 여기서 예외로 죽어 **결과 요약까지 통째로 사라진다**(리뷰 지적).
+if (reopened) await tapGodot(page, 'shopClose');
 await page.waitForTimeout(600);
 await page.keyboard.press('KeyI');
 await page.waitForFunction(() => window.afTest?.points?.invLook != null,

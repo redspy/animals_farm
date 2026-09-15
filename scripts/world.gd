@@ -2420,8 +2420,15 @@ func _is_uuid(text: String) -> bool:
 ## 한 지점만 막으면 다른 경로(경주 보상·부탁 정산·판매)에서 창이 옛 잔액을 그려
 ## "살 수 있어 보이는데 서버가 거절"이 된다(리뷰 지적).
 func _refresh_shop_ui() -> void:
-	if _shop_ui != null and is_instance_valid(_shop_ui):
-		_shop_ui.apply_server_state(_owned_goods, int(_slot.get("bells", 0)), _shop_goods)
+	if _shop_ui == null or not is_instance_valid(_shop_ui):
+		return
+	# 목록이 비면 **여는 것과 같은 규칙**으로 닫고 알린다 — 벨만 있는 빈 패널이 남으면
+	# 아이는 뭘 기다려야 하는지 알 수 없다(`_open_shop`이 같은 경우를 토스트로 막는다).
+	if _shop_goods.is_empty():
+		_shop_ui.close()
+		_show_toast("지금은 가게에 물건이 없습니다")
+		return
+	_shop_ui.apply_server_state(_owned_goods, int(_slot.get("bells", 0)), _shop_goods)
 
 ## 가게 화면을 연다. 목록·가격·잔액은 전부 서버가 준 값을 그린다 — 클라이언트가
 ## 계산하면 "화면에는 살 수 있는데 서버가 거절하는" 상태가 된다.

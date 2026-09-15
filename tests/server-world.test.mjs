@@ -1498,6 +1498,14 @@ test('상품 값이 그 축의 형식이어야 한다', () => {
   assert.ok(!w.shopGoods.has(shop.goods[0].id), '축에 안 맞는 값이 카탈로그에 남았다');
   assert.ok(w.shopGoods.has('hair_bob_good'),
     '머리 스타일 상품이 제외됐다 — hair 값은 팔레트 키가 아니다');
+  // **견본을 그릴 축인가**도 같은 출처에서 나온다. 클라이언트가 이 필드 하나로
+  // 견본을 그릴지 정하는데 값이 뒤집혀도 잡는 것이 없었다 — `Boolean(prefix)`는
+  // "접두어가 있다"지 "팔레트 축이다"가 아니라, 어떤 축 접두어를 ''로 두면 견본이
+  // 조용히 사라진다(리뷰 지적).
+  assert.equal(w.shopGoods.get('hair_bob_good').swatch, false,
+    '머리 상품에 색 견본을 그리려 한다 — 팔레트에 없어 마젠타가 된다');
+  const outfitGood = [...w.shopGoods.values()].find((g) => g.kind === 'outfit');
+  assert.ok(outfitGood && outfitGood.swatch === true, '옷 상품의 견본이 꺼졌다');
 });
 
 test('shop.json 상품이 팔레트·유효범위와 맞는다(데이터 린트)', () => {

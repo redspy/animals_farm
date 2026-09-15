@@ -26,8 +26,11 @@ var _hooks: TestHooks
 
 ## 가게를 연다. `owned`는 이미 산 상품 id들 — 그 줄은 사는 버튼 대신 "보유"로 잠근다.
 func setup(goods: Array, owned: Array, bells: int) -> void:
-	_goods = goods
-	_owned = owned
+	# **복사해서 보관한다**(apply_server_state와 같은 이유) — 호출자가 넘기는 것은
+	# world.gd의 그 배열 자체라, 여기서 참조를 들면 더티 체크가 자기 자신 비교가 되고
+	# 제자리 변경(`clear()`)과의 순서에 의존하게 된다(리뷰 지적).
+	_goods = goods.duplicate()
+	_owned = owned.duplicate()
 	_bells = bells
 	if is_node_ready():
 		_fill()
@@ -132,6 +135,10 @@ func _fill() -> void:
 	if _list == null:
 		return
 	_bells_label.text = "내 벨: %d" % _bells
+	# **값을 노출한다.** `track()`은 화면 좌표만 게시해서 E2E가 "창이 열렸다"까지만
+	# 알 수 있었다 — 라벨에 옛 숫자가 찍혀 있어도 통과하는 테스트가 됐다(리뷰 지적).
+	if _hooks != null:
+		_hooks.set_state("shopBells", _bells)
 	for c in _list.get_children():
 		_list.remove_child(c)
 		c.queue_free()
