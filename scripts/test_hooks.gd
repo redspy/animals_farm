@@ -73,6 +73,29 @@ func clear() -> void:
 	_extra.clear()
 	_dynamic.clear()
 
+## 노드가 사라질 때 **자기 것을 치운다.**
+##
+## 없으면 닫힌 화면의 좌표·상태가 `window.afTest`에 영구히 남는다 — E2E가
+## "가게가 다시 열렸다"를 그 훅의 존재로 판정하면 **클릭이 실패해도 통과**하고,
+## 값 비교도 "언젠가 그 값을 그린 적 있다"가 된다(2026-09-16 리뷰가 실제로 그
+## 상태를 잡았다). 모달이 여럿인 화면 전부가 같은 문제를 공유했다.
+func _exit_tree() -> void:
+	if not OS.has_feature("web"):
+		return
+	var keys: Array[String] = []
+	for key: String in _state.keys():
+		keys.append('"%s"' % key)
+	JavaScriptBridge.eval("""
+		(function(){
+			var t = window.%s; if (!t) return;
+			var mine = (t.owners || {})['%s'] || [];
+			mine.forEach(function(k){ delete t.points[k]; });
+			if (t.owners) delete t.owners['%s'];
+			var st = [%s];
+			st.forEach(function(k){ if (t.state) delete t.state[k]; });
+		})();
+	""" % [GLOBAL_NAME, _instance_id, _instance_id, ", ".join(keys)], true)
+
 func _process(delta: float) -> void:
 	_timer += delta
 	if _timer < PUBLISH_INTERVAL:

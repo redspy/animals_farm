@@ -281,12 +281,19 @@ await page.screenshot({ path: `${OUT}/2-구매후.png` }).catch(() => {});
 // 호출부로 덮는다.
 console.log('\n[검증] 가게가 서버 잔액을 그린다');
 await tapGodot(page, 'shopClose');
-await page.waitForTimeout(500);
+await page.waitForTimeout(700);
+// **닫으면 훅도 사라져야 한다.** 남으면 아래 재오픈 판정이 "첫 인스턴스가 남긴 훅"을
+// 보고 클릭이 실패해도 통과한다 — 값 비교도 "언젠가 그 값을 그린 적 있다"가 된다
+// (2026-09-16 리뷰 지적. TestHooks._exit_tree가 자기 것을 치운다).
+const hookGone = await page.evaluate(() => window.afTest?.points?.shopBells == null
+  && window.afTest?.state?.shopBells == null);
+check(hookGone, '가게를 닫으면 그 화면의 훅이 사라진다');
 const tree2 = gcfg.spawns
   .map((s, index) => ({ ...s, index }))
   .filter((s) => s.item === 'wood')
   .sort((a, b) => Math.hypot(a.x - shopNpc.x, a.z - shopNpc.z)
     - Math.hypot(b.x - shopNpc.x, b.z - shopNpc.z))[0];
+const bagBefore = (await state()).bag;
 await walkTo('x', tree2.x);
 await walkTo('z', tree2.z + 1.2);
 await clickWorld(tree2.x, tree2.z);
@@ -296,7 +303,9 @@ await page.waitForFunction(
 // **원인을 원인 자리에서 잡는다.** 위 대기가 타임아웃을 삼키므로, 못 캤으면 아래
 // "팔아서 벨이 늘었다"가 실패해 라벨과 원인이 어긋난다(리뷰 지적).
 const bagged = (await state()).bag;
-check(bagged > 0, `다시 나무를 캤다 (가방 ${bagged})`);
+// **증가를 본다.** 절대값만 보면 앞 판매가 `unsold`(가격 미상)를 남겼을 때
+// 두 번째 채집이 실패해도 통과한다 — 라벨이 "다시"인 이상 증가를 봐야 한다.
+check(bagged > bagBefore, `다시 나무를 캤다 (${bagBefore} → ${bagged})`);
 const beforeSell = (await state()).bells;
 await page.keyboard.press('KeyI');
 await page.waitForFunction(() => window.afTest?.points?.invSellAll != null,
@@ -333,8 +342,11 @@ await page.waitForFunction(
 ).catch(() => {});
 const shownBells = await page.evaluate(
   () => Number(window.afTest?.state?.shopBells ?? -1));
+// 라벨을 정확히 적는다 — `state.bells`와 `state.shopBells` 둘 다 클라이언트
+// `_slot["bells"]`에서 나오므로 이 검사는 **클라 두 뷰의 일치**를 본다(잡으려던
+// 회귀가 정확히 그 클래스다). 서버-클라 괴리는 서버 유닛이 본다.
 check(shownBells === afterSell.bells,
-  `가게가 서버 잔액을 그린다 (화면 ${shownBells} / 서버 ${afterSell.bells})`);
+  `가게 창이 최신 잔액을 그린다 (화면 ${shownBells} / HUD ${afterSell.bells})`);
 await page.screenshot({ path: `${OUT}/4-판매후가게.png` }).catch(() => {});
 
 // --- 4. 산 색이 꾸미기 화면에 열린다 ---

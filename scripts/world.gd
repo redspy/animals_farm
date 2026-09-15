@@ -2623,8 +2623,9 @@ func _on_net_closed(reason: String) -> void:
 	# 열린다 — **값도 함께 비운다.** 열려 있던 가게 창도 닫는다(옛 잔액·보유가 그려진
 	# 채 남아 있을 이유가 없다).
 	_welcomed = false
-	# **창을 먼저 닫고 비운다.** ShopUI가 `_shop_goods` 배열을 참조로 들고 있어서,
-	# 비운 뒤 닫으면 순서에 의존하게 된다(리뷰 지적).
+	# **창을 먼저 닫고 비운다.** ShopUI가 복사해서 보관하게 된 뒤로는 참조 문제가
+	# 아니라 **토스트 때문**이다 — 먼저 비우면 `_refresh_shop_ui`의 빈 목록 경로가
+	# 돌아 "물건이 없습니다"가 뜨는데, 끊긴 상황에서 할 말은 그것이 아니다.
 	if _shop_ui != null and is_instance_valid(_shop_ui):
 		_shop_ui.close()
 	_shop_goods.clear()
