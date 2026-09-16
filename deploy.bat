@@ -78,15 +78,24 @@ REM sh 쪽 검사 3종은 로컬 전용이라 배포 판정에 관여하지 않�
 REM 스마트 따옴표가 한 줄에 섞이면 그 패턴만 조용히 죽고, 카나리아는 첫 패턴만
 REM 보므로 통과한다 — 컴파일 에러 섞인 export가 초록불로 배포된다(리뷰 지적).
 REM LF/CR만 허용하고 BOM·탭·제어문자·비ASCII를 막는다(sh 검사 1과 같은 기준).
-powershell -NoProfile -Command "$b=[IO.File]::ReadAllBytes('scripts\error-patterns.txt'); $bad=0; foreach($x in $b){ if((($x -lt 32) -and ($x -ne 10) -and ($x -ne 13)) -or ($x -gt 126)){ $bad=1 } }; exit $bad"
+REM 빈 줄·공백뿐인 줄도 함께 본다 — 그건 출력 가능 ASCII라 바이트 검사를 통과하고
+REM 카나리아 줄에도 매치되는데, findstr /L은 로그의 **모든 줄**에 매치해서 정상
+REM 빌드를 "script errors"로 죽인다. 게이트가 뚫리는 건 아니지만 원인을 알 수 없는
+REM 형태로 배포가 막힌다(2026-09-16 리뷰 지적).
+REM 위반 위치(바이트 오프셋·줄 번호)도 찍는다 — CI에서 유일하게 도는 게이트라
+REM 여기야말로 진단 정보가 필요하다.
+powershell -NoProfile -Command "$p='scripts\error-patterns.txt'; $b=[IO.File]::ReadAllBytes($p); $bad=@(); for($i=0;$i -lt $b.Length;$i++){ $x=$b[$i]; if((($x -lt 32) -and ($x -ne 10) -and ($x -ne 13)) -or ($x -gt 126)){ $bad += $i } }; if($bad.Count -gt 0){ Write-Host ('  bad bytes at offsets: ' + ($bad -join ',')); exit 1 }; $n=0; foreach($l in [IO.File]::ReadAllLines($p)){ $n++; if($l.Trim() -eq ''){ Write-Host ('  blank pattern line: ' + $n); exit 1 } }; exit 0"
 if %ERRORLEVEL% neq 0 (
-    echo ERROR: error-patterns.txt has bytes outside printable ASCII ^(BOM/tab/control^) - patterns are dead
+    echo ERROR: error-patterns.txt is unusable ^(non-ASCII byte or blank line, see above^) - patterns are dead
     exit /b 1
 )
 
 REM 카나리아 — 패턴이 **진짜 오류 줄을 잡는지** 확인한다. 위 검사가 바이트를 보는
 REM 것과 달리 이건 findstr가 실제로 매치하는지를 본다.
 REM ⚠️ 한계: 첫 패턴 계열이 살아 있는지까지만 말한다(sh 쪽과 같다).
+REM 직전 실행의 canary.txt가 남아 있으면 쓰기가 실패해도 아래 검사를 통과한다
+REM (build\ 는 정리되지 않는다 — 지우는 건 build\web 뿐이다. 리뷰 지적).
+del /q build\canary.txt 2>nul
 echo SCRIPT ERROR: canary> build\canary.txt
 if not exist build\canary.txt (
     echo ERROR: could not write build\canary.txt - cannot verify the gate

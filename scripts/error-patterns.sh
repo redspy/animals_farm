@@ -28,7 +28,7 @@ ERROR_PATTERNS="$(tr -d '\r' < "$ERROR_PATTERNS_FILE")"
 # 그렇게 짰다가 넷째 줄에 BOM을 넣은 대조가 통과해 버렸다(2026-09-16 실측).
 # 그래서 두 가지를 본다: **고정 문자열 카나리아**(파일과 무관한 진짜 Godot 오류 줄)와
 # **바이트 위생 검사**(패턴은 출력 가능한 ASCII 리터럴이어야 한다 — BOM을 여기서
-# 잡는다. CR은 위에서 이미 벗겼고 빈 줄은 (2)가 본다).
+# 잡는다. CR은 위에서 이미 벗겼고 빈 줄은 (2)가 **원본 파일에서** 본다).
 
 # 1) 바이트 위생: 출력 가능한 ASCII 밖의 바이트가 있으면 멈춘다(BOM·탭·제어문자 등).
 #    그래서 `error-patterns.txt`는 **주석도 비ASCII도 넣을 수 없다** — `grep -F`
@@ -40,17 +40,14 @@ if printf '%s\n' "$ERROR_PATTERNS" | LC_ALL=C grep -q '[^ -~]'; then
 fi
 
 # 2) 빈 줄·공백뿐인 줄: `grep -F -e ""`는 **모든 줄에 매치**해서 정상 빌드까지 실패시킨다.
-while IFS= read -r _ep_pat; do
-  case "$_ep_pat" in
-    *[!\ ]*) ;;
-    *)
-      echo "ERROR: $ERROR_PATTERNS_FILE 에 빈 줄 또는 공백뿐인 줄이 있습니다 — 모든 줄에 매치됩니다."
-      exit 1
-      ;;
-  esac
-done <<EOF
-$ERROR_PATTERNS
-EOF
+#    ⚠️ **`$ERROR_PATTERNS`가 아니라 원본 파일을 본다.** 명령 치환은 후행 개행을
+#    전부 날리므로, 변수를 보면 **끝줄 빈 줄을 못 본다** — sh는 초록불인데 파일을
+#    직접 읽는 findstr만 빈 패턴을 봐서 CI만 깨지는 조합이 된다(2026-09-16 리뷰 지적).
+if LC_ALL=C grep -qn '^[[:space:]]*$' "$ERROR_PATTERNS_FILE"; then
+  echo "ERROR: $ERROR_PATTERNS_FILE 에 빈 줄 또는 공백뿐인 줄이 있습니다 — 모든 줄에 매치됩니다."
+  LC_ALL=C grep -n '^[[:space:]]*$' "$ERROR_PATTERNS_FILE" | sed 's/^/       /'
+  exit 1
+fi
 
 # 3) 고정 카나리아: 파일과 무관한 실제 Godot 오류 줄을 정말로 잡는지 본다.
 #    **한계**: 이건 첫 패턴 계열이 살아 있는지까지만 말한다. 가운데 한 줄만 오타가
