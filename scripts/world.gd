@@ -2625,8 +2625,12 @@ func _on_net_closed(reason: String) -> void:
 	_welcomed = false
 	# 창을 닫고 목록을 비운다. **순서는 이제 아무래도 상관없다** — ShopUI가 값을
 	# 복사해서 보관하므로 참조 공유가 없고, 이 함수는 `_refresh_shop_ui`를 부르지
-	# 않아 빈 목록 토스트도 타지 않는다(그 토스트는 재접속 welcome 경로에서 뜬다).
-	# 예전 주석이 든 두 근거가 모두 사라졌으므로, 없는 불변식을 지키지 않게 적어 둔다.
+	# 않아 빈 목록 토스트도 타지 않는다.
+	#
+	# 그 토스트가 뜰 수 있는 건 **소켓이 살아 있는 재동기화 welcome**뿐이다 — 여기서
+	# `close()`가 `closed`를 쏘고 그 핸들러가 `_shop_ui = null`로 만들기 때문에,
+	# 끊겼다 다시 붙는 welcome의 `_refresh_shop_ui`는 첫 줄에서 그냥 돌아간다
+	# (2026-09-16 리뷰 지적 — "재접속 welcome에서 뜬다"고 적었던 건 틀렸다).
 	if _shop_ui != null and is_instance_valid(_shop_ui):
 		_shop_ui.close()
 	_shop_goods.clear()

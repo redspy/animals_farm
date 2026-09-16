@@ -280,20 +280,40 @@ await page.screenshot({ path: `${OUT}/2-구매후.png` }).catch(() => {});
 // 경주 보상·재동기화처럼 비동기로 오는 것들이고, 그건 서버 유닛과 `_refresh_shop_ui`
 // 호출부로 덮는다.
 console.log('\n[검증] 가게가 서버 잔액을 그린다');
+// **닫기 전에** 심는다 — `_exit_tree`는 닫는 그 순간 돌기 때문에, 닫은 뒤에 심으면
+// 아무것도 찌르지 못하고 단정이 저절로 통과한다(실제로 그렇게 써서 음성 대조가
+// 통과해 버렸다).
+//
+// 찌르는 대상은 **가게가 쓰지 않는 키 두 개**다. 가게가 실제로 올리는 키
+// (`shopBells`)에 심으면 훅이 0.4초마다 재게시하면서 소유권을 되찾아, 심은 뒤
+// 닫기까지 한 틱만 끼어도 단정이 뒤집힌다(실제로 간헐 실패했다). 가게가 건드리지
+// 않는 키면 그 레이스가 없다.
+//
+// 두 키에 **가게 소유**와 **남의 소유**를 각각 찍어 두고 닫는다. 소유권이
+// "마지막 기록자"면 앞의 것만 사라진다 — 인스턴스별 키 목록으로 지우는 옛 구조는
+// 둘 다 남긴다(2026-09-16 리뷰가 지적한 그 구조).
+const planted = await page.evaluate(() => {
+  const t = window.afTest;
+  const shopId = t.stateOwner?.shopBells;
+  if (shopId == null) return false;
+  t.state.__probeShop = 1;      t.stateOwner.__probeShop = shopId;
+  t.state.__probeOther = -777;  t.stateOwner.__probeOther = '__other__';
+  return true;
+});
+check(planted, '가게가 올린 상태에 주인이 기록돼 있다');
 await tapGodot(page, 'shopClose');
 await page.waitForTimeout(700);
-// **닫으면 훅도 사라져야 한다.** 남으면 아래 재오픈 판정이 "첫 인스턴스가 남긴 훅"을
-// 보고 클릭이 실패해도 통과한다 — 값 비교도 "언젠가 그 값을 그린 적 있다"가 된다
-// (2026-09-16 리뷰 지적. TestHooks._exit_tree가 자기 것을 치운다).
 const afterClose = await page.evaluate(() => ({
-  gone: window.afTest?.points?.shopBells == null
-    && window.afTest?.state?.shopBells == null,
-  // **남의 상태까지 지우면 안 된다.** 상태 키를 이름으로 지우면 같은 이름을 쓰는
-  // 살아 있는 인스턴스의 값이 날아간다 — 월드의 벨이 그대로인지 함께 본다.
+  pointGone: window.afTest?.points?.shopBells == null,
+  mineGone: window.afTest?.state?.__probeShop === undefined,
+  kept: Number(window.afTest?.state?.__probeOther ?? 0),
   bells: Number(window.afTest?.state?.bells ?? -1),
 }));
-check(afterClose.gone, '가게를 닫으면 그 화면의 훅이 사라진다');
-check(afterClose.bells >= 0, `닫아도 월드 상태는 남는다 (벨 ${afterClose.bells})`);
+check(afterClose.pointGone, '가게를 닫으면 그 화면의 좌표 훅이 사라진다');
+check(afterClose.mineGone, '가게가 주인인 상태는 닫을 때 사라진다');
+check(afterClose.kept === -777,
+  `남이 덮어쓴 상태는 지우지 않는다 (${afterClose.kept})`);
+check(afterClose.bells >= 0, `월드 상태는 그대로 남는다 (벨 ${afterClose.bells})`);
 const tree2 = gcfg.spawns
   .map((s, index) => ({ ...s, index }))
   .filter((s) => s.item === 'wood')

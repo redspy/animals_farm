@@ -85,17 +85,15 @@ func _exit_tree() -> void:
 	JavaScriptBridge.eval("""
 		(function(){
 			var t = window.%s; if (!t) return;
-			var mine = (t.owners || {})['%s'] || [];
-			mine.forEach(function(k){ delete t.points[k]; });
-			if (t.owners) delete t.owners['%s'];
-			// **상태도 내가 올린 것만** 지운다. 이름으로 지우면 같은 이름을 쓰는
-			// 살아 있는 인스턴스의 값까지 날아간다(씬 전환에서 옛 화면의 _exit_tree가
-			// 새 화면 게시 뒤에 돌면 새 값이 지워진다 — 리뷰 지적).
-			var sm = (t.stateOwners || {})['%s'] || [];
-			sm.forEach(function(k){ if (t.state) delete t.state[k]; });
-			if (t.stateOwners) delete t.stateOwners['%s'];
+			var id = '%s';
+			// **내가 아직 주인인 키만** 지운다 — 다른 인스턴스가 같은 이름으로 다시
+			// 올렸으면 그쪽이 주인이므로 건드리지 않는다.
+			for (var k in (t.owner || {}))
+				if (t.owner[k] === id) { delete t.points[k]; delete t.owner[k]; }
+			for (var k2 in (t.stateOwner || {}))
+				if (t.stateOwner[k2] === id) { delete t.state[k2]; delete t.stateOwner[k2]; }
 		})();
-	""" % [GLOBAL_NAME, _instance_id, _instance_id, _instance_id, _instance_id], true)
+	""" % [GLOBAL_NAME, _instance_id], true)
 
 func _process(delta: float) -> void:
 	_timer += delta
@@ -138,33 +136,30 @@ func publish_now() -> void:
 		keys.append('"%s"' % key)
 	JavaScriptBridge.eval("""
 		(function(){
-			var t = window.%s = window.%s || { points: {}, owners: {} };
-			var mine = t.owners['%s'] || [];
-			mine.forEach(function(k){ delete t.points[k]; });
-			t.owners['%s'] = [%s];
+			var t = window.%s = window.%s || {};
+			t.points = t.points || {}; t.state = t.state || {};
+			// **키마다 마지막으로 올린 인스턴스를 적어 둔다.** 인스턴스별 키 목록만
+			// 두면, 죽는 쪽이 "내가 예전에 올린 키"를 지우면서 **그 사이 다른
+			// 인스턴스가 새로 올린 값까지** 날린다(2026-09-16 리뷰 지적). 소유권이
+			// 키 단위 최종 기록자여야 _exit_tree가 남의 값을 안 건드린다.
+			t.owner = t.owner || {}; t.stateOwner = t.stateOwner || {};
+			var id = '%s';
 			var next = %s;
-			for (var k in next) t.points[k] = next[k];
-			t.state = t.state || {};
-			t.stateOwners = t.stateOwners || {};
 			var st = %s;
-			// 상태도 **소유자 장부**를 남긴다 — 없으면 죽는 인스턴스가 살아 있는
-			// 다른 인스턴스의 같은 이름 키를 지운다(_exit_tree 주석 참고).
-			t.stateOwners['%s'] = Object.keys(st);
-			for (var k2 in st) t.state[k2] = st[k2];
+			// 내가 주인이던 좌표 중 이번에 안 올린 것은 지운다(목록이 줄어드는 UI).
+			for (var k in t.owner)
+				if (t.owner[k] === id && !(k in next)) { delete t.points[k]; delete t.owner[k]; }
+			for (var k2 in next) { t.points[k2] = next[k2]; t.owner[k2] = id; }
+			for (var k3 in st) { t.state[k3] = st[k3]; t.stateOwner[k3] = id; }
 			t.vw = %.1f; t.vh = %.1f;
 		})();
-	""" % [GLOBAL_NAME, GLOBAL_NAME, _instance_id, _instance_id, ", ".join(keys), json,
-		_state_json(), _instance_id, size.x, size.y], true)
+	""" % [GLOBAL_NAME, GLOBAL_NAME, _instance_id, json, _state_json(), size.x, size.y], true)
 
 func _state_json() -> String:
 	var parts: Array[String] = []
 	for key: String in _state.keys():
-		var v: Variant = _state[key]
-		if typeof(v) == TYPE_STRING:
-			# **JSON으로 직렬화한다.** 따옴표만 지우면 역슬래시·개행이 그대로 나가
-			# JSON이 깨지고, 그러면 eval이 통째로 실패해 **훅 게시가 멈춘다** —
-			# `lastError`처럼 서버 문자열이 흘러드는 키가 있어 실제 경로다(리뷰 지적).
-			parts.append('"%s":%s' % [key, JSON.stringify(String(v))])
-		else:
-			parts.append('"%s":%s' % [key, str(v)])
+		# **모든 값을 JSON으로 직렬화한다.** `str()`은 null을 `<null>`, INF를 `inf`,
+		# Vector2를 `(1, 2)`로 내서 JSON이 깨지고, 그러면 eval이 통째로 실패해
+		# **훅 게시가 영구히 멈춘다**(E2E가 전부 눈이 먼다 — 리뷰 지적).
+		parts.append('"%s":%s' % [key, JSON.stringify(_state[key])])
 	return "{%s}" % ", ".join(parts)
