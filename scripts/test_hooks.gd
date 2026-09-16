@@ -127,13 +127,6 @@ func publish_now() -> void:
 		var dp: Vector2 = fn.call()
 		parts.append('"%s":[%.1f,%.1f]' % [key, dp.x, dp.y])
 	var json := "{%s}" % ", ".join(parts)
-	var keys: Array[String] = []
-	for key: String in _controls.keys():
-		keys.append('"%s"' % key)
-	for key: String in _extra.keys():
-		keys.append('"%s"' % key)
-	for key: String in _dynamic.keys():
-		keys.append('"%s"' % key)
 	JavaScriptBridge.eval("""
 		(function(){
 			var t = window.%s = window.%s || {};
