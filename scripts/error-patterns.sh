@@ -27,11 +27,14 @@ ERROR_PATTERNS="$(tr -d '\r' < "$ERROR_PATTERNS_FILE")"
 # 만들면 BOM 붙은 패턴은 BOM 붙은 카나리아에 매치되어 **항상 통과한다** — 실제로
 # 그렇게 짰다가 넷째 줄에 BOM을 넣은 대조가 통과해 버렸다(2026-09-16 실측).
 # 그래서 두 가지를 본다: **고정 문자열 카나리아**(파일과 무관한 진짜 Godot 오류 줄)와
-# **바이트 위생 검사**(패턴은 ASCII 리터럴이어야 한다 — BOM·CR·빈 줄을 여기서 잡는다).
+# **바이트 위생 검사**(패턴은 출력 가능한 ASCII 리터럴이어야 한다 — BOM을 여기서
+# 잡는다. CR은 위에서 이미 벗겼고 빈 줄은 (2)가 본다).
 
-# 1) 바이트 위생: 출력 가능한 ASCII 밖의 문자가 있으면 멈춘다(BOM U+FEFF, CR 등).
+# 1) 바이트 위생: 출력 가능한 ASCII 밖의 바이트가 있으면 멈춘다(BOM·탭·제어문자 등).
+#    그래서 `error-patterns.txt`는 **주석도 비ASCII도 넣을 수 없다** — `grep -F`
+#    패턴 목록이라 애초에 주석 문법이 없고, 한국어를 넣으면 로컬 빌드가 통째로 막힌다.
 if printf '%s\n' "$ERROR_PATTERNS" | LC_ALL=C grep -q '[^ -~]'; then
-  echo "ERROR: $ERROR_PATTERNS_FILE 에 ASCII가 아닌 문자가 있습니다(BOM·CR 등) — 패턴이 매치되지 않습니다."
+  echo "ERROR: $ERROR_PATTERNS_FILE 에 출력 가능한 ASCII 밖의 바이트가 있습니다(BOM·탭·제어문자 등) — 패턴이 매치되지 않습니다."
   printf '%s\n' "$ERROR_PATTERNS" | LC_ALL=C grep -n '[^ -~]' | sed 's/^/       /'
   exit 1
 fi
