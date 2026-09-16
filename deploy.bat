@@ -67,6 +67,12 @@ if not exist scripts\error-patterns.txt (
     echo ERROR: scripts\error-patterns.txt not found - cannot verify build log
     exit /b 1
 )
+REM 0바이트로 체크아웃되면 findstr /G: 가 errorlevel 1을 주고, 아래 검사는 그걸
+REM "오류 없음"으로 읽는다 — sh 쪽 `[ -s ]`와 같은 이유로 크기도 본다(리뷰 지적).
+for %%A in (scripts\error-patterns.txt) do if %%~zA equ 0 (
+    echo ERROR: scripts\error-patterns.txt is empty - cannot verify build log
+    exit /b 1
+)
 REM /L = 리터럴. sh 쪽은 `grep -F`(리터럴)라, 여기만 기본 정규식으로 두면 파일은
 REM 하나인데 판정이 갈린다(메타문자가 들어간 패턴을 나중에 추가하는 순간).
 findstr /L /G:scripts\error-patterns.txt build\import.log >nul

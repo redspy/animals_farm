@@ -329,7 +329,7 @@ const npcRows = await page.evaluate(() => Object.keys(window.afTest?.points ?? {
   .filter((k) => k.startsWith('dexNpc')).length);
 check(npcRows === npcCfg.npcs.length, `이웃 탭에 ${npcCfg.npcs.length}명이 보인다 (${npcRows})`);
 await page.screenshot({ path: `${OUT}/4-도감-이웃.png` }).catch(() => {});
-await tapGodot(page, 'dexClose');
+if (dexOpen) await tapGodot(page, 'dexClose');
 await page.waitForTimeout(400);
 
 check(errors.length === 0, `브라우저 오류·서버 거절 0건 (실제 ${errors.length}건)`);
