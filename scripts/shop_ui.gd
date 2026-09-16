@@ -23,9 +23,19 @@ var _bells := 0
 var _list: VBoxContainer
 var _bells_label: Label
 var _hooks: TestHooks
+var _title: Label
+var _shop_name := ""
 
 ## 가게를 연다. `owned`는 이미 산 상품 id들 — 그 줄은 사는 버튼 대신 "보유"로 잠근다.
-func setup(goods: Array, owned: Array, bells: int) -> void:
+##
+## `shop_name`은 **가게 주인의 이름**(`npcs.json`의 `label`)이다. 제목을 여기에
+## 리터럴로 두면 이름의 출처가 둘이 되어, 데이터에서 이름을 바꿔도 화면만 옛
+## 이름으로 남는다(2026-09-16 개명이 실제로 3파일을 건드렸다 — 리뷰 지적).
+func setup(goods: Array, owned: Array, bells: int, shop_name: String = "") -> void:
+	if shop_name != "":
+		_shop_name = shop_name
+		if _title != null:
+			_title.text = "%s 가게" % _shop_name
 	# **복사해서 보관한다**(apply_server_state와 같은 이유) — 호출자가 넘기는 것은
 	# world.gd의 그 배열 자체라, 여기서 참조를 들면 더티 체크가 자기 자신 비교가 되고
 	# 제자리 변경(`clear()`)과의 순서에 의존하게 된다(리뷰 지적).
@@ -96,11 +106,13 @@ func _ready() -> void:
 	box.add_theme_constant_override("separation", 8)
 	panel.add_child(box)
 
-	var title := Label.new()
-	title.text = "보따 가게"
-	title.add_theme_font_size_override("font_size", UiScale.font(20))
-	title.add_theme_color_override("font_color", Palette.color("ui", "hud_text"))
-	box.add_child(title)
+	_title = Label.new()
+	# 이름을 못 받았으면 **가게라는 것만** 말한다 — 여기에 특정 이름을 폴백으로
+	# 박으면 그게 두 번째 출처가 된다.
+	_title.text = "%s 가게" % _shop_name if _shop_name != "" else "가게"
+	_title.add_theme_font_size_override("font_size", UiScale.font(20))
+	_title.add_theme_color_override("font_color", Palette.color("ui", "hud_text"))
+	box.add_child(_title)
 
 	# **잔액을 제일 크게.** 아이가 "얼마 남았지"를 바로 본다.
 	_bells_label = Label.new()

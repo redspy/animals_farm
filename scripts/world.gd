@@ -289,7 +289,7 @@ func _ready() -> void:
 	_park_phys = DataFiles.dict_or_empty(act_cfg.get("park", {}), "activities.json의 park")
 	_fish_cfg = DataFiles.dict_or_empty(act_cfg.get("fishing", {}), "activities.json의 fishing")
 	_build_world()
-	_apply_daily_respawn()
+	_greet_returning_player()
 	_refresh_hud()
 	_refresh_roster.call_deferred()
 	_start_net()
@@ -823,14 +823,19 @@ func _on_bag_clicked(event: InputEvent) -> void:
 		return
 	_open_inventory()
 
-## 마지막 접속 이후 하루 이상 지났으면 채집물 전체를 되살린다.
-func _apply_daily_respawn() -> void:
+## 오랜만에 들어온 사람에게 인사한다.
+##
+## ⚠️ **예전에는 여기서 채집물을 되살렸는데, 그건 완전한 no-op이었다.** 가용
+## 상태는 세이브에 없고(`save_manager.gd`) `Gatherable._available`이 기본 `true`라
+## 갓 만든 채집물은 전부 이미 가용이다 — `force_respawn()`이 첫 줄에서 돌아갔다.
+## 그런데 토스트는 "섬이 새로 자랐어요"라고 알렸고, 곧 `_start_net()`이 붙으면
+## 서버가 `availableAt`으로 다시 감춰서 **새로 자랐다고 알린 자리가 비어 보였다**
+## (2026-09-16 리뷰 지적). 재생의 단일 출처는 서버이므로 인사만 남긴다.
+func _greet_returning_player() -> void:
 	var days := GameClock.days_since(int(_slot.get("last_played_unix", 0)))
 	if days <= 0:
 		return
-	for g in _gatherables:
-		g.force_respawn()
-	_show_toast("%d일이 지났습니다 — 섬이 새로 자랐어요" % days)
+	_show_toast("%d일 만이에요! 잘 지냈어요?" % days)
 
 ## 채집물이 "캐졌다"고 알릴 때. 서버에 붙어 있으면 **서버가 판정**하므로
 ## 여기서 가방을 건드리지 않는다 — 서버가 거부하면(사거리·재생 시간) 화면과
@@ -2171,7 +2176,7 @@ func _talk_to(npc: Npc) -> void:
 		if _shop_goods.is_empty():
 			_show_toast("지금은 가게에 물건이 없습니다")
 			return
-		_open_shop()
+		_open_shop(npc.label)
 		return
 	var state: Dictionary = _npc_state.get(npc.id, {})
 	var done := bool(state.get("done", false))
@@ -2432,13 +2437,13 @@ func _refresh_shop_ui() -> void:
 
 ## 가게 화면을 연다. 목록·가격·잔액은 전부 서버가 준 값을 그린다 — 클라이언트가
 ## 계산하면 "화면에는 살 수 있는데 서버가 거절하는" 상태가 된다.
-func _open_shop() -> void:
+func _open_shop(shop_name: String = "") -> void:
 	if _shop_ui != null and is_instance_valid(_shop_ui):
 		return
 	if _touch != null:
 		_touch.release_stick()
 	_shop_ui = ShopUI.new()
-	_shop_ui.setup(_shop_goods, _owned_goods, int(_slot.get("bells", 0)))
+	_shop_ui.setup(_shop_goods, _owned_goods, int(_slot.get("bells", 0)), shop_name)
 	_shop_ui.buy_requested.connect(func(good_id: String) -> void:
 		if _net != null and _net.connected:
 			_net.send_buy(good_id)
