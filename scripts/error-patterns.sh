@@ -43,7 +43,7 @@ fi
 #    ⚠️ **`$ERROR_PATTERNS`가 아니라 원본 파일을 본다.** 명령 치환은 후행 개행을
 #    전부 날리므로, 변수를 보면 **끝줄 빈 줄을 못 본다** — sh는 초록불인데 파일을
 #    직접 읽는 findstr만 빈 패턴을 봐서 CI만 깨지는 조합이 된다(2026-09-16 리뷰 지적).
-if LC_ALL=C grep -qn '^[[:space:]]*$' "$ERROR_PATTERNS_FILE"; then
+if LC_ALL=C grep -q '^[[:space:]]*$' "$ERROR_PATTERNS_FILE"; then
   echo "ERROR: $ERROR_PATTERNS_FILE 에 빈 줄 또는 공백뿐인 줄이 있습니다 — 모든 줄에 매치됩니다."
   LC_ALL=C grep -n '^[[:space:]]*$' "$ERROR_PATTERNS_FILE" | sed 's/^/       /'
   exit 1
