@@ -75,6 +75,17 @@ for %%A in (scripts\error-patterns.txt) do if %%~zA equ 0 (
 )
 REM /L = 리터럴. sh 쪽은 `grep -F`(리터럴)라, 여기만 기본 정규식으로 두면 파일은
 REM 하나인데 판정이 갈린다(메타문자가 들어간 패턴을 나중에 추가하는 순간).
+REM 카나리아 — 패턴이 **진짜 오류 줄을 잡는지** 확인한다. 존재·크기만 보면
+REM BOM이 붙은 순간 findstr가 영영 비매치가 되어 오류 섞인 export를 전부
+REM 통과시킨다. 실제로 배포를 승인하는 게이트가 여기라 sh보다 더 필요하다
+REM (2026-09-16 리뷰 지적).
+echo SCRIPT ERROR: canary> build\canary.txt
+findstr /L /G:scripts\error-patterns.txt build\canary.txt >nul
+if %ERRORLEVEL% neq 0 (
+    echo ERROR: error-patterns.txt does not match a known Godot error line - the gate is dead
+    exit /b 1
+)
+
 findstr /L /G:scripts\error-patterns.txt build\import.log >nul
 if %ERRORLEVEL% equ 0 (
     echo ERROR: import log contains script errors ^(exit code was 0 - see above^)

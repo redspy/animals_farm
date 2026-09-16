@@ -20,10 +20,42 @@ ERROR_PATTERNS_FILE="$_EP_DIR/error-patterns.txt"
 # 초록불이 되는 형태다(2026-09-16 리뷰 지적).
 ERROR_PATTERNS="$(tr -d '\r' < "$ERROR_PATTERNS_FILE")"
 
-# **카나리아.** 위 두 검사는 "파일이 있다"까지만 말한다 — 내용이 매치 불가능해진
-# 상태는 아무도 못 본다. 알려진 오류 줄을 실제로 잡는지 확인하고, 못 잡으면 멈춘다.
+# 이제 **내용이 매치 불가능해진 상태**를 본다. 존재·비어있음만 보면 BOM이 붙거나
+# 한 줄이 오타 나도 초록불이다.
+#
+# ⚠️ **"패턴이 자기 자신을 매치하는가"는 무의미하다.** 카나리아 줄을 패턴으로부터
+# 만들면 BOM 붙은 패턴은 BOM 붙은 카나리아에 매치되어 **항상 통과한다** — 실제로
+# 그렇게 짰다가 넷째 줄에 BOM을 넣은 대조가 통과해 버렸다(2026-09-16 실측).
+# 그래서 두 가지를 본다: **고정 문자열 카나리아**(파일과 무관한 진짜 Godot 오류 줄)와
+# **바이트 위생 검사**(패턴은 ASCII 리터럴이어야 한다 — BOM·CR·빈 줄을 여기서 잡는다).
+
+# 1) 바이트 위생: 출력 가능한 ASCII 밖의 문자가 있으면 멈춘다(BOM U+FEFF, CR 등).
+if printf '%s\n' "$ERROR_PATTERNS" | LC_ALL=C grep -q '[^ -~]'; then
+  echo "ERROR: $ERROR_PATTERNS_FILE 에 ASCII가 아닌 문자가 있습니다(BOM·CR 등) — 패턴이 매치되지 않습니다."
+  printf '%s\n' "$ERROR_PATTERNS" | LC_ALL=C grep -n '[^ -~]' | sed 's/^/       /'
+  exit 1
+fi
+
+# 2) 빈 줄·공백뿐인 줄: `grep -F -e ""`는 **모든 줄에 매치**해서 정상 빌드까지 실패시킨다.
+while IFS= read -r _ep_pat; do
+  case "$_ep_pat" in
+    *[!\ ]*) ;;
+    *)
+      echo "ERROR: $ERROR_PATTERNS_FILE 에 빈 줄 또는 공백뿐인 줄이 있습니다 — 모든 줄에 매치됩니다."
+      exit 1
+      ;;
+  esac
+done <<EOF
+$ERROR_PATTERNS
+EOF
+
+# 3) 고정 카나리아: 파일과 무관한 실제 Godot 오류 줄을 정말로 잡는지 본다.
+#    **한계**: 이건 첫 패턴 계열이 살아 있는지까지만 말한다. 가운데 한 줄만 오타가
+#    나면(예: `Compile Error` → `Complie Error`) 여기서는 안 걸린다 — 줄마다 진짜
+#    로그 표본을 두면 그 표본 목록이 또 드리프트한다. 바이트 위생(1)이 흔한 손상은
+#    잡으므로 여기까지로 둔다. 남은 구멍을 알고 두는 것이다.
 printf 'SCRIPT ERROR: canary\n' | grep -qF -e "$ERROR_PATTERNS" || {
   echo "ERROR: 오류 패턴이 알려진 Godot 오류 줄조차 잡지 못합니다 — 게이트가 죽었습니다."
-  echo "       확인: $ERROR_PATTERNS_FILE (줄바꿈·인코딩·빈 줄)"
+  echo "       확인: $ERROR_PATTERNS_FILE"
   exit 1
 }
