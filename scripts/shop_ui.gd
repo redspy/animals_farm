@@ -32,12 +32,12 @@ var _shop_name := ""
 ## 리터럴로 두면 이름의 출처가 둘이 되어, 데이터에서 이름을 바꿔도 화면만 옛
 ## 이름으로 남는다(2026-09-16 개명이 실제로 3파일을 건드렸다 — 리뷰 지적).
 func setup(goods: Array, owned: Array, bells: int, shop_name: String = "") -> void:
+	# 이름만 담아 둔다 — 제목을 그리고 게시하는 것은 `_ready()`다. 여기서도 그리려
+	# 하면 `add_child()` 전이라 `_title`이 null인 죽은 분기가 되고, 주석 네 줄로
+	# "도달하지 않는다"를 설명하게 된다(리뷰 지적). 호출 순서가 바뀌어도
+	# `_ready()`가 `_shop_name`을 읽으므로 커버된다.
 	if shop_name != "":
 		_shop_name = shop_name
-		if _title != null:
-			_title.text = "%s 가게" % _shop_name
-			if _hooks != null:
-				_hooks.set_state("shopTitle", _title.text)
 	# **복사해서 보관한다**(apply_server_state와 같은 이유) — 호출자가 넘기는 것은
 	# world.gd의 그 배열 자체라, 여기서 참조를 들면 더티 체크가 자기 자신 비교가 되고
 	# 제자리 변경(`clear()`)과의 순서에 의존하게 된다(리뷰 지적).

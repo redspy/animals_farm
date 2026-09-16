@@ -1126,7 +1126,7 @@ test('저장된 외형·프리셋은 로드에서 지켜지고 방송에서만 �
 test('공 차기에는 네트워크 지연 여유가 있다(경계에서 정상 플레이가 거절되지 않는다)', () => {
   // 클라이언트는 data의 kick_range로 "찰 수 있다"를 정하고 서버도 같은 값을 쓰면,
   // 한 틱 뒤처진 좌표 때문에 경계에서 거절된다 — 폰에서 "공이 안 차짐"으로
-  // 나타났다(2026-09-10 사용자 보고). 채집(GATHER_RANGE)과 같은 여유를 준다.
+  // 나타났다(2026-09-10 사용자 보고). 채집(`LIMITS.GATHER_DISTANCE`)과 같은 여유를 준다.
   const w = fresh();
   w.join({ token: TOKEN_A, name: '테스터', preset: [...w.presetIds][0] });
   const p = w.players.get(TOKEN_A);
@@ -1542,7 +1542,7 @@ test('클라이언트와 공유하는 상수가 갈리지 않았다', () => {
   // 목록을 테스트에 적지 않는다 — 등록소는 `server/world.js`의 CLIENT_SHARED이고
   // **값을 쓰는 자리와 등록하는 자리가 같다**. 예전에는 여기에 3개를 손으로
   // 적어 뒀는데, 서버가 스스로 "클라이언트와 같아야 한다"고 주석에 적어 둔
-  // GATHER_RANGE(= gatherable.gd의 INTERACT_DISTANCE)가 빠져 있었다 —
+  // `LIMITS.GATHER_DISTANCE`(= gatherable.gd의 INTERACT_DISTANCE)가 빠져 있었다 —
   // gatherable.gd를 1.6 → 2.4로 올려도 서버 테스트는 전부 통과하고, 런타임에서만
   // "버튼은 보이는데 서버가 거부하는" 구간이 생겼다(리뷰 지적).
   const entries = Object.entries(CLIENT_SHARED);

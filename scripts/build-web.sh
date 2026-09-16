@@ -49,13 +49,17 @@ rm -rf build/web
 mkdir -p build/web
 # Godot은 스크립트 오류가 있어도 exit 0으로 끝나므로 출력을 직접 검사한다
 # (2026-09-04 실측 — verify 게이트가 컴파일 에러를 통과시켰다).
-ERROR_PATTERN='SCRIPT ERROR|Parse Error|Compile Error|Failed to load script|Invalid call'
+# 패턴 목록의 단일 출처는 `scripts/error-patterns.txt`다(한 줄에 하나). 예전에는
+# 이 목록이 verify-project.sh·build-web.sh·deploy.bat 세 곳에 복사돼 있었고,
+# 주석으로 "같은 목록"이라고만 적혀 있어 강제가 없었다 — `.godot-version`이 이미
+# 한 번 고친 독립 드리프트와 같은 병이다(2026-09-16 리뷰 지적).
+ERROR_PATTERNS_FILE="$(dirname "$0")/error-patterns.txt"
 
 echo "[build-web] 리소스 임포트..."
 IMPORT_OUT="$("$GODOT_BIN" --headless --path . --import 2>&1)"; echo "$IMPORT_OUT"
 echo "[build-web] Web export..."
 EXPORT_OUT="$("$GODOT_BIN" --headless --path . --export-release "Web" build/web/index.html 2>&1)"; echo "$EXPORT_OUT"
-if printf '%s\n%s' "$IMPORT_OUT" "$EXPORT_OUT" | grep -qE "$ERROR_PATTERN"; then
+if printf '%s\n%s' "$IMPORT_OUT" "$EXPORT_OUT" | grep -qF -f "$ERROR_PATTERNS_FILE"; then
   echo "ERROR: 빌드 중 GDScript 오류가 검출됨 — 산출물을 신뢰할 수 없습니다."
   exit 1
 fi

@@ -248,10 +248,14 @@ static func _arc_points(center: Vector2, r: float, from_angle: float, to_angle: 
 ## 지점에서 시작한다) 여러 명이 한꺼번에 튕겨 나간다. 살짝 밀리는 느낌이 되게
 ## 초당 속도 상한을 둔다.
 ##
-## 왜 서버가 아니라 각 클라이언트가 푸는가: 위치는 이미 클라이언트가 보내고
-## 서버는 경계·속도만 검증한다(docs/protocol.md §3). 겹침은 결과가 걸린 판정이
-## 아니라 보기의 문제라, 양쪽이 각자 자기 자신을 밀어내면 대칭적으로 떨어진다.
-## 대신 조작된 클라이언트는 겹칠 수 있다 — 그 한계를 문서에 남긴다.
+## 왜 클라이언트도 푸는가: 위치는 클라이언트가 보내고, 겹침은 결과가 걸린 판정이
+## 아니라 보기의 문제라 양쪽이 각자 자기 자신을 밀어내면 대칭적으로 떨어진다 —
+## 서버 왕복을 기다리지 않아 즉각적이다.
+## ⚠️ **서버도 민다**(`pushOutPlayers()` / `LIMITS.SEPARATION`, docs/design.md §4).
+## 예전 주석은 "서버는 경계·속도만 검증한다"고 했는데 그건 P4.8 전 이야기다
+## (2026-09-16 Codex 감사 지적). 조작된 클라이언트도 서버가 떼어 놓는다 —
+## 다만 서버 쪽은 **1패스라 하드 보장이 아니라 최선 노력**이다(셋 이상 뭉치면
+## 다시 겹칠 수 있다. `server/world.js`의 `pushOutPlayers()` 주석).
 ##
 ## others: 다른 캐릭터들의 위치(Vector3). radius_sum: 두 캐릭터 반지름의 합.
 static func separate(pos: Vector3, others: Array, radius_sum: float, max_step: float) -> Vector3:

@@ -1329,7 +1329,8 @@ export class WorldState {
     // **여유를 준다(LAG_PAD).** 클라이언트는 `soccer.kick_range`(같은 데이터)로
     // "지금 찰 수 있다"를 정하는데, 서버가 같은 값으로 판정하면 한 틱 뒤처진
     // 좌표 때문에 정상 플레이가 경계에서 거절된다 — 폰에서 "공이 안 차짐"으로
-    // 나타났다. 채집이 처음부터 쓰던 규칙(GATHER_RANGE)과 같게 맞춘다.
+    // 나타났다. 채집이 처음부터 쓰던 규칙(`LIMITS.GATHER_DISTANCE` + `lagPadOf`)과
+    // 같게 맞춘다.
     const dist = Math.hypot(this.ball.x - p.x, this.ball.z - p.z);
     if (dist > this.soccerCfg.kickRange + this.lagPadOf(p)) {
       return { error: { code: 'too_far', message: '공이 너무 멉니다' } };

@@ -37,14 +37,18 @@ esac
 # Godot은 GDScript 컴파일/런타임 오류가 있어도 종료 코드 0으로 끝난다 —
 # 실제로 game_clock.gd의 컴파일 에러를 이 스크립트가 "통과"로 보고했다
 # (2026-09-04 실측). 출력에서 오류 패턴을 직접 걸러야 게이트가 의미를 가진다.
-ERROR_PATTERN='SCRIPT ERROR|Parse Error|Compile Error|Failed to load script|Invalid call'
+# 패턴 목록의 단일 출처는 `scripts/error-patterns.txt`다(한 줄에 하나). 예전에는
+# 이 목록이 verify-project.sh·build-web.sh·deploy.bat 세 곳에 복사돼 있었고,
+# 주석으로 "같은 목록"이라고만 적혀 있어 강제가 없었다 — `.godot-version`이 이미
+# 한 번 고친 독립 드리프트와 같은 병이다(2026-09-16 리뷰 지적).
+ERROR_PATTERNS_FILE="$(dirname "$0")/error-patterns.txt"
 
 run_godot() {
   local label="$1"; shift
   local out
   out="$("$GODOT_BIN" "$@" 2>&1)"
   echo "$out"
-  if echo "$out" | grep -qE "$ERROR_PATTERN"; then
+  if echo "$out" | grep -qF -f "$ERROR_PATTERNS_FILE"; then
     echo "ERROR: $label 단계에서 GDScript 오류가 검출됨(위 로그 참조)."
     return 1
   fi

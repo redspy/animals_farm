@@ -48,7 +48,8 @@ deploy.bat           배포 서버에서 실행되는 배포 스크립트
 export GODOT_BIN="$HOME/tools/godot/4.7.1/Godot.app/Contents/MacOS/Godot"   # 시스템 godot은 mono라 웹 export 불가
 ./scripts/verify-project.sh          # 임포트 + 세이브 마이그레이션 테스트 + 기동
 npm run test:browser                 # 브라우저 스모크 (build/web 필요)
-npm run test:server                  # 서버 규칙 유닛 테스트 (소켓 불필요)
+npm run test:server                  # 서버 규칙 테스트 — 대부분 소켓 없는 WorldState 단위,
+                                     # 일부(server-reconnect)는 실서버+WS를 띄운다
 npm run test:multiplayer             # 2탭 + WS 옵저버로 실시간 동기화 검증
 npm run test:mobile                  # 폰 터치 에뮬레이션(조이스틱·버튼·DOM 채팅)
 npm run test:playground              # 운동장(운동 버튼·모습·속도·줄넘기 기술·축구공)

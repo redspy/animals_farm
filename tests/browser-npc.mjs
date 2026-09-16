@@ -226,8 +226,15 @@ async function talkTo() {
   // "조금 더 가까이 가야 합니다"로 끝났다 — 7회 중 2회 실패하는 간헐 원인이
   // 이것이다(2026-09-16 실측). 매번 다시 걸어가면 배회를 따라잡는다.
   for (let i = 0; i < 6; i++) {
-    await walkTo('z', npc.z + 2.0);
-    await walkTo('x', npc.x);
+    // **첫 회는 실제로 먼 거리를 걷고, 이후는 따라잡기라 짧게 준다.**
+    // 기본값 90초를 그대로 쓰면 최악 6회 × 2축 × 90초 = 18분을 이 헬퍼가 쓴다.
+    // `stuck` 탈출은 안전망이 못 된다 — 목표 근처에서 왕복 진동하면 `stuck`이
+    // 매번 리셋된다. 반대로 전부 12초로 깎으면 스폰(0,0)에서 이웃까지 15유닛을
+    // 걷는 첫 회가 예산을 다 써서 헛탭 + 2.5초 대기를 두어 번 낭비한다
+    // (2026-09-16 리뷰 지적). 도착해 있으면 즉시 리턴하므로 행복 경로는 0이다.
+    const budget = i === 0 ? 30000 : 12000;
+    await walkTo('z', npc.z + 2.0, budget);
+    await walkTo('x', npc.x, budget);
     const pt = await godotPoint(page, 'nearestNpc').catch(() => null);
     if (pt) await page.mouse.click(pt.x, pt.y);
     const s = await waitState((v) => v.branch.startsWith('npc:'), 2500);
@@ -293,8 +300,13 @@ if (!reopened) {
 // 도감: 가방 → 도감. 방금 캔 나무는 이름이 보이고, 안 만난 것은 물음표다.
 console.log('\n[검증] 도감');
 await page.keyboard.press('KeyI');
-await page.waitForFunction(() => window.afTest?.points?.invDex != null, null, { timeout: 8000 });
-await tapGodot(page, 'invDex');
+// 던지면 `browser.close()`·`stop()`이 안 돌고 실패 요약도 안 찍혀, 원인이 로그에서
+// 가려진다 — 위 `reopened` 가드와 같은 종류다(2026-09-16 리뷰 지적).
+const invOpen = await page.waitForFunction(
+  () => window.afTest?.points?.invDex != null, null, { timeout: 8000 },
+).then(() => true).catch(() => false);
+check(invOpen, '가방이 열린다');
+if (invOpen) await tapGodot(page, 'invDex');
 const dexOpen = await page.waitForFunction(
   () => window.afTest?.points?.dexItem1 != null, null, { timeout: 8000 },
 ).then(() => true).catch(() => false);

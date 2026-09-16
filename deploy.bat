@@ -49,9 +49,19 @@ if %ERRORLEVEL% neq 0 (
 echo [Step 4] Importing project resources...
 REM export 전에 리소스 임포트를 한 번 돌려야 .godot/ 캐시가 생성된다.
 REM (clone 직후 .godot/은 git 추적 대상이 아니라 비어 있음)
-"%GODOT_EXE%" --headless --path . --import
+REM import 출력도 검사한다 — 리소스/스크립트 오류 중에는 import 단계에서만
+REM 드러나는 것이 있다(`Failed to load script`). 예전에는 export만 검사해서
+REM 커버리지가 절반이었다(2026-09-16 리뷰 지적).
+if not exist build mkdir build
+"%GODOT_EXE%" --headless --path . --import > build\import.log 2>&1
+type build\import.log
 if %ERRORLEVEL% neq 0 (
     echo ERROR: godot --import failed
+    exit /b 1
+)
+findstr /G:scripts\error-patterns.txt build\import.log >nul
+if %ERRORLEVEL% equ 0 (
+    echo ERROR: import log contains script errors ^(exit code was 0 - see above^)
     exit /b 1
 )
 
@@ -61,9 +71,22 @@ REM 지우지 않아서, export가 실패해도 구버전 index.html/.wasm이 �
 REM 산출물 검사를 통과해버릴 수 있었다(2026-09-03 Codex 감사 지적).
 if exist build\web rmdir /s /q build\web
 mkdir build\web
-"%GODOT_EXE%" --headless --path . --export-release "Web" build\web\index.html
+REM 출력을 로그로 받는다 — Godot은 **GDScript 오류에도 종료 코드 0을 준다**
+REM (docs/deploy.md 4장). 로컬 스크립트(verify-project.sh / build-web.sh)는 이미
+REM 로그를 검사하는데 배포만 종료 코드와 산출물 존재로 판정해서, 오류가 섞인
+REM export가 파일만 만들면 배포가 성공으로 찍혔다(2026-09-16 Codex 감사 지적).
+"%GODOT_EXE%" --headless --path . --export-release "Web" build\web\index.html > build\export.log 2>&1
 if %ERRORLEVEL% neq 0 (
+    type build\export.log
     echo ERROR: web export failed
+    exit /b 1
+)
+REM 패턴 목록의 단일 출처는 scripts/error-patterns.txt다(sh 스크립트도 같은 파일을
+REM grep -f 로 읽는다) — 세 곳에 복사해 두면 조용히 갈라진다.
+findstr /G:scripts\error-patterns.txt build\export.log >nul
+if %ERRORLEVEL% equ 0 (
+    type build\export.log
+    echo ERROR: export log contains script errors ^(exit code was 0 - see above^)
     exit /b 1
 )
 

@@ -176,7 +176,8 @@ test('welcome의 you는 목록 밖 외형도 원값으로 보낸다(남에게는
   assert.equal(row.custom.hair, undefined,
     `목록 밖 외형이 남의 스냅샷에 실렸다: ${JSON.stringify(row.custom)}`);
 
-  // **방송 지점은 셋이다**(스냅샷·join·appearance). 옷만 바꿨을 때 목록 밖 hair가
+  // **방송 지점은 넷이다**(스냅샷·join·appearance·구매 — `buy`가 그 자리에서
+  // 옷을 입히며 appearance를 함께 방송한다. docs/design.md §3). 옷만 바꿨을 때 목록 밖 hair가
   // appearance 방송으로 남에게 새지 않는지 — 19차에 그 구멍이 실제로 뚫렸다.
   me.messages.length = 0;
   other.messages.length = 0;

@@ -34,7 +34,10 @@ static func short_label() -> String:
 	var t := now()
 	return "%02d-%02d %02d:%02d (%s)" % [t.month, t.day, t.hour, t.minute, season_of(int(t.month))]
 
-## 마지막 접속 이후 하루가 지났는지 — **지금 쓰는 곳은 오랜만 인사 토스트 하나뿐이다**
+## 마지막 접속 이후 **24시간 블록이 몇 번 지났는지**(`floor(경과/86400)`) — 달력 날짜가
+## 아니다. 월 23시 → 수 22시면 달력상 이틀이 지났어도 1을 준다. 일일 이벤트처럼
+## "날짜가 바뀌었나"를 물어야 하는 기능은 이 함수를 그대로 쓰면 안 된다.
+## **지금 쓰는 곳은 오랜만 인사 토스트 하나뿐이다**
 ## (`world.gd::_greet_returning_player`). 채집물 재생은 서버가 소유하고, 일일 이벤트는
 ## 미구현이다.
 static func days_since(last_unix: int) -> int:
