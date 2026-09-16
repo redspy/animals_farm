@@ -57,7 +57,7 @@
       "x": -27.0,
       "z": 13.5,
       "radius": 2.6,
-      "purpose": "너굴 가게 — 벨로 옷을 산다(가게 주인은 data/npcs.json의 neoguri)"
+      "purpose": "보따 가게 — 벨로 옷을 산다(가게 주인은 data/npcs.json의 botta)"
     }
   ],
   "obstacles": [

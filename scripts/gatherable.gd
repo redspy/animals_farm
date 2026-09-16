@@ -248,7 +248,9 @@ func hide_until(seconds_from_now: float) -> void:
 	if _grown != null:
 		_grown.visible = false
 
-## 하루가 지나면 전부 되살아난다(GameClock.days_since 기반, main.gd에서 호출).
+## 하루가 지나면 전부 되살아난다(GameClock.days_since 기반, world.gd의 셋업에서 호출).
+## ⚠️ **온라인에서는 사실상 표시용이다** — 서버가 `availableAt`을 소유해 접속 직후
+## 덮어쓰고, 최장 재생이 60초라 하루 뒤엔 어차피 전부 자라 있다(docs/design.md §1).
 func force_respawn() -> void:
 	if _available:
 		return

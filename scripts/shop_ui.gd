@@ -97,7 +97,7 @@ func _ready() -> void:
 	panel.add_child(box)
 
 	var title := Label.new()
-	title.text = "너굴 가게"
+	title.text = "보따 가게"
 	title.add_theme_font_size_override("font_size", UiScale.font(20))
 	title.add_theme_color_override("font_color", Palette.color("ui", "hud_text"))
 	box.add_child(title)
