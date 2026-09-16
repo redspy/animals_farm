@@ -5,6 +5,13 @@
 #
 #   GODOT_BIN=/path/to/Godot_v4.7.1-stable_macos.universal ./scripts/build-web.sh
 set -e
+# **`cd`보다 먼저, 절대경로로 고정한다.** `$0`은 부른 쪽의 cwd 기준이라
+# `cd scripts && ./verify-project.sh`처럼 부르면 `cd ..` 뒤의 상대경로가 빗나간다.
+# 그리고 **파일이 없으면 게이트가 조용히 통과한다** — `grep -F -f <없는파일>`은
+# exit 2인데 `if ... grep -q`는 그걸 "패턴 없음 = 정상"으로 읽는다. 단일 출처가
+# 단일 실패점이 됐으므로 존재를 확인하고 없으면 멈춘다(2026-09-16 리뷰 지적).
+ERROR_PATTERNS_FILE="$(cd "$(dirname "$0")" && pwd)/error-patterns.txt"
+[ -s "$ERROR_PATTERNS_FILE" ] || { echo "ERROR: 오류 패턴 파일이 없거나 비어 있습니다: $ERROR_PATTERNS_FILE"; exit 1; }
 cd "$(dirname "$0")/.."
 
 GODOT_BIN="${GODOT_BIN:-godot}"
@@ -53,7 +60,7 @@ mkdir -p build/web
 # 이 목록이 verify-project.sh·build-web.sh·deploy.bat 세 곳에 복사돼 있었고,
 # 주석으로 "같은 목록"이라고만 적혀 있어 강제가 없었다 — `.godot-version`이 이미
 # 한 번 고친 독립 드리프트와 같은 병이다(2026-09-16 리뷰 지적).
-ERROR_PATTERNS_FILE="$(dirname "$0")/error-patterns.txt"
+
 
 echo "[build-web] 리소스 임포트..."
 IMPORT_OUT="$("$GODOT_BIN" --headless --path . --import 2>&1)"; echo "$IMPORT_OUT"

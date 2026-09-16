@@ -1,0 +1,4 @@
+# 오류 패턴 파일은 **게이트의 단일 출처**이고 Windows 배포 서버에서 findstr이 읽는다.
+# core.autocrlf 설정에 따라 체크아웃 결과가 달라지면 판정이 환경마다 갈리므로 못 박는다
+# (2026-09-16 리뷰 지적).
+scripts/error-patterns.txt text eol=crlf

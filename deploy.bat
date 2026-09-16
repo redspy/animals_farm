@@ -53,13 +53,23 @@ REM import 출력도 검사한다 — 리소스/스크립트 오류 중에는 im
 REM 드러나는 것이 있다(`Failed to load script`). 예전에는 export만 검사해서
 REM 커버리지가 절반이었다(2026-09-16 리뷰 지적).
 if not exist build mkdir build
+REM ⚠️ `type`을 검사 **앞**에 두면 안 된다 — type이 성공하면서 ERRORLEVEL을 0으로
+REM 덮어써 godot의 종료 코드 검사가 죽는다(2026-09-16 리뷰 지적: 커버리지를 늘리려다
+REM 기존 게이트 하나를 없앨 뻔했다).
 "%GODOT_EXE%" --headless --path . --import > build\import.log 2>&1
-type build\import.log
 if %ERRORLEVEL% neq 0 (
+    type build\import.log
     echo ERROR: godot --import failed
     exit /b 1
 )
-findstr /G:scripts\error-patterns.txt build\import.log >nul
+type build\import.log
+if not exist scripts\error-patterns.txt (
+    echo ERROR: scripts\error-patterns.txt not found - cannot verify build log
+    exit /b 1
+)
+REM /L = 리터럴. sh 쪽은 `grep -F`(리터럴)라, 여기만 기본 정규식으로 두면 파일은
+REM 하나인데 판정이 갈린다(메타문자가 들어간 패턴을 나중에 추가하는 순간).
+findstr /L /G:scripts\error-patterns.txt build\import.log >nul
 if %ERRORLEVEL% equ 0 (
     echo ERROR: import log contains script errors ^(exit code was 0 - see above^)
     exit /b 1
@@ -82,8 +92,8 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 REM 패턴 목록의 단일 출처는 scripts/error-patterns.txt다(sh 스크립트도 같은 파일을
-REM grep -f 로 읽는다) — 세 곳에 복사해 두면 조용히 갈라진다.
-findstr /G:scripts\error-patterns.txt build\export.log >nul
+REM `grep -F -f`로 읽는다) — 세 곳에 복사해 두면 조용히 갈라진다.
+findstr /L /G:scripts\error-patterns.txt build\export.log >nul
 if %ERRORLEVEL% equ 0 (
     type build\export.log
     echo ERROR: export log contains script errors ^(exit code was 0 - see above^)
