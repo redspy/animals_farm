@@ -84,7 +84,7 @@ REM 빌드를 "script errors"로 죽인다. 게이트가 뚫리는 건 아니지
 REM 형태로 배포가 막힌다(2026-09-16 리뷰 지적).
 REM 위반 위치(바이트 오프셋·줄 번호)도 찍는다 — CI에서 유일하게 도는 게이트라
 REM 여기야말로 진단 정보가 필요하다.
-powershell -NoProfile -Command "$p='scripts\error-patterns.txt'; $b=[IO.File]::ReadAllBytes($p); $bad=@(); for($i=0;$i -lt $b.Length -and $bad.Count -lt 20;$i++){ $x=$b[$i]; if((($x -lt 32) -and ($x -ne 10) -and ($x -ne 13)) -or ($x -gt 126)){ $bad += $i } }; if($bad.Count -gt 0){ $sfx=''; if($bad.Count -ge 20){ $sfx=' (first 20)' }; Write-Host ('  bad bytes at offsets: ' + ($bad -join ',') + $sfx); exit 1 }; $n=0; foreach($l in [IO.File]::ReadAllLines($p)){ $n++; if($l.Trim() -eq ''){ Write-Host ('  blank pattern line: ' + $n); exit 1 } }; exit 0"
+powershell -NoProfile -Command "$p='scripts\error-patterns.txt'; $b=[IO.File]::ReadAllBytes($p); $bad=@(); for($i=0;$i -lt $b.Length -and $bad.Count -lt 21;$i++){ $x=$b[$i]; if((($x -lt 32) -and ($x -ne 10) -and ($x -ne 13)) -or ($x -gt 126)){ $bad += $i } }; if($bad.Count -gt 0){ $sfx=''; $show=$bad; if($bad.Count -gt 20){ $sfx=' (first 20)'; $show=$bad[0..19] }; Write-Host ('  bad bytes at offsets: ' + ($show -join ',') + $sfx); exit 1 }; $n=0; foreach($l in [IO.File]::ReadAllLines($p)){ $n++; if($l.Trim() -eq ''){ Write-Host ('  blank pattern line: ' + $n); exit 1 } }; exit 0"
 if %ERRORLEVEL% neq 0 (
     echo ERROR: error-patterns.txt is unusable ^(non-ASCII byte or blank line, see above^) - patterns are dead
     exit /b 1
@@ -95,8 +95,8 @@ REM 것과 달리 이건 findstr가 실제로 매치하는지를 본다.
 REM ⚠️ 한계: 첫 패턴 계열이 살아 있는지까지만 말한다(sh 쪽과 같다).
 REM 직전 실행의 canary.txt가 남아 있으면 쓰기가 실패해도 아래 검사를 통과한다
 REM (build\ 는 정리되지 않는다 — 지우는 건 build\web 뿐이다. 리뷰 지적).
-REM `/f`가 없으면 **읽기 전용 속성**을 못 지운다 — 새 검사가 잡는 실패 원인 중
-REM 가장 흔한 것이 그건데, 그것 하나로 배포가 수동 개입까지 영구 차단된다.
+REM `/f`가 없으면 **읽기 전용 속성**을 못 지운다 — 가능한 실패 원인 중 하나이고,
+REM 그것 하나로 배포가 수동 개입까지 영구 차단된다.
 REM 다른 프로세스가 물고 있는 진짜 위험 케이스는 `/f`로도 안 지워져 아래 `if exist`가
 REM 그대로 잡는다 — 게이트 강도 손실 없이 오탐만 준다(리뷰 지적).
 del /f /q build\canary.txt >nul 2>&1
