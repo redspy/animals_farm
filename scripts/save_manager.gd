@@ -18,8 +18,8 @@ class_name SaveManager
 ##   "settings": { "ui_zoom": 1.0, "joystick": true },   # 기기 UI 설정(슬롯 공용)
 ##   "first_played_unix": 0,
 ##   "last_played_unix": 0   # save()가 매번 갱신. 런타임 로직은 읽지 않고 **migrate()만**
-##                           # 읽는다(v0→v1 채우기, v1→v2에서 첫 슬롯 시드). 일일 갱신은
-##                           # 슬롯의 last_played_unix를 쓴다(world.gd) — 이 값으로 판단하면
+##                           # 읽는다(v0→v1 채우기, v1→v2에서 첫 슬롯 시드). 재접속 인사
+##                           # 판정은 슬롯의 last_played_unix를 쓴다(world.gd) — 이 값으로 판단하면
 ##                           # 다른 캐릭터로 접속했을 때 하루가 안 지난 것으로 처리된다.
 ## }
 ##

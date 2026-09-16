@@ -19,7 +19,8 @@ project.godot        Godot 프로젝트 (GL Compatibility 고정)
 export_presets.cfg   Web export 프리셋 (nothreads)
 scenes/main.tscn     진입 씬 — scripts/main.gd(라우터)가 선택 화면/월드를 갈아 끼우고,
                      그 안의 노드는 각 화면 스크립트(character_select.gd / world.gd)가 코드로 조립
-tests/               헤드리스 테스트 + 픽스처 (세이브 마이그레이션 회귀, 팔레트 정합성, 브라우저 스모크)
+tests/               헤드리스 테스트 + 픽스처 (세이브 마이그레이션 회귀, 팔레트 정합성, 서버 유닛,
+                     브라우저 스모크 — 스위트별 실행 명령은 아래 "실행/빌드" 참고)
 assets/fonts/        임베드 한글 폰트 (Noto Sans KR, OFL — 웹은 시스템 폰트 폴백이 없음)
 scripts/*.gd         게임 코드
                      main(라우터) / character_select(슬롯·이름) / world(월드맵)
@@ -28,7 +29,11 @@ scripts/*.gd         게임 코드
                      touch_controls(폰 터치 조작) / chat_input(DOM 입력 오버레이)
                      test_hooks(E2E가 UI 위치를 읽는 seam)
                      rock(바위 조형물) / path_planner(바위 우회 경로)
+                     npc / npc_sprite(이웃 동물·부탁) / shop_ui(가게) / dex_ui(도감)
+                     appearance_ui(꾸미기) / inventory_ui(가방) / resync_overlay(재동기화)
+                     playground(운동장·축구) / park(놀이터 기구)
                      save_manager(슬롯 스키마) / game_clock / balance / palette / data_files
+                     ※ 전부는 아니다 — 화면 하나가 파일 하나인 규칙이라 `ls scripts/`가 정확하다
                      ※ player_sprite.gd는 Gemini CLI(agy)가 구현한 파일 — 걷기 애니메이션 담당
 data/*.json          밸런스·배치 데이터(유효범위 포함, 코드가 클램프) + palette.json(화면 색 단일 출처)
 server/index.js      정적 서버 + WebSocket 중계 (COOP/COEP, wasm MIME, /healthz, /ws)
@@ -48,6 +53,10 @@ npm run test:multiplayer             # 2탭 + WS 옵저버로 실시간 동기�
 npm run test:mobile                  # 폰 터치 에뮬레이션(조이스틱·버튼·DOM 채팅)
 npm run test:playground              # 운동장(운동 버튼·모습·속도·줄넘기 기술·축구공)
 npm run test:park                    # 놀이터(미끄럼틀·그네·뺑뺑이·시소 탑승/밀기/내리기)
+npm run test:fishing                 # 낚시·벌레(대기→물기→챔질, 헛챔질·놓침)
+npm run test:npc                     # 이웃 부탁(대화→수집→정산)과 도감 2탭
+npm run test:race                    # 달리기 경주(존 전용 버튼·참가/포기·국면 전이)
+npm run test:shop                    # 가게(주인 탭→구매→벨 감소→꾸미기에 열림)
 npm run test:safari                  # 사파리(WebKit) 텍스트 입력 — 첫 실행 전 `npx playwright install webkit`
 npm run test:insecure                # http(비보안 컨텍스트)에서도 실행되는지
 npm run capture:chat                 # 채팅 UI 상태별 캡쳐(문서용)

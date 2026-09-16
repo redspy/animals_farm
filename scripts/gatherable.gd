@@ -248,9 +248,10 @@ func hide_until(seconds_from_now: float) -> void:
 	if _grown != null:
 		_grown.visible = false
 
-## 하루가 지나면 전부 되살아난다(GameClock.days_since 기반, world.gd의 셋업에서 호출).
-## ⚠️ **온라인에서는 사실상 표시용이다** — 서버가 `availableAt`을 소유해 접속 직후
-## 덮어쓰고, 최장 재생이 60초라 하루 뒤엔 어차피 전부 자라 있다(docs/design.md §1).
+## 되살린다. **호출자는 아래 `_process`의 로컬 재생 타이머 하나뿐이다.**
+## 서버에 붙어 있으면 스냅샷이 `hide_until()`로 덮으므로 재생의 단일 출처는 서버다
+## (docs/design.md §1). 예전에는 world.gd의 일일 리스폰도 불렀는데, 가용 상태가
+## 세이브에 없어 되살릴 대상이 애초에 없는 no-op이라 2026-09-16에 지웠다.
 func force_respawn() -> void:
 	if _available:
 		return

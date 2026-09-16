@@ -36,6 +36,8 @@ func setup(goods: Array, owned: Array, bells: int, shop_name: String = "") -> vo
 		_shop_name = shop_name
 		if _title != null:
 			_title.text = "%s 가게" % _shop_name
+			if _hooks != null:
+				_hooks.set_state("shopTitle", _title.text)
 	# **복사해서 보관한다**(apply_server_state와 같은 이유) — 호출자가 넘기는 것은
 	# world.gd의 그 배열 자체라, 여기서 참조를 들면 더티 체크가 자기 자신 비교가 되고
 	# 제자리 변경(`clear()`)과의 순서에 의존하게 된다(리뷰 지적).
@@ -113,6 +115,11 @@ func _ready() -> void:
 	_title.add_theme_font_size_override("font_size", UiScale.font(20))
 	_title.add_theme_color_override("font_color", Palette.color("ui", "hud_text"))
 	box.add_child(_title)
+	# **제목을 값으로 노출한다.** 이 화면이 이름을 데이터에서 받는다는 것이 이
+	# 배선의 목적인데, 좌표만 게시하면 리터럴로 되돌려도 테스트가 통과한다
+	# (2026-09-16 리뷰 지적).
+	_hooks.track("shopTitle", _title)
+	_hooks.set_state("shopTitle", _title.text)
 
 	# **잔액을 제일 크게.** 아이가 "얼마 남았지"를 바로 본다.
 	_bells_label = Label.new()

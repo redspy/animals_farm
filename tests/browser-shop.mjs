@@ -301,6 +301,13 @@ const planted = await page.evaluate(() => {
   return true;
 });
 check(planted, '가게가 올린 상태에 주인이 기록돼 있다');
+
+// **이름은 데이터(`npcs.json`의 label)에서 온다.** 제목을 코드 리터럴로 되돌리면
+// 데이터에서 개명해도 화면만 옛 이름으로 남는다 — 실제로 한 번 그 상태였다
+// (2026-09-16 리뷰 지적).
+const title = await page.evaluate(() => window.afTest?.state?.shopTitle ?? '');
+check(title === `${shopNpc.label} 가게`,
+  `가게 제목이 데이터의 이름을 쓴다 (${title})`);
 await tapGodot(page, 'shopClose');
 await page.waitForTimeout(700);
 const afterClose = await page.evaluate(() => ({

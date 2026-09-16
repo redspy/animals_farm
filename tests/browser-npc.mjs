@@ -217,12 +217,17 @@ console.log(`\n[검증] 이웃 — ${npc.label} (${npc.x}, ${npc.z})`);
 
 /** 이웃 근처로 걸어가 탭해서 대화창을 연다. */
 async function talkTo() {
-  await walkTo('z', npc.z + 2.0);
-  await walkTo('x', npc.x);
   // 동물은 배회하므로(시간 함수) **지금 보이는 위치**를 탭해야 한다 — 기준
   // 좌표를 탭하면 반경만큼 빗나가 빈 땅 탭이 된다(실측). 훅이 알려주는 화면
   // 좌표를 그대로 쓴다.
+  //
+  // **다가가기도 재시도 안에 둔다.** 예전에는 루프 밖에서 한 번만 걸어가서,
+  // 그 사이 동물이 배회로 대화 사거리 밖까지 나가면 여섯 번의 탭이 전부
+  // "조금 더 가까이 가야 합니다"로 끝났다 — 7회 중 2회 실패하는 간헐 원인이
+  // 이것이다(2026-09-16 실측). 매번 다시 걸어가면 배회를 따라잡는다.
   for (let i = 0; i < 6; i++) {
+    await walkTo('z', npc.z + 2.0);
+    await walkTo('x', npc.x);
     const pt = await godotPoint(page, 'nearestNpc').catch(() => null);
     if (pt) await page.mouse.click(pt.x, pt.y);
     const s = await waitState((v) => v.branch.startsWith('npc:'), 2500);
@@ -271,12 +276,19 @@ check(gathered.bag >= 2, `나무 ${gathered.bag}개를 모았다`);
 // 다시 이웃에게 가서 건넨다.
 const reopened = await talkTo();
 check(reopened, '다시 대화창을 연다');
-const bellsBefore = (await state()).bells;
-await tapGodot(page, 'npcAction');
-const paid = await waitState((s) => s.bells > bellsBefore, 8000);
-check(paid.bells > bellsBefore, `부탁을 완료하면 벨을 받는다 (${bellsBefore} → ${paid.bells})`);
-check(paid.requests.includes(':done'), `부탁 상태가 완료로 바뀐다 (${paid.requests})`);
-await page.screenshot({ path: `${OUT}/2-정산후.png` }).catch(() => {});
+// **열지 못했으면 여기서 멈춘다.** 예전에는 그냥 진행해서 다음 줄의
+// `tapGodot('npcAction')`이 "UI 지점을 찾지 못했습니다"로 던졌고, 실패 원인이
+// 정산이 아니라 대화창이라는 것이 로그에서 가려졌다(2026-09-16 실측).
+if (!reopened) {
+  console.error('  ↳ 대화창을 못 열어 정산 단계를 건너뜁니다 (동물이 배회로 멀어졌을 가능성)');
+} else {
+  const bellsBefore = (await state()).bells;
+  await tapGodot(page, 'npcAction');
+  const paid = await waitState((s) => s.bells > bellsBefore, 8000);
+  check(paid.bells > bellsBefore, `부탁을 완료하면 벨을 받는다 (${bellsBefore} → ${paid.bells})`);
+  check(paid.requests.includes(':done'), `부탁 상태가 완료로 바뀐다 (${paid.requests})`);
+  await page.screenshot({ path: `${OUT}/2-정산후.png` }).catch(() => {});
+}
 
 // 도감: 가방 → 도감. 방금 캔 나무는 이름이 보이고, 안 만난 것은 물음표다.
 console.log('\n[검증] 도감');
