@@ -110,7 +110,7 @@ npm run test:browser            # build/web를 서버에 올려 Chromium으로 �
 
 `export_presets.cfg`의 `vram_texture_compression/for_desktop|for_mobile`을 켜두면 export가 **상세 사유 없이** `Cannot export project with preset "Web" due to configuration errors`로 실패한다(모바일 VRAM 압축은 프로젝트 설정 `rendering/textures/vram_compression/import_etc2_astc`를 요구). 이 게임은 2D + GL Compatibility라 VRAM 압축이 필요 없어 둘 다 끈 상태다. 텍스처 에셋을 도입할 때 이 옵션을 다시 켜려면 프로젝트 설정도 함께 켜야 한다.
 
-## 5. 검증 상태 (2026-09-08)
+## 5. 검증 상태 (2026-09-16)
 
 | 항목 | 상태 |
 |---|---|

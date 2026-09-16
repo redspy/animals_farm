@@ -2870,7 +2870,7 @@ func _on_server_gathered(index: int, item: String, available_at: float, by: Stri
 	if by == String(_slot.get("token", "")):
 		_show_toast("%s 채집!" % _label_of(item))
 		# 도감의 단일 출처는 서버지만, 서버가 매번 dex 전체를 보내지는 않는다
-		# (welcome/스냅샷에만 싣는다 — 방송 비용). 내가 캔 것은 여기서 함께
+		# (**welcome·resync에만** 싣는다 — 스냅샷에는 없다. 방송 비용). 내가 캔 것은 여기서 함께
 		# 올려 도감이 즉시 반영되게 하고, 다음 접속에 서버 값으로 덮인다.
 		_dex[item] = int(_dex.get(item, 0)) + 1
 		_refresh_dex_ui()

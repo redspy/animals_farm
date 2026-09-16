@@ -1777,7 +1777,10 @@ export class WorldState {
     };
   }
 
-  /** 가게 상품 목록(클라이언트도 같은 파일을 읽지만, 응답에 실어 한 번에 맞춘다). */
+  /**
+   * 가게 상품 목록. **클라이언트는 이 응답만 쓴다** — `data/shop.json`을 읽는 클라이언트
+   * 로더는 없다(만들면 화면과 서버의 가격이 어긋난다).
+   */
   shopCatalog() {
     return [...this.shopGoods.values()].map((g) => ({ ...g }));
   }
