@@ -17,11 +17,17 @@ if "%GODOT_HOME%"=="" set GODOT_HOME=D:\tools\godot\%GODOT_VERSION%
 if "%GAME_PORT%"=="" set GAME_PORT=3001
 set GODOT_EXE=%GODOT_HOME%\Godot_v%GODOT_VERSION%-stable_win64.exe
 
-echo [Step 0] Verifying the build-error gate before touching the server...
-REM **서버를 죽이기 전에** 검사한다. Step 1이 서버를 멈추므로, 그 뒤 어느 단계가
-REM 실패하든 `exit /b 1`은 **서버가 꺼진 채로** 끝난다 — stale이 아니라 다운이다.
-REM 이 검사들은 저장소 파일을 읽고 build\canary.txt를 쓸 뿐이라 서빙 대상인
-REM build\web과 무관하다. 그래서 위험 구간 밖으로 빼낸다(2026-11-01).
+echo [Step 1] Verifying the build-error gate (server still up)...
+REM **서버를 멈추기 전에 끝낼 수 있는 검사는 다 여기서 한다**(Step 1~3).
+REM Step 4가 서버를 멈추므로, 그 뒤 어느 단계가 실패하든 `exit /b 1`은 **서버가
+REM 꺼진 채로** 끝난다 — 구버전이 남는 stale이 아니라 아이들이 아예 못 들어가는
+REM 다운이고, 다시 뜨는 것은 Step 8이다.
+REM
+REM 그래서 Step 4 뒤에 남겨 둔 것은 **서버가 쥔 파일을 건드려야 하는 둘뿐**이다:
+REM `npm ci`(실행 중인 node가 node_modules를 쥔다)와 export(build\web을 비운다).
+REM 패턴 무결성·Godot 존재·리소스 임포트는 전부 그와 무관해서 앞으로 옮겼다
+REM (2026-11-01. 처음엔 패턴 검사만 옮겼는데 리뷰가 나머지 둘도 같은 부류라고 짚었다).
+REM build\ 는 여기서 만든다 — 뒤 단계들이 로그를 그 안에 쓴다.
 if not exist build mkdir build
 if not exist scripts\error-patterns.txt (
     echo ERROR: scripts\error-patterns.txt not found - cannot verify build log
@@ -78,12 +84,6 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo [Step 1] Stopping server task...
-schtasks /Delete /TN "AnimalsFarmServer" /F >nul 2>&1
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%GAME_PORT% ^| findstr LISTENING') do (
-    taskkill /F /PID %%a >nul 2>&1
-)
-
 echo [Step 2] Checking Godot %GODOT_VERSION% (standard build)...
 if not exist "%GODOT_EXE%" (
     echo ERROR: Godot not found at %GODOT_EXE%
@@ -93,27 +93,12 @@ if not exist "%GODOT_EXE%" (
     exit /b 1
 )
 
-echo [Step 3] Installing server dependencies...
-REM 서버가 WebSocket(ws)을 쓰게 되면서 의존성이 생겼다 — 예전에는 의존성 0개라
-REM 이 단계가 없었다(docs/protocol.md §0). devDependencies(playwright)는 배포에
-REM 필요 없으므로 --omit=dev 로 받는다.
-call npm ci --omit=dev
-if %ERRORLEVEL% neq 0 (
-    echo WARN: npm ci failed, falling back to npm install --omit=dev
-    call npm install --omit=dev
-    if %ERRORLEVEL% neq 0 (
-        echo ERROR: dependency install failed
-        exit /b 1
-    )
-)
-
-echo [Step 4] Importing project resources...
+echo [Step 3] Importing project resources...
 REM export 전에 리소스 임포트를 한 번 돌려야 .godot/ 캐시가 생성된다.
 REM (clone 직후 .godot/은 git 추적 대상이 아니라 비어 있음)
 REM import 출력도 검사한다 — 리소스/스크립트 오류 중에는 import 단계에서만
 REM 드러나는 것이 있다(`Failed to load script`). 예전에는 export만 검사해서
 REM 커버리지가 절반이었다(2026-09-16 리뷰 지적).
-if not exist build mkdir build
 REM ⚠️ `type`을 검사 **앞**에 두면 안 된다 — type이 성공하면서 ERRORLEVEL을 0으로
 REM 덮어써 godot의 종료 코드 검사가 죽는다(2026-09-16 리뷰 지적: 커버리지를 늘리려다
 REM 기존 게이트 하나를 없앨 뻔했다).
@@ -133,7 +118,27 @@ if %ERRORLEVEL% equ 0 (
     exit /b 1
 )
 
-echo [Step 5] Exporting Web build...
+echo [Step 4] Stopping server task...
+schtasks /Delete /TN "AnimalsFarmServer" /F >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%GAME_PORT% ^| findstr LISTENING') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+
+echo [Step 5] Installing server dependencies...
+REM 서버가 WebSocket(ws)을 쓰게 되면서 의존성이 생겼다 — 예전에는 의존성 0개라
+REM 이 단계가 없었다(docs/protocol.md §0). devDependencies(playwright)는 배포에
+REM 필요 없으므로 --omit=dev 로 받는다.
+call npm ci --omit=dev
+if %ERRORLEVEL% neq 0 (
+    echo WARN: npm ci failed, falling back to npm install --omit=dev
+    call npm install --omit=dev
+    if %ERRORLEVEL% neq 0 (
+        echo ERROR: dependency install failed
+        exit /b 1
+    )
+)
+
+echo [Step 6] Exporting Web build...
 REM 이전 빌드를 먼저 지운다 — git reset --hard는 추적되지 않는 build/를
 REM 지우지 않아서, export가 실패해도 구버전 index.html/.wasm이 남아 Step 6의
 REM 산출물 검사를 통과해버릴 수 있었다(2026-09-03 Codex 감사 지적).
@@ -158,7 +163,7 @@ if %ERRORLEVEL% equ 0 (
     exit /b 1
 )
 
-echo [Step 6] Verifying build artifacts...
+echo [Step 7] Verifying build artifacts...
 REM export가 exit 0이어도 산출물이 비어 있는 경우가 있어 실제 파일을 확인한다.
 if not exist build\web\index.html (
     echo ERROR: build\web\index.html missing after export
@@ -170,7 +175,7 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo [Step 7] Starting server (static + WebSocket) on :%GAME_PORT%...
+echo [Step 8] Starting server (static + WebSocket) on :%GAME_PORT%...
 REM Start-Process로 띄운 프로세스는 GitHub Actions 러너의 Job Object에 묶여
 REM job 종료 시 함께 죽는다(connect_dise에서 실측). 작업 스케줄러로 띄우면
 REM 러너 job과 무관한 독립 프로세스가 되어 살아남는다.
@@ -192,7 +197,7 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-echo [Step 8] Verifying server actually responds...
+echo [Step 9] Verifying server actually responds...
 REM schtasks /Run은 비동기라 node가 시작 직후 크래시해도 여기까지 도달한다 —
 REM /healthz가 실제로 200을 주는지 재시도로 확인해야 "배포 성공"이 의미를 가진다.
 powershell -Command "$ok=$false; for ($i=0; $i -lt 10; $i++) { try { $r = Invoke-WebRequest -Uri ('http://localhost:' + $env:GAME_PORT + '/healthz') -UseBasicParsing -TimeoutSec 3; if ($r.StatusCode -eq 200) { $ok=$true; break } } catch {} ; Start-Sleep -Seconds 2 }; if (-not $ok) { Write-Host 'ERROR: server did not respond on /healthz (10 tries, up to ~50s)'; exit 1 } else { Write-Host 'Server responded 200 OK' }"

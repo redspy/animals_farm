@@ -9,9 +9,11 @@ git push origin main  ──────▶  push 이벤트  ──────�
                                                       │
                                                       ├ git fetch + reset --hard origin/main
                                                       ├ deploy.bat
-                                                      │   ├ 빌드 오류 게이트 자체 검증(Step 0)
-                                                      │   ├ 기존 서버 프로세스 중지
+                                                      │   ├ 빌드 오류 게이트 자체 검증
+                                                      │   ├ Godot 존재 확인
                                                       │   ├ Godot 헤드리스 --import
+                                                      │   ├ 기존 서버 프로세스 중지  ← 여기부터 다운
+                                                      │   ├ npm ci --omit=dev
                                                       │   ├ Godot 헤드리스 Web export → build/web/
                                                       │   ├ 산출물 검증(index.html + .wasm)
                                                       │   ├ schtasks로 정적 서버 독립 기동
@@ -20,10 +22,30 @@ git push origin main  ──────▶  push 이벤트  ──────�
                                               http://<서버>:3001 에서 즉시 플레이
 ```
 
+### 단계 순서가 곧 장애 범위다
+
+`deploy.bat`은 **Step 4에서 서버를 멈춘다.** 그래서 그 뒤의 실패는 "구버전이 남는다"가
+아니라 **다운**이다 — `exit /b 1`로 끝나면 서버는 꺼진 채 남고, 다시 뜨는 것은 Step 8이다.
+
+그래서 **서버를 멈추지 않고 끝낼 수 있는 검사는 전부 Step 1~3에 둔다**: 빌드 오류 게이트
+자체 검증(`scripts/error-patterns.txt`의 존재·크기·바이트 위생/빈 줄·카나리아), Godot 존재
+확인, 리소스 임포트와 그 로그 검사. 셋 다 저장소 파일과 `build/` 안의 로그만 건드리므로
+서빙 대상인 `build/web`과 무관하다.
+
+Step 4 뒤에 남은 것은 **서버가 쥔 파일을 건드려야 하는 둘뿐**이다 — `npm ci`(실행 중인
+node가 `node_modules`를 쥔다)와 export(`build/web`을 비운다).
+
+> 2026-11-01에 이 순서로 바꿨다. 그 전에는 게이트 검사 넷이 서버가 내려간 뒤에 있어서,
+> 커버리지를 늘린 대신 **서버가 꺼진 채 끝나는 경로를 넷 늘린** 상태였다.
+>
+> 다음 단계로 줄일 수 있는 것: export를 `build/web.new`에 만들고 Step 4 뒤에는 **폴더
+> 교체만** 하면 서버가 꺼져 있는 시간이 `npm ci` + 교체 + 기동으로 줄어든다(미적용 —
+> 배포 메커니즘을 바꾸는 일이라 Windows 실측과 함께 해야 한다).
+
 connect_dise와 **의도적으로 동일한** 선택들:
 
 - **클라우드 빌더를 쓰지 않는다.** 배포 서버 자체가 빌드 머신이다(`runs-on: self-hosted`). 아티팩트 전송·시크릿 배포 경로가 없어 구조가 단순하고, 서버가 곧 최신 소스 트리라 문제 재현이 쉽다.
-- **`git reset --hard origin/main`**: 서버의 로컬 변경을 신뢰하지 않고 항상 원격 상태로 강제 동기화한다. 단 `reset --hard`는 추적되지 않는 `build/`를 지우지 않으므로, 배포 결과가 push된 커밋과 1:1로 대응하려면 **export 직전에 `build/web`을 삭제**해야 한다(`deploy.bat` Step 5(Exporting Web build)가 export 전에 그 일을 한다 — 없으면 export 실패 시 구버전 산출물이 남아 Step 6 검사를 통과한다).
+- **`git reset --hard origin/main`**: 서버의 로컬 변경을 신뢰하지 않고 항상 원격 상태로 강제 동기화한다. 단 `reset --hard`는 추적되지 않는 `build/`를 지우지 않으므로, 배포 결과가 push된 커밋과 1:1로 대응하려면 **export 직전에 `build/web`을 삭제**해야 한다(`deploy.bat` Step 6(Exporting Web build)가 export 전에 그 일을 한다 — 없으면 export 실패 시 구버전 산출물이 남아 Step 7 검사를 통과한다).
 - **`schtasks`로 서버 기동**: `start`/`Start-Process`로 띄운 프로세스는 GitHub Actions 러너의 Job Object에 묶여 **job이 끝나는 순간 함께 죽는다**(connect_dise에서 실측, 헬스체크는 job 진행 중이라 통과하는데 직후에 포트가 죽어 있었다). 작업 스케줄러가 관리하는 태스크는 러너와 무관한 독립 프로세스다.
 - **배포 성공 판정 = 실제 HTTP 200**: 프로세스 기동 명령이 성공했다는 것은 서버가 살아 있다는 뜻이 아니다. `/healthz`를 **10회 재시도**(각 요청 타임아웃 3초 + 간격 2초 → 즉시 거절되면 약 20초, 요청이 매번 타임아웃되면 최대 약 50초)로 확인하고, 실패하면 `server_error.log`를 출력하고 exit 1로 배포를 실패시킨다.
 
@@ -54,9 +76,7 @@ animals_farm에서 **달라지는 점**은 빌드 단계뿐이다: `npm install 
   | HTTP | 인증서가 없거나 `TLS=off` | `http://…`, `ws://…/ws` | 안 보냄 |
 
   즉 **개발 인증서를 한 번 만들어 두면 `node server/index.js`가 https로 뜬다**(`scripts/make-dev-cert.sh`). 아래 §4의 `curl http://…`를 그대로 재현하려면 `TLS=off`를 붙여야 한다.
-- ⚠️ **Step 1이 서버를 멈추므로 그 뒤의 실패는 "다운"이다**(stale이 아니다). `exit /b 1`로 끝나면 서버는 꺼진 채로 남고, 다시 뜨는 것은 Step 7이다. 그래서 **서버를 건드리지 않고 할 수 있는 검사는 Step 0으로 올려 둔다** — 지금은 `scripts/error-patterns.txt`의 무결성 검사 넷(존재·크기·바이트 위생/빈 줄·카나리아)이 거기 있다. 이 검사들은 저장소 파일을 읽고 `build\canary.txt`를 쓸 뿐이라 서빙 대상인 `build/web`과 무관하다(2026-11-01). 남은 실패 지점(Godot 부재·`npm ci`·export)은 전부 서버 파일을 잠그거나 교체하는 단계라 Step 1 뒤에 있어야 한다.
-
-- ⚠️ **배포는 `TLS=off`로 스킴을 고정한다**(`deploy.bat` Step 7). `server/certs/`는 추적되지 않아 `git reset --hard`로도 지워지지 않으므로, 배포 서버에 인증서가 한 번 남으면 서버는 정상 기동하는데 Step 8의 http 헬스체크만 실패해 "배포 실패"로 보이고 `server_error.log`에는 단서가 없다(2026-09-08 Codex 감사 지적). https로 서비스하려면 Step 7의 `TLS=off`와 Step 8의 헬스체크 URL을 함께 바꿀 것.
+- ⚠️ **배포는 `TLS=off`로 스킴을 고정한다**(`deploy.bat` Step 8). `server/certs/`는 추적되지 않아 `git reset --hard`로도 지워지지 않으므로, 배포 서버에 인증서가 한 번 남으면 서버는 정상 기동하는데 Step 9의 http 헬스체크만 실패해 "배포 실패"로 보이고 `server_error.log`에는 단서가 없다(2026-09-08 Codex 감사 지적). https로 서비스하려면 Step 8의 `TLS=off`와 Step 9의 헬스체크 URL을 함께 바꿀 것.
 - WebSocket은 정적 파일과 **같은 포트의 `/ws`** 로 붙는다. 클라이언트는 페이지를 서빙한 origin에서 주소를 유도하므로(`net.gd::default_url`) 별도 설정이 없다 — https면 `wss://`가 되고, 리버스 프록시를 쓸 경우 `/ws` 업그레이드를 통과시켜야 한다.
 - `.wasm`은 `application/wasm`, `.pck`는 `application/octet-stream`으로 서빙한다. MIME이 틀리면 브라우저가 스트리밍 컴파일을 거부해 로딩이 느려지거나 실패한다.
 
