@@ -140,7 +140,7 @@ if %ERRORLEVEL% neq 0 (
 
 echo [Step 6] Exporting Web build...
 REM 이전 빌드를 먼저 지운다 — git reset --hard는 추적되지 않는 build/를
-REM 지우지 않아서, export가 실패해도 구버전 index.html/.wasm이 남아 Step 6의
+REM 지우지 않아서, export가 실패해도 구버전 index.html/.wasm이 남아 Step 7의
 REM 산출물 검사를 통과해버릴 수 있었다(2026-09-03 Codex 감사 지적).
 if exist build\web rmdir /s /q build\web
 mkdir build\web
@@ -182,9 +182,9 @@ REM 러너 job과 무관한 독립 프로세스가 되어 살아남는다.
 REM TLS=off로 **스킴을 고정한다.** server/index.js는 인증서가 있으면 자동으로
 REM https로 뜨는데(개발 편의), server/certs/는 추적되지 않아 git reset --hard로도
 REM 지워지지 않는다 — 배포 서버에 인증서가 한 번 남으면 서버는 정상 기동하는데
-REM Step 8의 http 헬스체크만 실패해서 "배포 실패"로 보이고, server_error.log에는
+REM Step 9의 http 헬스체크만 실패해서 "배포 실패"로 보이고, server_error.log에는
 REM 아무 단서가 없다(2026-09-08 Codex 감사 지적). https로 서비스하려면 여기와
-REM Step 8의 URL을 함께 바꿔야 한다.
+REM Step 9의 URL을 함께 바꿔야 한다.
 REM
 REM ⚠️ `set VAR=값 && cmd` 형태는 **&& 앞 공백까지 값에 포함된다** — TLS가 "off "가
 REM 되어 서버의 `!== 'off'` 비교를 통과하고, 이 줄이 있는데도 https로 떴다(리뷰

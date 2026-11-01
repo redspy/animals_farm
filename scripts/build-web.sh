@@ -44,7 +44,7 @@ case "$VERSION_LINE" in
     ;;
 esac
 
-# 배포(deploy.bat Step 4)와 동일하게 이전 산출물을 지운다 — 지우지 않으면
+# 배포(deploy.bat Step 6)와 동일하게 이전 산출물을 지운다 — 지우지 않으면
 # 삭제된 에셋이나 구버전 파일이 로컬 결과에 남아 "같은 빌드 재현"이 깨진다
 # (2026-09-03 Codex 감사 지적).
 rm -rf build/web
@@ -66,4 +66,6 @@ if [ ! -f build/web/index.html ] || ! ls build/web/*.wasm > /dev/null 2>&1; then
   echo "ERROR: export 산출물이 불완전합니다(build/web/index.html 또는 .wasm 없음)"
   exit 1
 fi
-echo "[build-web] 완료 — node server/index.js 로 확인하세요 (http://localhost:3001)"
+echo "[build-web] 완료 — TLS=off node server/index.js 로 확인하세요 (http://localhost:3001)"
+# `TLS=off`를 안내에 넣는 이유: `server/certs/`에 개발 인증서가 있으면 서버는
+# https로 뜨고, 그때 위 http 주소로는 안 열린다(docs/deploy.md §3).
