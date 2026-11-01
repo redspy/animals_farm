@@ -17,52 +17,12 @@ if "%GODOT_HOME%"=="" set GODOT_HOME=D:\tools\godot\%GODOT_VERSION%
 if "%GAME_PORT%"=="" set GAME_PORT=3001
 set GODOT_EXE=%GODOT_HOME%\Godot_v%GODOT_VERSION%-stable_win64.exe
 
-echo [Step 1] Stopping server task...
-schtasks /Delete /TN "AnimalsFarmServer" /F >nul 2>&1
-for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%GAME_PORT% ^| findstr LISTENING') do (
-    taskkill /F /PID %%a >nul 2>&1
-)
-
-echo [Step 2] Checking Godot %GODOT_VERSION% (standard build)...
-if not exist "%GODOT_EXE%" (
-    echo ERROR: Godot not found at %GODOT_EXE%
-    echo        Install the STANDARD ^(non-mono^) build and its export templates:
-    echo        https://github.com/godotengine/godot/releases/tag/%GODOT_VERSION%-stable
-    echo        See docs/deploy.md section 2 for the one-time setup.
-    exit /b 1
-)
-
-echo [Step 3] Installing server dependencies...
-REM 서버가 WebSocket(ws)을 쓰게 되면서 의존성이 생겼다 — 예전에는 의존성 0개라
-REM 이 단계가 없었다(docs/protocol.md §0). devDependencies(playwright)는 배포에
-REM 필요 없으므로 --omit=dev 로 받는다.
-call npm ci --omit=dev
-if %ERRORLEVEL% neq 0 (
-    echo WARN: npm ci failed, falling back to npm install --omit=dev
-    call npm install --omit=dev
-    if %ERRORLEVEL% neq 0 (
-        echo ERROR: dependency install failed
-        exit /b 1
-    )
-)
-
-echo [Step 4] Importing project resources...
-REM export 전에 리소스 임포트를 한 번 돌려야 .godot/ 캐시가 생성된다.
-REM (clone 직후 .godot/은 git 추적 대상이 아니라 비어 있음)
-REM import 출력도 검사한다 — 리소스/스크립트 오류 중에는 import 단계에서만
-REM 드러나는 것이 있다(`Failed to load script`). 예전에는 export만 검사해서
-REM 커버리지가 절반이었다(2026-09-16 리뷰 지적).
+echo [Step 0] Verifying the build-error gate before touching the server...
+REM **서버를 죽이기 전에** 검사한다. Step 1이 서버를 멈추므로, 그 뒤 어느 단계가
+REM 실패하든 `exit /b 1`은 **서버가 꺼진 채로** 끝난다 — stale이 아니라 다운이다.
+REM 이 검사들은 저장소 파일을 읽고 build\canary.txt를 쓸 뿐이라 서빙 대상인
+REM build\web과 무관하다. 그래서 위험 구간 밖으로 빼낸다(2026-11-01).
 if not exist build mkdir build
-REM ⚠️ `type`을 검사 **앞**에 두면 안 된다 — type이 성공하면서 ERRORLEVEL을 0으로
-REM 덮어써 godot의 종료 코드 검사가 죽는다(2026-09-16 리뷰 지적: 커버리지를 늘리려다
-REM 기존 게이트 하나를 없앨 뻔했다).
-"%GODOT_EXE%" --headless --path . --import > build\import.log 2>&1
-if %ERRORLEVEL% neq 0 (
-    type build\import.log
-    echo ERROR: godot --import failed
-    exit /b 1
-)
-type build\import.log
 if not exist scripts\error-patterns.txt (
     echo ERROR: scripts\error-patterns.txt not found - cannot verify build log
     exit /b 1
@@ -117,6 +77,53 @@ if %ERRORLEVEL% neq 0 (
     echo ERROR: error-patterns.txt does not match a known Godot error line - the gate is dead
     exit /b 1
 )
+
+echo [Step 1] Stopping server task...
+schtasks /Delete /TN "AnimalsFarmServer" /F >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -ano ^| findstr :%GAME_PORT% ^| findstr LISTENING') do (
+    taskkill /F /PID %%a >nul 2>&1
+)
+
+echo [Step 2] Checking Godot %GODOT_VERSION% (standard build)...
+if not exist "%GODOT_EXE%" (
+    echo ERROR: Godot not found at %GODOT_EXE%
+    echo        Install the STANDARD ^(non-mono^) build and its export templates:
+    echo        https://github.com/godotengine/godot/releases/tag/%GODOT_VERSION%-stable
+    echo        See docs/deploy.md section 2 for the one-time setup.
+    exit /b 1
+)
+
+echo [Step 3] Installing server dependencies...
+REM 서버가 WebSocket(ws)을 쓰게 되면서 의존성이 생겼다 — 예전에는 의존성 0개라
+REM 이 단계가 없었다(docs/protocol.md §0). devDependencies(playwright)는 배포에
+REM 필요 없으므로 --omit=dev 로 받는다.
+call npm ci --omit=dev
+if %ERRORLEVEL% neq 0 (
+    echo WARN: npm ci failed, falling back to npm install --omit=dev
+    call npm install --omit=dev
+    if %ERRORLEVEL% neq 0 (
+        echo ERROR: dependency install failed
+        exit /b 1
+    )
+)
+
+echo [Step 4] Importing project resources...
+REM export 전에 리소스 임포트를 한 번 돌려야 .godot/ 캐시가 생성된다.
+REM (clone 직후 .godot/은 git 추적 대상이 아니라 비어 있음)
+REM import 출력도 검사한다 — 리소스/스크립트 오류 중에는 import 단계에서만
+REM 드러나는 것이 있다(`Failed to load script`). 예전에는 export만 검사해서
+REM 커버리지가 절반이었다(2026-09-16 리뷰 지적).
+if not exist build mkdir build
+REM ⚠️ `type`을 검사 **앞**에 두면 안 된다 — type이 성공하면서 ERRORLEVEL을 0으로
+REM 덮어써 godot의 종료 코드 검사가 죽는다(2026-09-16 리뷰 지적: 커버리지를 늘리려다
+REM 기존 게이트 하나를 없앨 뻔했다).
+"%GODOT_EXE%" --headless --path . --import > build\import.log 2>&1
+if %ERRORLEVEL% neq 0 (
+    type build\import.log
+    echo ERROR: godot --import failed
+    exit /b 1
+)
+type build\import.log
 
 REM /L = 리터럴. sh 쪽은 `grep -F`(리터럴)라, 여기만 기본 정규식으로 두면 파일은
 REM 하나인데 판정이 갈린다(메타문자가 들어간 패턴을 나중에 추가하는 순간).
