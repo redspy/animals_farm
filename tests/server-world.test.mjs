@@ -1352,6 +1352,59 @@ test('산 것은 재시작해도 남는다', () => {
   assert.ok(again.ownedGoods(back).includes(good.id), '산 것이 사라졌다 — 벨은 이미 냈다');
 });
 
+test('가게가 없던 시절 상태 파일을 읽어도 진행도를 잃지 않는다', () => {
+  // **배포 경로 그대로다.** 배포는 `git reset --hard origin/main`으로 코드만 바꾸고
+  // 상태 파일은 `server/data/`(gitignore)에 그대로 남는다 — 즉 새 코드가 **옛 버전이
+  // 쓴 파일**을 읽는다. `owned`가 없던 버전에서 올라오는 경로가 그것이고, 두 달 밀린
+  // 배포를 올리기 전에 실제로 돌려 확인했다(2026-11-01). 로드만 되는 것으로는 부족하고
+  // **로드 후 저장**까지 봐야 한다 — 저장에서 필드가 빠지면 그게 영구 손실이다.
+  const dir = mkdtempSync(join(tmpdir(), 'af-preshop-'));
+  const statePath = join(dir, 'world.json');
+  const before = {
+    schema_version: 1,
+    saved_at: '2026-09-07T10:00:00.000Z',
+    players: [{
+      // owned가 **없다** — 가게 이전 버전이 쓴 파일이다.
+      token: TOKEN_A, name: '아이', preset: 'f1', x: 3.5, z: -2.25, dir: 'down',
+      inventory: { shell: 3, squid: 1 },
+      bells: 1840,
+      npcDone: { mochi: '2026-09-07' },
+      dex: { wood: 12, shell: 7 },
+      custom: { hair: 'hair_twin', outfit: 'outfit_yellow' },
+    }],
+    items: [],
+    gatherables: [],
+  };
+  writeFileSync(statePath, JSON.stringify(before));
+
+  const w = new WorldState({ statePath, persist: true });
+  const p = w.players.get(TOKEN_A);
+  assert.ok(p, '플레이어를 읽지 못했다');
+  assert.equal(p.bells, 1840, '벨이 달라졌다');
+  assert.deepEqual(p.inventory, { shell: 3, squid: 1 }, '가방이 달라졌다');
+  assert.deepEqual(p.dex, { wood: 12, shell: 7 }, '도감이 달라졌다');
+  assert.deepEqual(p.npcDone, { mochi: '2026-09-07' }, '부탁 기록이 달라졌다');
+  assert.equal(p.custom.hair, 'hair_twin', '외형(머리)이 달라졌다');
+  assert.equal(p.custom.outfit, 'outfit_yellow', '외형(옷)이 달라졌다');
+  assert.deepEqual(w.ownedGoods(p), [], 'owned가 없던 파일인데 빈 목록이 아니다');
+
+  // **저장이 실제로 일어나게 한다.** `save()`는 dirty가 아니면 즉시 반환하므로,
+  // 그냥 부르고 비교하면 "파일이 그대로다"를 통과로 읽는 **실패할 수 없는 검사**가 된다
+  // (처음에 그렇게 써서 실제로 무의미하게 통과했다).
+  w.dirty = true;
+  assert.equal(w.save(), true, 'save()가 쓰지 않았다 — 아래 비교가 무의미해진다');
+
+  const after = JSON.parse(readFileSync(statePath, 'utf-8'));
+  const a = after.players.find((x) => x.token === TOKEN_A);
+  assert.ok(a, '저장 후 플레이어가 사라졌다');
+  assert.equal(a.bells, 1840, '저장 왕복에서 벨이 사라졌다');
+  assert.deepEqual(a.inventory, { shell: 3, squid: 1 }, '저장 왕복에서 가방이 사라졌다');
+  assert.deepEqual(a.dex, { wood: 12, shell: 7 }, '저장 왕복에서 도감이 사라졌다');
+  assert.deepEqual(a.npcDone, { mochi: '2026-09-07' }, '저장 왕복에서 부탁 기록이 사라졌다');
+  assert.equal(a.custom.hair, 'hair_twin', '저장 왕복에서 외형이 사라졌다');
+  assert.deepEqual(a.owned, [], 'owned가 빈 배열로 채워지지 않았다');
+});
+
 test('가게 주인은 부탁 후보에서 빠진다(requests가 있어도)', () => {
   // **requests를 넣어서 확인한다.** 지금 데이터는 가게 주인의 requests가 비어 있어
   // 다른 조건에 먼저 걸린다 — 그 상태로 검사하면 `shop` 플래그를 지워도 테스트가
